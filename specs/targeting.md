@@ -133,7 +133,8 @@ A player is *computer-controlled* when `active` ≠ 0 and `type` = 2.
 
 ### Between ticks
 
-Nothing outside the fields above.
+Nothing outside the fields above. The `rng.*` lines of the recordings are the random stream's, which
+`services.RandomInt` reads and writes; this module reads and writes none of them.
 
 ## 4. Behaviour
 
@@ -178,7 +179,7 @@ The unit target of the slot, or null when the slot holds no unit target. No impo
 | a unit target *t* | `units.GetSweetSpot(t, s)` | 1; `pos` = *s*, led when the weapon leads (below) |
 
 The weapon *leads* when all of these hold: the slot is ready, the slot's `WeaponDef` has
-0x02000000 clear in `flags` and a `speed` ≠ 0, `t.motion` is not null, and `u.killCount` > 5. Then, with
+0x02000000 clear in `flags` and a `speed` ≠ 0, `t.motion` is not null, and `u.killCount` (unsigned 16-bit) > 5. Then, with
 *d* = `u.pos` − *s* per axis:
 
 - the distance *D* = √(*d*.x² + *d*.y² + *d*.z²), truncated to an integer;
@@ -189,13 +190,17 @@ Section 5 gives the widths.
 
 ### `FindWeaponTarget(u, w, useRange)`
 
+The result and the imports are those of *the search* for (*u*, *w*, `useRange`), defined here and used
+again by `FindBestTargetIfFireAtWill`.
+
 The radius *r* is the result of the import `weapons.GetWeaponRange(u, w)` when `useRange` ≠ 0, or
 `u.def.range` when it is 0 (with no import). Then the import
 `ai.GetVisibleEnemiesInRadius(u.playerIndex, u.pos, r, 0, list)` fills the candidate list.
 
-The search then makes up to 50 *picks*, stopping early when the list is empty. A pick draws
-*i* = `services.RandomInt(n)`, with *n* the number of candidates left; candidate *i* is the pick, and the
-last candidate of the list takes its place (Q4). The pick *t* is *eligible* when:
+The search then makes up to 50 *picks*, stopping early when the list is empty. Pick *k* (from 1) draws
+*i* = `services.RandomInt(n)`, with *n* the list's length less *k* − 1, and its candidate is element *i*
+(from 0) of the list as it stands: the list after a pick is the list before it with its last element
+moved into the picked element's place, and one shorter (Q4). The pick *t* is *eligible* when:
 
 1. *t* is targetable and not excluded;
 2. `t.def` is always attackable, or `u`'s player is computer-controlled, or bit 10 of
@@ -215,8 +220,9 @@ fallback with the lowest distance, or null. Between equal distances the earlier 
 
 ### `FindBestTargetIfFireAtWill(u)`
 
-When `u`'s fire order is 2, the result and every import are those of `FindWeaponTarget(u, 0, 0)`.
-Otherwise null, with no imports.
+When `u`'s fire order is 2, the result and every import are those of the search for (*u*, 0, 0),
+defined under `FindWeaponTarget`: the radius is `u.def.range`, with no range import. Otherwise null, with
+no imports.
 
 ### `ChooseWeapon(u)`
 
@@ -255,8 +261,7 @@ Otherwise null, with no imports.
 - **Q3:** a ground target above sea level asks for the ground height twice and uses the second answer.
 - **Q4:** a search picks candidates in random order by removing each pick and moving the last candidate
   into its place, so the order depends on the draws and on the list's order.
-- **Q5:** `ChooseWeapon` returns 2 when only weapon 2 is ready, and 0 when none is, the same as when
-  weapon 0 is.
+- **Q5:** `ChooseWeapon` returns 0 when no weapon is ready, and 2 when weapon 2 is the only one ready.
 
 ## 7. Examples
 
@@ -299,15 +304,23 @@ Otherwise null, with no imports.
 
 Not covered by any recording:
 
-- `ChooseWeapon` returning 2, and `SetWeaponTargetPos` with a *z* of −32768 (Q1).
+- `ChooseWeapon` returning 1 or 2 (every recorded call returns 0), and `SetWeaponTargetPos` with a
+  *z* of −32768 (Q1).
+- `FindBestTargetIfFireAtWill` with a fire order other than 2, and `GetWeaponTargetPos` with a unit
+  target whose `unitDefIndex` is 0.
+- In the search: the targetable and excluded bits, a shooter whose player is not computer-controlled,
+  a shooter that is reach not checked, and a `UnitDef.range` that needs its sign extended.
+- Each lead condition on its own (ready, the never-leads flag, a `speed` of 0, a null `motion`).
 - `FindWeaponTarget` with more than 50 candidates, with a fallback pick chosen, or with two equal
   distances.
 - The always-attackable flag, bit 10 of `Game.uiOptionFlags`, `UnitDef.categories` with a candidate
   in it, and a weapon that skips hidden targets. The recordings would match even if each of these
   checks were removed.
 - A `killCount` of exactly 5 or 6 when every other lead condition holds.
-- `SetWeaponTargetUnit` with a null target, and a ground height below or equal to sea level with a
-  nonzero sea level.
+- `SetWeaponTargetUnit` with a null target, and a ground height below or equal to sea level.
+- Inputs outside the engine's use, whose result this spec doesn't define: a null `weapon{w}Def` when
+  the lead or the hidden test reads it, a unit target with a negative TargetX, and a search distance
+  draw with *q* ≤ 0 (the module passes *q* to `services.RandomInt` as it is).
 - The callback argument of `"TargetCleared"`, which the recordings show as `?`: it is null.
 
 ## 8. Kit version
