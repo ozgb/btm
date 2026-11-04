@@ -14,20 +14,23 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@master
+        if: hashFiles('gate.toml') != ''
         with:
           toolchain: "1.99.1"
           targets: wasm32-unknown-unknown
       - name: Cache wasm-tools
         id: wasm-tools
+        if: hashFiles('gate.toml') != ''
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/wasm-tools
           key: wasm-tools-1.262.0
       - name: Install wasm-tools
-        if: steps.wasm-tools.outputs.cache-hit != 'true'
+        if: hashFiles('gate.toml') != '' && steps.wasm-tools.outputs.cache-hit != 'true'
         run: cargo install wasm-tools --version 1.262.0 --locked
       - name: Read gate.toml
         id: gate
+        if: hashFiles('gate.toml') != ''
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import tomllib
@@ -41,6 +44,7 @@ jobs:
           print(f"subsystem={subsystem}")
           PY
       - name: Build the module
+        if: hashFiles('gate.toml') != ''
         env:
           CRATE: ${{ steps.gate.outputs.crate }}
           SUBSYSTEM: ${{ steps.gate.outputs.subsystem }}
@@ -62,6 +66,7 @@ jobs:
           python3 "$GITHUB_WORKSPACE/tools/meter.py" "$1" "$GITHUB_WORKSPACE/out/module.wasm"
           printf '%s\n' "$SUBSYSTEM" > "$GITHUB_WORKSPACE/out/subsystem"
       - uses: actions/upload-artifact@v4
+        if: hashFiles('gate.toml') != ''
         with:
           name: module
           path: |

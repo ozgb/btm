@@ -5,7 +5,8 @@ contract between the pull request and the gate.
 
 ## Naming the module
 
-A pull request names its module with a file `gate.toml` at the repository root:
+A pull request names its module with a file `gate.toml` at the repository root (a pull request
+without one has no module, and the workflow builds nothing):
 
 ```toml
 crate = "path/to/a/cargo/crate"
