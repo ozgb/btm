@@ -1,0 +1,2 @@
+crate = "fixtures/gate/wind-meteors-const"
+subsystem = "wind_meteors"
