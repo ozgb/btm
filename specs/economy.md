@@ -77,7 +77,7 @@ module calls each by its name, as section 4 gives.
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. The budget comes with the manifest entry.
 - Hooks: the header names the hooks `ResourceIncome` and `StatsAccumulate` for `UpdatePlayerEconomy`.
-  The kit defines no way to raise a hook and no recording shows one, so this spec raises none.
+  This module raises no hook.
 
 ### Arguments outside the block
 
@@ -152,7 +152,8 @@ Nothing outside the fields above.
 ## 4. Behaviour
 
 Within one call, only the order of import calls is observable. The block writes are compared at the
-end of the call, so the order they are listed in here carries no meaning.
+end of the call, so their order matters only where two of them add to the same field: those add in
+the order given here, because each addition rounds.
 
 Section 5 defines the arithmetic each formula below uses: *add* (`F` ← *F* ⊕ *v*), *income* (`I(a, F, v)`)
 and *request* (`R(a, v)`).
@@ -203,24 +204,23 @@ At the start of the call `p.energyCapacity` and `p.metalCapacity` are +0.0, befo
 to them. A call whose slice has no counted unit makes no imports.
 
 **The player.** The player's own account *e* = `p.econ` adds last to the sums, with one difference:
-for each resource, *M*\* is the sum *M* + *e*.`Make` taken exactly in 64 bits, and *M* is *M*\* rounded
-to 32 bits (section 5). *U*, *P* and *S* add *e*'s fields as the units' did. Then, for each resource
-(energy, then metal; `X` stands for `energy` or `metal`):
+for each resource, *M*\* is the sum *M* + *e*.`Make` rounded to 64 bits, and *M* is *M*\* rounded
+to 32 bits (section 5). *U*, *P* and *S* add *e*'s fields as the units' did. If bit 0 of `p.flags` is set,
+`p.energyCapacity` adds `p.energyStorageBonus` and `p.metalCapacity` adds `p.metalStorageBonus`. Then,
+for each resource (energy, then metal; `X` stands for `energy` or `metal`):
 
-- If bit 0 of `p.flags` is set, `p.energyCapacity` adds `p.energyStorageBonus` and `p.metalCapacity`
-  adds `p.metalStorageBonus`.
 - `p.XIncome` becomes *M*, and `p.XUsage` becomes *U*.
 - `p.totalEnergyProduced` adds *M*\* for energy, and `p.totalMetalProduced` adds *M* for metal (Q1).
   `p.totalXConsumed` adds *U*.
-- The *available* amount *A* is *M*\* + `p.X`, rounded to 32 bits.
-- The stall is paid first, then the demand, each as far as *A* goes:
+- The amount *A* is *M*\* + `p.X`, rounded to 32 bits.
+- The stall is paid first, then the paid use, each as far as *A* goes:
 
-| Case | Stall ratio *rs* | Left *L* |
+| Case | Stall ratio *rs* | Remainder *L* |
 | --- | --- | --- |
 | *S* ≤ *A* | 1 | *A* − *S* |
 | otherwise | *A* / *S* | 0 |
 
-| Case | Demand ratio *rp* | Stock left *B* |
+| Case | Paid-use ratio *rp* | Stock left *B* |
 | --- | --- | --- |
 | *P* ≤ *L* | 1 | *L* − *P* |
 | otherwise | *L* / *P* | 0 |
@@ -464,6 +464,6 @@ don't confirm them either.
 
 ## 8. Kit version
 
-The economy recordings are not in a tagged kit yet: this spec was written against an untagged export at
-commit 20a91978 of the source repository, interfaces version `interfaces-v1` (economy 1.1). The gate pair
+The economy recordings are not in a tagged kit yet: this spec was written against an untagged kit
+export, interfaces version `interfaces-v1` (economy 1.1). The gate pair
 for economy is the first `reference-traces-v*` tag that holds `tests/replay/economy/`.
