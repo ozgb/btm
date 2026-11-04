@@ -229,7 +229,7 @@ for each resource (energy, then metal; `X` stands for `energy` or `metal`):
   Otherwise `p.X` becomes *B*.
 
 **Settlement.** Every unit of the slice that is counted at this point, in slice order (bit 28 is read
-again here, after the `units.SetStateBits` imports above, which may change `Unit.flags`), and then *e*, has its account settled with the ratios of
+again here, whatever `Unit.flags` holds after the `units.SetStateBits` imports above), and then *e*, has its account settled with the ratios of
 each resource. For each resource of an account:
 
 - `XMakePrev` becomes `XMake`, and `XUsePrev` becomes `XUse` (their values in this call, after the
