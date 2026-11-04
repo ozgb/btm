@@ -97,7 +97,7 @@ recordings do, `weapon{w}TargetX` and so on:
 A slot holds:
 
 - *no target* when TargetX = 0 and TargetZ = −32768;
-- a *unit target* when TargetZ = −32768 and TargetX ≠ 0: the unit at index TargetX (read as unsigned
+- a *unit target* when TargetZ = −32768 and TargetX ≠ 0: the unit at index TargetX (read as signed
   16-bit) of the unit pool, that is at `Game.units` plus TargetX times the `Unit` stride;
 - a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units.
 
@@ -108,7 +108,7 @@ A slot holds:
 
 - `Game`: `units`, `seaLevel` (unsigned byte), `uiOptionFlags` (bit 10, value 0x400).
 - `Unit`: `pos` (`Vec3`: 32-bit *x*, *y*, *z*, 65536 to a map unit), `id`, `def`, `player`,
-  `playerIndex`, `unitDefIndex`, `killCount`, `motion`, `activateFlags`, `flags`.
+  `playerIndex`, `unitDefIndex`, `killCount`, `motion`, `activateFlags`, `flags`, `script`.
 - `UnitMotion`: `velocity` (`Vec3`).
 - `Player`: `active` (int), `type` (byte).
 - `UnitDef`: `range` (signed 16-bit), `flags1`, `categories`, `weaponCategories` (`Ref<UnitTypeSet>[3]`).
@@ -173,8 +173,8 @@ The unit target of the slot, or null when the slot holds no unit target. No impo
 | The slot | Imports, in order | Result and writes |
 | --- | --- | --- |
 | no target | none | 0 |
-| a ground target at (*x*, *z*) | `units.GetGroundHeight` of (*x*, *z*), giving *h*₁. If *h*₁ > `Game.seaLevel`: `units.GetGroundHeight` of (*x*, *z*) again, giving *h* (Q3); otherwise *h* = `Game.seaLevel` | 1; `pos` = (*x*, *h* × 65536, *z*) |
-| a unit target *t* with `t.unitDefIndex` = 0 | as `ClearWeaponTarget` for the slot: `units.FindScript`, then `units.StartScriptWithArgs`, with the same arguments | 0; TargetX = 0, TargetZ = −32768 |
+| a ground target at (*x*, *z*) = (TargetX × 65536, TargetZ × 65536) | `units.GetGroundHeight` of (*x*, *z*), giving *h*₁. If *h*₁ > `Game.seaLevel`: `units.GetGroundHeight` of (*x*, *z*) again, giving *h* (Q3); otherwise *h* = `Game.seaLevel` | 1; `pos` = (*x*, *h* × 65536, *z*) |
+| a unit target *t* with `t.unitDefIndex` = 0 | `units.FindScript(u.script, "StartBuilding")`, its result ignored (Q2); then `units.StartScriptWithArgs(u.script, "TargetCleared", null, 0, 1, w, 0, 0, 0)`, its result ignored | 0; TargetX = 0, TargetZ = −32768 |
 | a unit target *t* | `units.GetSweetSpot(t, s)` | 1; `pos` = *s*, led when the weapon leads (below) |
 
 The weapon *leads* when all of these hold: the slot is ready, the slot's `WeaponDef` has
@@ -250,8 +250,7 @@ Otherwise null, with no imports.
 
 ## 6. Quirks
 
-- **Q1:** a ground target whose *z* field would be −32768 is stored as −32767, so that it isn't read as a
-  unit target.
+- **Q1:** a ground target whose *z* field would be −32768 is stored as −32767.
 - **Q2:** clearing a target looks up the script `"StartBuilding"` and ignores the answer.
 - **Q3:** a ground target above sea level asks for the ground height twice and uses the second answer.
 - **Q4:** a search picks candidates in random order by removing each pick and moving the last candidate
