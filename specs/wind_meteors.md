@@ -126,6 +126,9 @@ Nothing outside the fields above. Every tick comparison is against `Game.ticks` 
 
 ## 4. Behaviour
 
+Within one call, only the order of import calls is observable. The block writes are compared at the
+end of the call, so the order they are listed in here carries no meaning.
+
 ### `UpdateWindOnStream(stream)` and `UpdateWind()`
 
 `UpdateWind()` has exactly the behaviour of `UpdateWindOnStream(main)`. Let *t* be `Game.ticks`.
@@ -299,8 +302,9 @@ The weapon, its name and the timing parameters aren't saved. They come from the 
   bits count, 0x10000 a full turn) and *s* a 32-bit int.
   - The table: *T*[*i*] = round(sin(*i* × 2π / 512) × 8192) for *i* = 0 to 511, rounded to nearest,
     with sin computed in double precision.
-  - S(*a*, *s*) = *P*(*T*[((*a* + 0x20) >> 7) mod 512], *s*), and C(*a*, *s*) = *P*(*T*[((*a* + 0x4020) >> 7) mod 512], *s*),
-    with *a* taken as an unsigned 16-bit value before the addition.
+  - S(*a*, *s*) = *P*(*T*[⌊(*a* + 32) / 128⌋ mod 512], *s*), with *a* taken as an unsigned 16-bit
+    value (0 to 65535). The table entry is the nearest one, a tie going up.
+  - C(*a*, *s*) = S(*a* + 0x4000, *s*): the cosine is the sine a quarter turn on.
   - *P*(*e*, *s*) = ⌊(*e* × *s* + 4096) / 8192⌋, with the product in 64 bits, keeping the low 32 bits
     as a signed int.
 - **Wind strength.** A float division of two floats, correctly rounded (IEEE 754 single precision).
