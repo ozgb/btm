@@ -309,7 +309,7 @@ Not covered by any recording:
 - `FindBestTargetIfFireAtWill` with a fire order other than 2, and `GetWeaponTargetPos` with a unit
   target whose `unitDefIndex` is 0.
 - In the search: the targetable and excluded bits, a shooter whose player is not computer-controlled,
-  a shooter that is reach not checked, and a `UnitDef.range` that needs its sign extended.
+  a shooter whose def is reach not checked, and a `UnitDef.range` that needs its sign extended.
 - Each lead condition on its own (ready, the never-leads flag, a `speed` of 0, a null `motion`).
 - `FindWeaponTarget` with more than 50 candidates, with a fallback pick chosen, or with two equal
   distances.
@@ -319,8 +319,10 @@ Not covered by any recording:
 - A `killCount` of exactly 5 or 6 when every other lead condition holds.
 - `SetWeaponTargetUnit` with a null target, and a ground height below or equal to sea level.
 - Inputs outside the engine's use, whose result this spec doesn't define: a null `weapon{w}Def` when
-  the lead or the hidden test reads it, a unit target with a negative TargetX, and a search distance
-  draw with *q* ≤ 0 (the module passes *q* to `services.RandomInt` as it is).
+  the lead or the hidden test reads it, a unit target with a negative TargetX, and a *q* that wraps
+  below 0.
+- A distance draw with *q* = 0 (a candidate within one map unit on both *x* and *z*): the module passes
+  0 to `services.RandomInt`.
 - The callback argument of `"TargetCleared"`, which the recordings show as `?`: it is null.
 
 ## 8. Kit version
