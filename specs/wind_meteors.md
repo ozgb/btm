@@ -26,20 +26,47 @@ the map and by the `meteor` console command, and their state is kept in saved ga
 | `SaveMeteors`, `LoadMeteors` | when a game is saved or loaded |
 | `CmdMeteor` | the `meteor` console command |
 
-### Imports
+### The manifest entry
 
-| Import | Used for |
-| --- | --- |
-| `services.GameRand` | every random draw of the meteors, and the first draw of a wind change |
-| `services.RandomInt` | the wind's speed and direction |
-| `weapons.FindWeaponByName` | finding the meteor weapon |
-| `weapons.SpawnProjectile` | dropping a meteor |
-| `services.BuildDataPath`, `services.TdfFile_*`, `services.TdfRecord_GetField*` | reading the default meteor data file |
-| `services.FatalError` | a bad default meteor data file |
-| `services.CommandArgs_GetIntArg` | the console command's argument |
-| `services.HapiBank_*` | saved games |
+The module's entry in the engine's manifest (`docs/module-abi.md` section 4). The kit doesn't carry the
+manifest yet, so its entry is given here in full, and it is exact (ABI 9.1).
 
-The module calls no other import.
+- `name` and `interface`: `wind_meteors`.
+- `exports`, in this order: `UpdateWind`, `UpdateMeteors`, `InitMeteors`, `EmptyShutdownPreCleanup`,
+  `EnableMeteors`, `DisableMeteors`, `SetMeteorParams`, `LoadMeteorDefaults`, `SaveMeteors`,
+  `LoadMeteors`, `CmdMeteor`, `UpdateWindOnStream`.
+- `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI 8.2).
+- Slot kinds: every slot returns `void`. `SetMeteorParams` and `LoadMeteorDefaults` take `[linear]`,
+  `SaveMeteors` and `LoadMeteors` `[handle]`, `CmdMeteor` `[scratch]`, `UpdateWindOnStream` `[int]` (the
+  stream: 0 main, 1 load), and the others `[]`.
+- Imports, every one listed and nothing else:
+
+| Import | Kinds | Used for |
+| --- | --- | --- |
+| `weapons.SpawnProjectile` | `[block, linear, linear, int] -> int` | dropping a meteor |
+| `weapons.FindWeaponByName` | `[linear] -> block` | finding the meteor weapon |
+| `services.GameRand` | `[int] -> int` | every meteor draw, and the first draw of a wind change |
+| `services.RandomInt` | `[int] -> int` | the wind's speed and direction |
+| `services.FatalError` | `[linear] -> void` | a bad default meteor data file |
+| `services.BuildDataPath` | `[linear, linear, linear, linear] -> linear` | the default data file's path |
+| `services.TdfFile_Construct` | `[linear] -> void` | the default data file |
+| `services.TdfFile_Destruct` | `[linear] -> void` | the default data file |
+| `services.TdfFile_LoadFile` | `[linear, linear] -> int` | the default data file |
+| `services.TdfFile_SelectRecord` | `[linear, linear] -> int` | the default data file |
+| `services.TdfRecord_GetFieldInt` | `[handle, linear, int] -> int` | the default data file |
+| `services.TdfRecord_GetFieldDouble` | `[handle, linear, f64] -> f64` | the default data file |
+| `services.TdfRecord_GetFieldString` | `[handle, linear, linear, int, linear] -> int` | the default data file |
+| `services.CommandArgs_GetIntArg` | `[scratch, int, int] -> int` | the console command's argument |
+| `services.HapiBank_OpenAccount` | `[handle, linear] -> int` | saved games |
+| `services.HapiBank_SetIntegerItem` | `[handle, linear, int] -> int` | saved games |
+| `services.HapiBank_GetIntegerItem` | `[handle, linear, int] -> int` | saved games |
+
+The saved-game imports are `services` (ABI 9.3), as listed. Where `docs/replay-format.md` calls them
+slots of the `files` seam, it describes a different module.
+
+- Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
+  `__fuel_get`. The sine table of section 5 belongs in the module as a constant: building it at run time
+  would cost fuel on every call.
 
 ### Arguments outside the block
 
@@ -49,7 +76,11 @@ The module calls no other import.
 - **The console command** (`CmdMeteor`'s `scratch` argument) is the `CommandArgs` class of
   `interfaces/services.h`. The module reads argument 1 with `CommandArgs_GetIntArg`, and the argument
   count from the `count` field: the 32-bit integer at byte offset 0xd0 of the copy. The count includes
-  the command's own name, so `meteor 1` has a count of 2.
+  the command's own name, so `meteor 1` has a count of 2. No import gives the count, so this read is an
+  exception to ABI 7.2 ("its raw bytes are for the engine"). The exception stands until the ABI settles it.
+- **The `TdfFile`** (ABI 8.1) is three 32-bit words in the module's memory: the root record handle, the
+  current record handle (byte offset 4), and flags. "The current record" below means the handle at
+  byte offset 4.
 - **The saved-game bank** (`SaveMeteors`, `LoadMeteors`) is a `handle`, passed back to the
   `HapiBank_*` services only.
 
@@ -109,13 +140,15 @@ If `windCounter` < *t*, compared as unsigned 32-bit integers, the wind changes:
 4. `windX` becomes −S(`windDirection`, `windSpeed`) × 2 and `windZ` becomes
    −C(`windDirection`, `windSpeed`) × 2 (S and C in section 5).
 5. `windStrength` becomes `windSpeed` / `windSpeedDenominator`, computed as a 32-bit float division of
-   the two values converted to float, and then 1.0 if the quotient is above 1.0.
+   the two values converted to float, and then 1.0 if the quotient is above 1.0. The engine sets
+   `windSpeedDenominator` to 5000 at match load. A denominator of 0 never occurs, and the spec doesn't
+   define it.
 6. `windEnabled` becomes 1.
 
 Otherwise, only `windEnabled` becomes 0.
 
-The imports called, in order: `GameRand`, `RandomInt`, and then `RandomInt` again if the speed isn't 0.
-`RandomInt` always uses the main stream, even when `stream` is the load stream (Q1).
+The imports called, in order: `GameRand(stream)`, `RandomInt`, and then `RandomInt` again if the speed
+isn't 0. `RandomInt` draws from its own generator (`rng.seed` in the recordings), whatever `stream` is (Q1).
 
 ### `InitMeteors()`
 
@@ -135,7 +168,8 @@ Does nothing.
 
 ### `SetMeteorParams(params)`
 
-- `g_meteorWeaponName` becomes a copy of `params.name`, up to and including its NUL.
+- `g_meteorWeaponName` becomes a copy of `params.name`, up to and including its NUL. Callers always
+  pass a name that ends within its 32 bytes. Any other name is undefined.
 - `g_meteorSpawnMagnitude` becomes `params.radius`.
 - `g_meteorSpawnInterval` becomes 30 / `params.density`.
 - `g_meteorShowerDuration` becomes `params.duration` × 30.
@@ -146,24 +180,31 @@ toward zero to an int (section 5). The parameters are in seconds and the fields 
 
 ### `LoadMeteorDefaults(params)`
 
-Reads record `Default` of the data file `gamedata/meteor.<ext>`, where `<ext>` is the data word
-`g_extTdf`, into `params`. The imports, in order:
+Reads record `Default` of the data file `gamedata/meteor.<ext>` into `params`, where `<ext>` is the
+data word `g_extTdf`. The file is a `TdfFile` in the module's memory, and the path is a buffer of at
+least 256 bytes. Every outcome starts with these imports:
 
-1. `TdfFile_Construct` on a `TdfFile` in the module's memory.
-2. `BuildDataPath(buffer, "gamedata", "meteor", g_extTdf)`, into a buffer of at least 256 bytes.
-3. `TdfFile_LoadFile(file, buffer)`. If the result is 0, go to the last step: `params` is unchanged and there's no error (Q3).
-4. `TdfFile_SelectRecord(file, "Default")`. If the result is 0, go to the last step, again with no error (Q3).
-5. `TdfRecord_GetFieldString(current, params.name, "MeteorWeapon", 32, "")`, where *current* is the
-   current record handle the file holds. If the result is 0, call `FatalError` (below).
-6. `TdfRecord_GetFieldInt(current, "MeteorRadius", 0)` gives `params.radius`.
-7. `TdfRecord_GetFieldDouble(current, "MeteorDensity", 0.0)`, then the same for `"MeteorDuration"`
-   and `"MeteorInterval"`. Each result is rounded to the nearest float and gives `params.density`,
-   `params.duration` and `params.interval`.
-8. If any of the four values is 0, call `FatalError` (below).
-9. `TdfFile_Destruct(file)`.
+- `TdfFile_Construct(file)`, then `BuildDataPath(buffer, "gamedata", "meteor", g_extTdf)`, then
+  `TdfFile_LoadFile(file, buffer)`.
 
-`FatalError` takes the message `Hey, hoser!  The default meteor shower data was bogus!` (two spaces
-after the `!`). It doesn't return, and nothing follows it.
+What follows depends on the outcome:
+
+| Outcome | The imports after those | `params` |
+| --- | --- | --- |
+| The file doesn't load (`LoadFile` gives 0) | `TdfFile_Destruct(file)` | unchanged (Q3) |
+| No `Default` record | `TdfFile_SelectRecord(file, "Default")` = 0, `TdfFile_Destruct(file)` | unchanged (Q3) |
+| No `MeteorWeapon` field | `SelectRecord` = 1, `TdfRecord_GetFieldString(current, params.name, "MeteorWeapon", 32, "")` = 0, `FatalError` | as `GetFieldString` left `name` |
+| A field is zero | `SelectRecord`, `GetFieldString`, then the fields (below), then `FatalError` | written |
+| Good | `SelectRecord`, `GetFieldString`, then the fields (below), then `TdfFile_Destruct(file)` | written |
+
+- **The fields:** `TdfRecord_GetFieldInt(current, "MeteorRadius", 0)` gives `params.radius`. Then
+  `TdfRecord_GetFieldDouble(current, key, 0.0)` for `"MeteorDensity"`, `"MeteorDuration"` and
+  `"MeteorInterval"`, in that order. Each result is rounded to the nearest float, giving
+  `params.density`, `params.duration` and `params.interval`.
+- **"A field is zero":** `params.radius` is 0, or any of the three floats is 0.0 after rounding. All four
+  are written before `FatalError` is called.
+- **`FatalError`** takes the message `Hey, hoser!  The default meteor shower data was bogus!` (two spaces
+  after the `!`). It doesn't return, so no `TdfFile_Destruct` follows it.
 
 ### `UpdateMeteors()`
 
@@ -201,7 +242,7 @@ Let *t* be `Game.ticks`. All comparisons with *t* are unsigned 32-bit.
 - The position is (`g_meteorOrigin.x` × 2^20 − S(*a*, *R*), 88473600, `g_meteorOrigin.y` × 2^20 − C(*a*, *R*)),
   each wrapping at 32 bits.
 - `SpawnProjectile(g_meteorWeapon, position, velocity, 1)`: the weapon as its address (block base plus
-  the stored offset), and the position and velocity as `Vec3` records (`x`, `y`, `z`, each a 32-bit
+  the stored offset, or 0 when the stored offset is 0, as `interfaces/ref.h` converts it), and the position and velocity as `Vec3` records (`x`, `y`, `z`, each a 32-bit
   int) in the module's memory. The result is ignored.
 
 The imports called, in order: four `GameRand(main)` if a shower started, then two `GameRand(main)` and
@@ -242,12 +283,16 @@ The weapon, its name and the timing parameters aren't saved. They come from the 
 
 ## 5. Exactness
 
-- **Random draws.** `GameRand` returns 0 to 32767. Every scaling ⌊*d* × *k* / 32768⌋ is computed
-  exactly, without overflow (a 64-bit product), and is never negative for *k* ≥ 0. `RandomInt` is
-  called with whatever range results. The service itself returns 0 for a range below 2.
+- **Random draws.** `GameRand` returns 0 to 32767. Every scaling written ⌊*d* × *k* / 32768⌋ in this
+  spec is the 64-bit product *d* × *k* (no overflow), divided by 32768 and truncated toward zero. That is
+  the floor for *k* ≥ 0, and rounds toward zero for a negative *k* (a negative radius or map size).
+  `RandomInt` is called with whatever range results. The service itself returns 0 for a range below 2.
+  `GameRand(main)` and `RandomInt` advance two different generators (`rng.main` and `rng.seed` in the
+  recordings).
 - **Integers.** Fields are 32-bit two's complement unless the table says otherwise. Sums and products
   wrap at 32 bits, and multiplying by 2^20 or 65536 is the same as a left shift that wraps. Signed
-  division truncates toward zero. Tick comparisons are unsigned. `Point16` stores wrap to 16 bits.
+  division truncates toward zero. Tick comparisons are unsigned. `Point16` coordinates are signed 16-bit:
+  in every computation they're sign-extended to 32 bits first, and storing one wraps to 16 bits.
 - **Float to int.** A double truncated toward zero to an int. A value outside the int range, or a NaN,
   becomes −2147483648.
 - **The table sine and cosine, S(*a*, *s*) and C(*a*, *s*).** *a* is a 16-bit angle (only its low 16
@@ -263,8 +308,8 @@ The weapon, its name and the timing parameters aren't saved. They come from the 
 ## 6. Quirks
 
 - **Q1.** `UpdateWindOnStream` takes its first draw from the stream it's given, but speed and direction
-  always come from `RandomInt`, which uses the main stream's own generator (`rng.seed` in the
-  recordings). A wind change made with the load stream therefore draws from both.
+  always come from `RandomInt`'s own generator (`rng.seed`). A wind change made with the load stream
+  therefore draws from both.
 - **Q2.** `InitMeteors` schedules the first shower at tick `g_meteorSpawnInterval` (a few ticks into
   the match), not after `g_meteorScheduleGap`.
 - **Q3.** A missing default meteor data file, or one without a `Default` record, leaves the params as
@@ -305,6 +350,9 @@ gives 21600.
 
 **The console switch**, `console-features.txt`, call at tick 100 of `CmdMeteor`, with `meteor 1` (count 2).
 `CommandArgs_GetIntArg 1 0` = 1 gives `g_meteorsEnabled` 1.
+
+**Not in any recording:** `SaveMeteors`, `LoadMeteors`, `FatalError`, `EmptyShutdownPreCleanup`, the two
+Q3 outcomes, and a wind change on the load stream. Only the scenario traces check these.
 
 ## 8. Kit version
 
