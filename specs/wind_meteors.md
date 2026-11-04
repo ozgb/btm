@@ -65,8 +65,8 @@ The saved-game imports are `services` (ABI 9.3), as listed. Where `docs/replay-f
 slots of the `files` seam, it describes a different module.
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. The sine table of section 5 belongs in the module as a constant: building it at run time
-  would cost fuel on every call.
+  `__fuel_get`. The budget is 250 units per tick for all of the module's slot calls together (ABI section
+  11.3, and the appendix in section 16). By ABI 11.3 the budget is ten times the most fuel any gate tick burns.
 
 ### Arguments outside the block
 
@@ -159,7 +159,9 @@ isn't 0. `RandomInt` draws from its own generator (`rng.seed` in the recordings)
 - `g_meteorNextStrikeTime` becomes `g_meteorSpawnInterval` (Q2).
 - `FindWeaponByName(g_meteorWeaponName)` (the address of the name in the block). If the result is 0,
   or the weapon's `meteor` bit is clear, `g_meteorWeapon` becomes the first entry of `Game.weapons`.
-  Otherwise it becomes the weapon found.
+  Otherwise it becomes the weapon found. Either way it's stored as a block offset: the weapon's address
+  minus `g_blockBase`. For the first entry of `Game.weapons`, that's `g_game` plus the field's offset in
+  `layout.json` (11507), minus `g_blockBase`.
 
 ### `EmptyShutdownPreCleanup()`
 
@@ -171,8 +173,9 @@ Does nothing.
 
 ### `SetMeteorParams(params)`
 
-- `g_meteorWeaponName` becomes a copy of `params.name`, up to and including its NUL. Callers always
-  pass a name that ends within its 32 bytes. Any other name is undefined.
+- `g_meteorWeaponName` becomes a copy of `params.name`, up to and including its NUL. The bytes of
+  `g_meteorWeaponName` after that NUL keep the values they had. Callers always pass a name that ends
+  within its 32 bytes. Any other name is undefined.
 - `g_meteorSpawnMagnitude` becomes `params.radius`.
 - `g_meteorSpawnInterval` becomes 30 / `params.density`.
 - `g_meteorShowerDuration` becomes `params.duration` × 30.
@@ -184,8 +187,8 @@ toward zero to an int (section 5). The parameters are in seconds and the fields 
 ### `LoadMeteorDefaults(params)`
 
 Reads record `Default` of the data file `gamedata/meteor.<ext>` into `params`, where `<ext>` is the
-data word `g_extTdf`. The file is a `TdfFile` in the module's memory, and the path is a buffer of at
-least 256 bytes. Every outcome starts with these imports:
+data word `g_extTdf`. The file is a `TdfFile` in the module's memory, and the path buffer must be large
+enough for the path the service writes (256 bytes is enough). Every outcome starts with these imports:
 
 - `TdfFile_Construct(file)`, then `BuildDataPath(buffer, "gamedata", "meteor", g_extTdf)`, then
   `TdfFile_LoadFile(file, buffer)`.
@@ -253,10 +256,10 @@ The imports called, in order: four `GameRand(main)` if a shower started, then tw
 
 ### `CmdMeteor(args)`
 
-- If the argument count is above 1: `CommandArgs_GetIntArg(args, 1, 0)`. If the result isn't 0, this
-  behaves as `EnableMeteors()`. Otherwise it behaves as `DisableMeteors()`.
-- Otherwise a shower starts at once, exactly as in `UpdateMeteors` (with the same four draws), whether
-  or not showers are switched on. No meteor falls in this call: the first one falls in the next
+- If the argument count is above 1: `CommandArgs_GetIntArg(args, 1, 0)`. `g_meteorsEnabled` becomes 1
+  if the result isn't 0, and 0 if it is. Nothing else changes.
+- Otherwise a shower starts at once: the same writes and the same four draws as a shower that starts in
+  `UpdateMeteors` (section 4, "A shower starts"), whether or not showers are switched on. No meteor falls in this call: the first one falls in the next
   `UpdateMeteors`, on the same tick if it runs at the same `Game.ticks`.
 
 ### `SaveMeteors(bank)`
@@ -276,12 +279,14 @@ this order:
 | `Target X` | `g_meteorTarget.x`, sign-extended |
 | `Target Z` | `g_meteorTarget.y`, sign-extended |
 
-The results are ignored.
+The results of all ten imports are ignored. In particular, every item is written even if
+`HapiBank_OpenAccount` gives 0. What the bank then does with the items is up to the service.
 
 ### `LoadMeteors(bank)`
 
 `HapiBank_OpenAccount(bank, "Meteor")`, then `HapiBank_GetIntegerItem(bank, item, 0)` for the same
-items in the same order. Each result goes to its field: the `Point16` coordinates keep the low 16 bits.
+items in the same order. Each result goes to its field, whatever `HapiBank_OpenAccount` gave: the
+service returns the default the module passes (0) for an item it doesn't have. The `Point16` coordinates keep the low 16 bits.
 The weapon, its name and the timing parameters aren't saved. They come from the map, as at any match load.
 
 ## 5. Exactness
@@ -297,11 +302,12 @@ The weapon, its name and the timing parameters aren't saved. They come from the 
   division truncates toward zero. Tick comparisons are unsigned. `Point16` coordinates are signed 16-bit:
   in every computation they're sign-extended to 32 bits first, and storing one wraps to 16 bits.
 - **Float to int.** A double truncated toward zero to an int. A value outside the int range, or a NaN,
-  becomes −2147483648.
+  becomes −2147483648. This has to hold without a trap. The module is built without non-trapping
+  conversions (ABI section 3.2), and wasm's trapping conversion traps on exactly those values.
 - **The table sine and cosine, S(*a*, *s*) and C(*a*, *s*).** *a* is a 16-bit angle (only its low 16
   bits count, 0x10000 a full turn) and *s* a 32-bit int.
   - The table: *T*[*i*] = round(sin(*i* × 2π / 512) × 8192) for *i* = 0 to 511, rounded to nearest,
-    with sin computed in double precision.
+    with sin computed in double precision. No entry is a tie.
   - S(*a*, *s*) = *P*(*T*[⌊(*a* + 32) / 128⌋ mod 512], *s*), with *a* taken as an unsigned 16-bit
     value (0 to 65535). The table entry is the nearest one, a tie going up.
   - C(*a*, *s*) = S(*a* + 0x4000, *s*): the cosine is the sine a quarter turn on.
@@ -335,7 +341,7 @@ From `tests/replay/wind_meteors/` of the kit.
 
 **Params**, `meteors-earthquake.txt`, call at tick 0 of `SetMeteorParams`. `density` f32:0x3ecccccd
 (0.4000000059604645) gives 30 / 0.4000000059604645 = 74.9999988…, truncated to 74. A float division
-would give 75: this is why the division is in double. `duration` 4.0 gives 120, and `interval` 720.0
+would give 75. `duration` 4.0 gives 120, and `interval` 720.0
 gives 21600.
 
 **A shower and its first meteor**, `meteors-hailstorm.txt`, call at tick 1 of `UpdateMeteors`.
@@ -360,6 +366,5 @@ Q3 outcomes, and a wind change on the load stream. Only the scenario traces chec
 
 ## 8. Kit version
 
-Written against a trial kit (`"version": null`) cut from commit `ca72eecf3`, interface `wind_meteors`
-1.2. To be pinned to the first tagged kit (`interfaces-v*`, `reference-traces-v*`) before the
-spec merges.
+Kit `interfaces-v1` and `reference-traces-v20`, the versions the gate judges against. Interface
+`wind_meteors` 1.2.
