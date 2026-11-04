@@ -228,8 +228,8 @@ for each resource (energy, then metal; `X` stands for `energy` or `metal`):
 - If *B* > `p.XCapacity`, `p.X` becomes `p.XCapacity` and `p.XWasted` adds *B* − `p.XCapacity`.
   Otherwise `p.X` becomes *B*.
 
-**Settlement.** Every unit of the slice that is counted at this point (bit 28 read again after the
-imports above), in slice order, and then *e*, has its account settled with the ratios of
+**Settlement.** Every unit of the slice that is counted at this point, in slice order (bit 28 is read
+again here, after the `units.SetStateBits` imports above, which may change `Unit.flags`), and then *e*, has its account settled with the ratios of
 each resource. For each resource of an account:
 
 - `XMakePrev` becomes `XMake`, and `XUsePrev` becomes `XUse` (their values in this call, after the
@@ -341,7 +341,8 @@ When *t* is a multiple of 60, metal is shared, and then energy:
   the *recipient* is the partner with the highest *i* whose `metal` < `player.metal`. If there is one,
   the import `players.TransferEnergy(player.index, recipient.index, amount, 1)` is made, with *amount*
   the smaller of (`player.metal` − `player.shareMetal`) × *k3* and `recipient.metalCapacity` −
-  `recipient.metal`, where *k3* is the 32-bit float 0x3eaaaaab (Q3).
+  `recipient.metal`, where *k3* is the 32-bit float 0x3eaaaaab (Q3). The import is made whatever
+  *amount* is, 0 or below included.
 - **Energy**, read after the metal import: the same with the `shareEnergy` bit, `energy`, `shareEnergy`
   and `energyCapacity`, the factor 0.5 in place of *k3*, and the import `players.TransferMetal`.
 
@@ -388,6 +389,8 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   the product *D* × *k* is rounded to 64 bits, and *C* = f64(`recipient.XCapacity` − `recipient.X`).
 - **Ticks:** `Game.ticks` and `Unit.workTime` are compared as unsigned 32-bit integers, and the
   multiples of 60 and 450 are of the unsigned value.
+- **Division:** every division is an IEEE 754 division that doesn't trap: *A* / *S* with *S* = 0 and
+  *A* < 0 gives −∞.
 - **NaN:** the kit has no recording with a NaN in any field this module reads, and this spec doesn't
   define the result of one.
 
@@ -456,7 +459,7 @@ Values are given as decimals, with the 32-bit pattern where the rounding matters
 
 **Not covered by any recording:** `UpdateResourceSharing`, `SaveUnitAccounts`, `RequestEnergy`,
 `SpendEnergy`, `SpendMetal` and `SpendEnergyAndMetal`; in `UpdatePlayerEconomy`, a cloak payment (every
-recorded `SetStateBits` sets 0), the handicap of difficulty 1, a player of type 3, and a unit whose owner
+recorded `SetStateBits` sets 0), a player of type 3, and a unit whose owner
 isn't `p`; `LoadUnitAccounts` with a missing box; and a footprint cell outside the map in
 `UpdateMetalExtraction`. Several 64-bit details above (the rounding of *M*\*, *A* and *L*, and the exact
 tidal product) give the same results as a 32-bit reading on every recorded call, so the recordings
