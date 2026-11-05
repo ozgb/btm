@@ -79,15 +79,17 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
-  larger buffer. The recordings hold at most 52 candidates in a search, so a buffer of at least 52 units
-  needs no second call; the kit does not define how a replay judges a second call. The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose
-  arguments are the player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius
-  and the flags, as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no
-  buffer and no capacity. The line `o out [...]` follows it and holds the whole list. After that line come
-  `o Unit#N.*` lines (for example `o Unit#2.flags 0x90240321`) giving the fields of the listed units that
-  changed since they were last written, such as `flags`, `posX`, `posZ`, `def`, `unitDefIndex` and
-  `activateFlags`. The recordings
-  hold one such import for each search, and the longest list in them has 52 units.
+  larger buffer. No search in the recordings lists more than 52 candidates, so a buffer of at least 52
+  units needs no second call; the kit does not define how a replay judges a second call.
+  The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
+  player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
+  as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
+  capacity. The line `o out [...]` follows it and holds the whole list. After that line come `o Unit#N.*`
+  lines (for example `o Unit#2.flags 0x90240321`) and `o UnitDef#N.flags1` lines (8 in the recordings,
+  for example `o UnitDef#21.flags1 0x0084008a` in `skirmish4-long` at call 25768), giving the fields of
+  the listed units, and of their defs, that changed since they were last written: `flags`, `posX`,
+  `posZ`, `def`, `unitDefIndex` and `activateFlags` of a unit. Each search in the recordings has one such
+  import.
 - **Text** given to imports (`"StartBuilding"`, `"TargetCleared"`) is a NUL-terminated string in the
   module's own memory.
 
@@ -117,8 +119,8 @@ A slot holds:
   and never changed, so the unit that `SetWeaponTargetUnit` stored by `id` is the one read back;
 - a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units.
 
-**`Unit.netDirtyFlags`** (16-bit, a word of bit-fields in `layout.json`, which doesn't name bits 10 to 14): every target set clears bits 10 to 14 of it (it becomes
-`netDirtyFlags` AND 0x83ff).
+**`Unit.netDirtyFlags`** (16-bit; `layout.json` gives it as one field and names no bit of it): every target set clears bits 10
+to 14 of it (it becomes `netDirtyFlags` AND 0x83ff).
 
 ### Read
 
@@ -136,17 +138,14 @@ A slot holds:
 
 | Field | Mask | Word used here |
 | --- | --- | --- |
-| `Unit.flags` | 0x10000000 | *targetable*: the unit takes part (the kit's documents call it the alive flag) |
-| `Unit.flags` | 0x00004000 | *excluded*: never chosen while set (the kit's documents call it the dying flag) |
-| `Unit.flags` | bits 20 and 21 | the *fire order*, 0 to 3; 2 is fire at will |
+| `Unit.flags` | 0x10000000 | *targetable*: the unit takes part (`layout.json` names the bit `alive`, bit 28) |
+| `Unit.flags` | 0x00004000 | *excluded*: never chosen while set (`layout.json` names the bit `killPending`, bit 14) |
+| `Unit.flags` | bits 20 and 21 | the *fire order*, 0 to 3; 2 is fire at will (`layout.json` names the two bits `fireOrder`) |
 | `Unit.activateFlags` | 0x10 | *hidden*, for weapons that respect it |
 | `UnitDef.flags1` | 0x00008000 | *always attackable* |
 | `UnitDef.flags1` | 0x10000000 | *reach not checked*: the shooter skips the reach import |
 | `WeaponDef.flags` | 0x00000080 | the weapon skips hidden targets |
 | `WeaponDef.flags` | 0x02000000 | the weapon never leads |
-
-The kit's `layout.json` names none of these `Unit.flags` bits (a kit gap, raised on #823), so the table is
-the only place they are defined.
 
 A player is *computer-controlled* when `active` ≠ 0 and `type` = 2.
 
@@ -161,8 +160,7 @@ Within one call, only the order of import calls is observable. The block writes 
 end of the call, so the order they are listed in here carries no meaning.
 
 In each slot, *u* is the unit, *w* the weapon (0, 1 or 2) and "the slot" is *u*'s weapon slot *w*. The
-engine never calls a slot with a *w* above 2: its callers loop over the three weapons, or pass the weapon
-of an order, which is 0, 1 or 2. This spec defines nothing for a larger *w*.
+engine never calls a slot with a *w* above 2; this spec defines nothing for a larger *w*.
 
 ### `SetWeaponTargetUnit(u, target, w)`
 
@@ -274,7 +272,7 @@ no imports.
   velocity component and *T*′ divided by 65536 and rounded toward negative infinity, in exact 64-bit
   arithmetic, reduced to its low 32 bits and added to *s* with 32-bit wrapping.
 - **The search distance:** *dx* and *dz* are 32-bit differences that wrap; hi(*v*) is *v* × *v* divided
-  by 2^32 and rounded down (the square is exact, below 2^62). *q* is hi(*dx*) + hi(*dz*) reduced to 32
+  by 2^32 and rounded down (the square is exact, at most 2^62). *q* is hi(*dx*) + hi(*dz*) reduced to 32
   bits as a signed value.
 - **The best picks:** a pick replaces the best of its kind only when its distance is strictly lower.
 - **The radius:** `UnitDef.range` is sign-extended from 16 bits.
@@ -341,9 +339,8 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
   units, so neither check can fail.
 - Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def is not
   always attackable: the bit is set in 16 recorded searches (`console-units`, from call 73), but no
-  recording holds it deciding a pick. The kit's "Not recorded" wording for this item, "the menu option bit 4
-  of the match flags", describes it wrongly: the bit this spec reads is bit 10 of `Game.uiOptionFlags`,
-  and the maintainer has filed a Docs issue to correct the kit.
+  recording holds it deciding a pick. The kit calls it "the menu option bit 4 of the match flags": the match flags are the
+  high byte of `Game.uiOptionFlags`, and its value 4 is bit 10 of the 16-bit word.
 - The lead with the slot's *ready* bit clear on its own: its only caller skips a slot without that bit
   (the kit describes the bit as the slot having a weapon).
 - The lead with a weapon whose never-leads flag is set (a cruise weapon) or whose `speed` is 0, for a
