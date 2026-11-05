@@ -80,10 +80,9 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
   larger buffer. No search in the recordings lists more than 52 candidates, so a buffer of at least 52
-  units needs no second call; the kit does not define how a replay judges a second call. The buffer is
-  not in the module's statics (its data and bss, which ABI section 12 hashes after every tick and treats
-  a change in as fatal); it is on the module's stack (ABI section 2.2), since a module never allocates
-  from the scratch area (ABI section 2.1).
+  units needs no second call; the kit does not define how a replay judges a second call. The module
+  allocates no heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are the same at the end
+  of each tick as at its start (ABI section 12).
   The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
   player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
@@ -227,7 +226,8 @@ The search then makes up to 50 *picks*, stopping early when the list is empty. P
 *i* = `services.RandomInt(n)`, with *n* the list's length less *k* − 1, and its candidate is the one at
 position *i* (from 0) among the candidates not yet picked, which stand in this order: the list's order at
 first, and after a pick at position *p*, the order in which the candidate that stood last takes
-position *p* and every other candidate keeps its position, with one candidate fewer (Q4). The pick *t* is *eligible* when:
+position *p* and every other candidate keeps its position, with one candidate fewer (Q4). The pick *t* is
+*eligible* when:
 
 1. *t* has `alive` (bit 28 of `t.flags`) set and `killPending` (bit 14) clear;
 2. `t.def` is always attackable, or `u`'s player is computer-controlled, or bit 10 of
@@ -321,7 +321,8 @@ no imports.
 4. **`tests/replay/targeting/orders-guard-attacked.txt`, the call at tick 138 of
    `FindWeaponTarget(Unit#251, 0, 1)`.** `weapons.GetWeaponRange` gives 200, and the list is
    [`Unit#2`, `Unit#3`, `Unit#4`]. `Unit#251`'s player is computer-controlled, its def is not reach not
-   checked, and its weapon does not skip hidden targets. All three candidates have `alive` set and `killPending` clear, and their `unitDefIndex` 95 is not in `weaponCategories[0]`, so each is preferred.
+   checked, and its weapon does not skip hidden targets. All three candidates have `alive` set and
+   `killPending` clear, and their `unitDefIndex` 95 is not in `weaponCategories[0]`, so each is preferred.
    `Unit#251.pos` has *x* 221249536 and *z* 92274688:
 
    | Pick | Draw | Candidate | *dx*, *dz* | *q* | Distance |
