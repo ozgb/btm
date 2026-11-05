@@ -132,6 +132,13 @@ an extractor makes per settlement before any handicap.
 - `PlayerInfo`: `kind` (byte), and the bits `shareMetal`, `shareEnergy`, `shareMapping`.
 - `Unit`: `flags`, `activateFlags`, `def`, `resourceSlot`, `buildLeft` (float), `workTime` (int),
   `cell`, `footprint` (`Point16`), `script`, `id`.
+- **Other names for the same bytes.** `layout.json` names some of the bytes above a second time, and the
+  recorded reads of the module appear under those names. `Unit.owner` (offset 236) is the same four
+  bytes as `resourceSlot.player` (the account's owner, offset 188 + 48). `Unit.speed` and `Unit.speed_bits`
+  (offset 260) are the same four bytes as `buildLeft`: the module reads them as `buildLeft`, in the test
+  for a complete unit. `Game.unknown_1a6b` (offsets 6763 to 7049) overlaps the first 39 bytes of
+  `Game.players` (offset 7011); the module reads from it the `active` field (the first four bytes) of the
+  first player, when that player owns an account. The module reads no other field through these names.
 - `UnitDef`: `energyuse`, `energymake`, `metalmake`, `extractsMetal`, `windgenerator`,
   `tidalgenerator`, `cloakcost`, `cloakcostmoving`, `energystorage`, `metalstorage` (floats), and
   `makesMetal` (unsigned byte).
@@ -153,9 +160,8 @@ A unit is *on* when bit 0 of `activateFlags` is set, and *complete* when `buildL
 
 Some fields of `Player` and `Unit` sit at offsets that aren't a multiple of their size
 (`layout.json` gives each offset: `Player`'s 64-bit floats from offset 172, and its `flags` at 329). `Player`
-is 331 bytes long, so the elements of `Game.players` after the first shift every field off its natural
-alignment. Every load and store of a field must accept any alignment. The kit doesn't yet say this in the
-ABI.
+is 331 bytes long, so in the elements of `Game.players` after the first, a 32-bit or 64-bit field sits at an
+address that isn't a multiple of its size. The same holds for fields of `Unit`.
 
 ### Between ticks
 
@@ -167,8 +173,8 @@ Within one call, only the order of import calls is observable. The block writes 
 end of the call, so their order matters only where two of them add to the same field: those add in
 the order given here, because each addition rounds.
 
-Section 5 defines the arithmetic each formula below uses: *add* (`F` ← *F* ⊕ *v*), *income* (`I(a, F, v)`)
-and *request* (`R(a, v)`).
+Section 5 defines the arithmetic each formula below uses: *add* (`F` adds *v*) and *income*
+(`I(a, F, v)`).
 
 ### `UpdatePlayerEconomy(p)`
 
@@ -186,8 +192,8 @@ that account's `Make` for the unit's own sums.
 | The unit | Effect |
 | --- | --- |
 | a producer that is not on | none |
-| a producer that is on | *e* = `d.energyuse`. If *e* ≥ 0: *granted* = `R(a, e)`. If *e* < 0: `I(a, a.energyMake, −e)`, and *granted* is 0. Then the first row of the next table that matches. |
-| not a producer, and on or moving | *e* = `d.energyuse`. If *e* ≥ 0: `R(a, e)`. If *e* < 0: `I(a, a.energyMake, −e)`. |
+| a producer that is on | *e* = `d.energyuse`. If *e* ≥ 0: `a.energyUse` adds *e*; then if `a.energyStall` > 0, *granted* is 0, else `a.energyUsePaid` adds *e* and *granted* is 1. If *e* < 0: `I(a, a.energyMake, −e)`, and *granted* is 0. Then the first row of the next table that matches. |
+| not a producer, and on or moving | *e* = `d.energyuse`. If *e* ≥ 0: `a.energyUse` adds *e*, and if `a.energyStall` is not above 0, `a.energyUsePaid` adds *e* too. If *e* < 0: `I(a, a.energyMake, −e)`. |
 | any other | none |
 
 | The producer's type | Effect |
@@ -217,7 +223,14 @@ A row that matches excludes the rows after it, whether or not its effect happens
    in slice order.
 
 At the start of the call `p.energyCapacity` and `p.metalCapacity` are +0.0, before the first unit adds
-to them. A call whose slice has no counted unit makes no imports.
+to them. A call whose slice has no counted unit makes no imports, and only the unit part is skipped: the player
+part below runs as it does for any slice, with every sum before the player's own account at +0.0 and
+the capacities at +0.0 (so `p.energy` and `p.metal` are then capped at 0, or at the storage bonuses when
+bit 0 of `p.flags` is set). A slice with no unit at all, one in which `p.unitsBegin` is after
+`p.unitsEnd`, is the same case. In every call the engine makes, `p.unitsBegin` and `p.unitsEnd` are the
+first and last unit of the player's own block of the unit table, a block of the same length for every player
+(250 units in the recordings), so the slice is never empty and never null; the engine calls the slot only for
+a player whose `active` is not 0 and whose `index` isn't 10.
 
 **The player.** The player's own account *e* = `p.econ` adds last to the sums, with one difference:
 for each resource, *M*\* is the sum *M* + *e*.`Make` rounded to 64 bits, and *M* is *M*\* rounded
@@ -257,8 +270,7 @@ its counted bit. For each resource of an account:
 ### `RequestEnergy(self, r, amount)`
 
 `self` is not read (Q2). Every effect is on the account `r`: `r.energyUse` adds `amount`; then if
-`r.energyStall` > 0 the result is 0, else `r.energyUsePaid` adds `amount` and the result is 1. This is
-`R(r, amount)` of section 5.
+`r.energyStall` > 0 the result is 0, else `r.energyUsePaid` adds `amount` and the result is 1.
 
 ### `RequestEnergyAndMetal(self, energy, metal)`
 
@@ -319,7 +331,9 @@ With *d* = `unit.def`: if `d.extractsMetal` > 0 is false, nothing happens, with 
 
 The twelve floats of `self` become +0.0, and `self.player` becomes a reference to element *k* of
 `Game.players`, where *k* is the low 8 bits of `playerIndex`. Like every `Ref`, it is stored as a block
-offset (ABI 7.1): the offset of `Game.players` in the block plus 331 × *k*. No imports. Callers pass a
+offset (ABI 7.1), a 32-bit offset from the block's base (the data word `g_blockBase`; 0 is null): the
+address of that element, minus `g_blockBase`. That is the offset of the game record from the block's base
+(`g_game` − `g_blockBase`), plus the offset of `Game.players` in `Game` (7011), plus 331 × *k*. No imports. Callers pass a
 player's slot, 0 to 9, only; for any other *k* the result is undefined and the module need not check.
 
 ### `SaveUnitAccounts(self, info, bank)`
@@ -332,7 +346,8 @@ The box name is `u` followed by `info.id` as four lower-case hexadecimal digits 
 3. `files.BankWriteBox(bank, energy group, 24)`, the energy group being the 24 bytes at `self`;
 4. `files.BankWriteBox(bank, metal group, 24)`, the metal group being the 24 bytes at `self` + 24.
 
-`self.player` isn't saved. Nothing is written to the block.
+`self.player` isn't saved. Nothing is written to the block: the two groups are only the source of the
+bytes written, so the account is unchanged and no recording of the call has a `w` line.
 
 ### `LoadUnitAccounts(self, info, bank)`
 
@@ -343,9 +358,21 @@ The box name is as for `SaveUnitAccounts`.
 | 0 | nothing more |
 | other | `files.BankSeekBox(bank, 0)`, then `files.BankReadBox(bank, energy group, 24)`, then `files.BankReadBox(bank, metal group, 24)` |
 
-Each read result is ignored by the module, but it says how much the read returned: after the call, the
-energy group of the account holds the bytes the first read returned, followed by the bytes it had before
-for any part of the 24 the read didn't return, and the metal group is the same for the second read.
+The module ignores each read result and makes no read other than these two. What the account holds
+afterwards depends on what each read returns (`interfaces/files.h`: the number of bytes read, up to the
+length asked, and 0 at the end of the box; the position of the box moves on by the bytes read, so the second
+read continues where the first stopped). The bytes of the account that a read doesn't return keep the
+value they had before the call:
+
+| Result of the read | The group read afterwards |
+| --- | --- |
+| 24 | all 24 bytes are the bytes read |
+| *n*, from 1 to 23 | the first *n* bytes are the bytes read, the other 24 − *n* are unchanged |
+| 0 | unchanged |
+| below 0 | unchanged (the import never returns it) |
+
+A box of 30 bytes therefore fills the energy group, and the first 6 bytes of the metal group. A box shorter
+than 24 bytes fills the first part of the energy group, and leaves the metal group unchanged.
 `self.player` isn't read from the bank.
 
 ### `UpdateResourceSharing(player)`
@@ -392,8 +419,6 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   becomes f32(f64(`F` + f64(*v* × *h*))). Without a handicap (any other owner, or any other
   difficulty), `F` becomes f32(f64(`F` + *v*)). The handicap is the owner's, not `p`'s, in
   `UpdatePlayerEconomy`.
-- ***Request*** `R(a, v)`: `a.energyUse` adds *v*. If `a.energyStall` > 0 the request is refused (0);
-  otherwise `a.energyUsePaid` adds *v* and the request is granted (1).
 - **Products in `I`:** `Game.windStrength` × `d.windgenerator` and `Game.tidal` × `d.tidalgenerator` are
   exact products, not rounded to 32 bits before they enter `I`. The pin is
   `tests/replay/economy/tidal-rounding.txt`, the call at tick 6270 of `UpdatePlayerEconomy(Player#0)`: the
@@ -406,12 +431,16 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   to the exact sum of its value before and the term (*M* ⊕ `a.energyMake`, and so on). *M*\* is the 64-bit
   float nearest to *M* + *e*.`Make`; *M* is the 32-bit float nearest to *M*\*. *A* is
   f32(f64(*M*\* + `p.X`)).
-- **The ratios:** *L* = f64(*A* − *S*), a 64-bit value that is not rounded to 32 bits, or 0. When they
-  are not 1, *rs* = f32(*A* / *S*) and *rp* = f32(f64(*L* / *P*)). *B* = f32(f64(*L* − *P*)), or 0. The
-  wasted amount adds f64(*B* − `p.XCapacity`).
-- **The stall:** with *s* = `XStall` and *q* = `XUsePaid`, both 32-bit, the new `XStall` is
-  f32(f64(f64(*s* − f64(*rs* × *s*)) + f64(*q* − f64(*rp* × *q*)))): the value of that expression, with
-  each f64 a rounding to 64 bits as written, and the f32 the final rounding to 32 bits.
+- **The ratios:** *A*, *S* and *P* are 32-bit floats. When *S* ≤ *A*, *L* is the difference *A* − *S*
+  rounded to 64 bits only (it is not rounded to 32 bits), and *rs* is 1; otherwise *L* is 0 and *rs* is the
+  quotient *A* / *S* rounded to 32 bits. When *P* ≤ *L*, *rp* is 1 and *B* is the difference *L* − *P*
+  rounded to 64 bits, then to 32 bits; otherwise *B* is 0 and *rp* is the 64-bit quotient *L* / *P* rounded to
+  32 bits. The wasted amount adds the difference *B* − `p.XCapacity` rounded to 64 bits.
+- **The new stall of an account:** with *s* = `XStall` and *q* = `XUsePaid` (both 32-bit), the result
+  is formed in this order. The product *rs* × *s* is rounded to 64 bits, and *s* minus it is rounded to
+  64 bits. The product *rp* × *q* is rounded to 64 bits, and *q* minus it is rounded to 64 bits. The two
+  differences are added and rounded to 64 bits, and that sum is rounded to 32 bits; this is the new
+  `XStall`.
 - **The cloak cost:** the float is truncated towards zero to a 32-bit integer, and the integer converted
   to a float exactly. A NaN or a value outside the 32-bit range gives the integer −2147483648.
 - **Extraction:** *W* is a signed 16-bit integer: it starts at 0, each cell adds `Cell.metal` + 1, and it
