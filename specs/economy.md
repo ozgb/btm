@@ -13,7 +13,7 @@ surplus metal and energy, and the map, with allied remote players.
 
 ## 2. Interface
 
-### Slots (`interfaces/economy.h`, version 1.1)
+### Slots (`interfaces/economy.h`, version 2.0)
 
 | Slot | When the engine calls it |
 | --- | --- |
@@ -33,10 +33,10 @@ as the header lists.
 
 ### The manifest entry
 
-The engine's manifest (`docs/module-abi.md` section 4) has no `economy` entry yet, and the ABI's kinds
-(section 7) have no 32-bit float, which four slots take or return. Until both are settled, this section
-gives what the entry must hold apart from those kinds; the kinds marked `f32` below are a 32-bit IEEE
-754 float.
+The kit's manifest (`wasm/modules.json`) carries the slot signatures of this module (`signatures.economy`)
+and its interface major, 2 (`majors.economy`). It has no build entry for it and no budget: a clean-room
+module sets its own (see Fuel). This section gives the entry the module must have. The kind `f32` is a
+32-bit IEEE 754 float that crosses the boundary bit for bit (ABI section 7).
 
 - `name` and `interface`: `economy`.
 - `exports`, in this order: `UpdateResourceSharing`, `GetEnergyUse`, `UpdatePlayerEconomy`,
@@ -66,16 +66,16 @@ gives what the entry must hold apart from those kinds; the kinds marked `f32` be
 | `files.BankSeekBox` | `[handle, int] -> void` | saved games |
 | `files.BankReadBox` | `[handle, linear, int] -> int` | loading an account |
 | `files.BankWriteBox` | `[handle, linear, int] -> int` | saving an account |
-| `players.TransferEnergy` | `[int, int, f32, int] -> void` | sharing metal (see the note below) |
-| `players.TransferMetal` | `[int, int, f32, int] -> void` | sharing energy (see the note below) |
+| `players.TransferEnergy` | `[int, int, f32, int] -> void` | sharing metal (the import named `TransferEnergy` moves metal) |
+| `players.TransferMetal` | `[int, int, f32, int] -> void` | sharing energy (the import named `TransferMetal` moves energy) |
 | `network.SendShareMapInfo` | `[int, int] -> void` | sharing the map |
 
-The comments of `players.TransferMetal` and `players.TransferEnergy` in `interfaces/players.h` are swapped:
-the import named `TransferEnergy` moves metal, and the one named `TransferMetal` moves energy. This
+`interfaces/players.h` says the same: `TransferMetal` moves energy and `TransferEnergy` moves metal. This
 module calls each by its name, as section 4 gives.
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. The budget comes with the manifest entry.
+  `__fuel_get`. The manifest gives it no budget: the module's `fuel_budget` is ten times the most fuel any
+  tick of the gate's scenarios burns it (ABI section 11.3).
 - Hooks: the header names the hooks `ResourceIncome` and `StatsAccumulate` for `UpdatePlayerEconomy`.
   This module raises no hook.
 
@@ -87,7 +87,8 @@ module calls each by its name, as section 4 gives.
   `resourceSlot` is `self`. The module reads its `id` only.
 - **Text and buffers** given to imports (a box name, the script name `"SetSpeed"`) are NUL-terminated
   strings in the module's own memory. The buffers given to `files.BankReadBox` and `files.BankWriteBox`
-  are the account itself, in the block.
+  are the account itself, in the block. A `files.BankWriteBox` line of a recording carries the bytes
+  written (`x:` and their hexadecimal), then the length and the result.
 
 ### Events
 
@@ -374,7 +375,19 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
 - ***Request*** `R(a, v)`: `a.energyUse` adds *v*. If `a.energyStall` > 0 the request is refused (0);
   otherwise `a.energyUsePaid` adds *v* and the request is granted (1).
 - **Products in `I`:** `Game.windStrength` × `d.windgenerator` and `Game.tidal` × `d.tidalgenerator` are
-  exact products, not rounded before they enter `I`. `GetEnergyUse` rounds its product to 32 bits.
+  exact products, not rounded to 32 bits before they enter `I`. The pin is
+  `tests/replay/economy/tidal-rounding.txt`, the call at tick 6270 of `UpdatePlayerEconomy(Player#0)`: the
+  account's `energyMake` is 0x437b4f71, `Game.tidal` is 0x42436dc7 and `tidalgenerator` is 0x41a80d9b, and
+  `energyIncome` becomes 0x449fb45c; adding the product rounded to 32 bits first gives 0x449fb45b.
+- **The result of `GetEnergyUse`:** for the wind and tidal rows it is the negated exact product rounded
+  once to 32 bits (to nearest, ties to even), which is the slot's `f32` result; the 3.1c function
+  returns the product without rounding it. The slot has five callers, all outside this module, and what
+  each does with the result is: three compare it with 0 and nothing else; one ignores it; and one (the
+  computer player's rating of the unit types it may build) multiplies it by 5 and subtracts that from a
+  32-bit float before truncating the difference to an integer, so it uses the value before any 32-bit
+  store. The sign tests give the same answer on the rounded and the unrounded value unless the product is
+  smaller than the smallest 32-bit float magnitude. The recorded results (`o result f32:...`) are the
+  rounded values.
 - **The sums of `UpdatePlayerEconomy`**: each sum is rounded to 32 bits after each term (*M* ⊕ `a.energyMake`,
   and so on). *M*\* is f64(*M* + *e*.`Make`), with no 32-bit rounding; *M* is f32(*M*\*). *A* is f32(*M*\* + `p.X`).
 - **The ratios:** *L* = f64(*A* − *S*), a 64-bit value that is not rounded to 32 bits, or 0. When they
@@ -461,16 +474,31 @@ Values are given as decimals, with the 32-bit pattern where the rounding matters
    a wind generator: `energyuse` is 0, `windgenerator` 30 and `Game.windStrength` 0.1246 (0x3dff2e49), so
    the result is −(0.1246 ⊗ 30) = −3.738 (0xc06f3b64).
 
-**Not covered by any recording:** `UpdateResourceSharing`, `SaveUnitAccounts`, `RequestEnergy`,
-`SpendEnergy`, `SpendMetal` and `SpendEnergyAndMetal`; in `UpdatePlayerEconomy`, a cloak payment (every
-recorded `SetStateBits` sets 0), a player of type 3, and a unit whose owner
-isn't `p`; `LoadUnitAccounts` with a missing box; and a footprint cell outside the map in
-`UpdateMetalExtraction`. Several 64-bit details above (the rounding of *M*\*, *A* and *L*, and the exact
-tidal product) give the same results as a 32-bit reading on every recorded call, so the recordings
-don't confirm them either.
+**Not recorded in the kit's recordings** (`docs/replay-format.md`, "Not recorded"), each with the kit's reason:
+
+- `UpdateResourceSharing`: it acts only in a network game, and test mode runs every player on one machine.
+- `UpdatePlayerEconomy` for a player of type 3: type 3 is a remote network player, which only a lobby
+  with network players creates.
+- `UpdatePlayerEconomy` for a unit whose resource account belongs to another player than the one settled:
+  every unit is created in its owner's part of the unit table and `Reset` ties the account to that owner,
+  so only a corrupt saved game could differ.
+- `LoadUnitAccounts` with a missing box: every saved unit has its account box, so only a saved game from
+  an older build lacks one.
+- The false sides of `SpendMetal`, `SpendEnergyAndMetal` and `SpendEnergy` (not enough in stock), outside
+  the cloak payment: their callers check the stock first (a give or a transfer caps the amount at the
+  stock, and a weapon with a per-shot cost fires only when both stocks cover it).
+- The false side of `SpendEnergy` in the cloak payment of `UpdatePlayerEconomy` (a cloaked unit that
+  cannot pay, which `units.SetStateBits <unit> 4 0` records and which decloaks it): the one cloaked unit of
+  the recordings, `Unit#3` of `edges-economy-targeting`, pays at all eight calls (ticks 30 to 240,
+  `units.SetStateBits Unit#3 4 1`) from the 60000 energy of `player0.energy`, and no scenario runs a
+  cloaked unit out of energy.
+- `UpdateMetalExtraction` for an extractor with no script: every shipped extractor has one.
+
+Not recorded, and the kit gives no reason: the rounding of *M*\*, *A* and *L* and the exact wind product,
+which give the same results as a 32-bit reading on every recorded call (only the tidal product has a pin,
+section 5).
 
 ## 8. Kit version
 
-The economy recordings are not in a tagged kit yet: this spec was written against an untagged kit
-export, interfaces version `interfaces-v1` (economy 1.1). The gate pair
-for economy is the first `reference-traces-v*` tag that holds `tests/replay/economy/`.
+Kit `interfaces-v3` and `reference-traces-v23`, the versions the gate judges against. Interface
+`economy` 2.0.
