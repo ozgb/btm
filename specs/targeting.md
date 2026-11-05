@@ -422,7 +422,8 @@ Not recorded, and the kit gives no reason:
 - A lead with `killCount` of 4, 5 or 6 when every other lead condition holds. The recorded leads (16) all
   have 7. The unit-target calls with every other lead condition met and no lead have 0 (10728), 1 (55),
   2 (42) or 3 (21). The count 8 occurs only against a target with a null `motion` (66 calls), and 6 only in
-  a call with no target (tick 118 of `edges-economy-targeting`). The threshold rests on the kit's "more than five kills".
+  a call with no target (tick 118 of `edges-economy-targeting`).
+  The threshold rests on the kit's "more than five kills".
 - `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`.
 - A *q* that wraps below 0.
 - Two eligible fallback picks with the same distance. Preferred picks that tie are recorded, at distance 0
