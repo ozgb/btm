@@ -76,8 +76,7 @@ module calls each by its name, as section 4 gives.
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. The manifest gives it no budget: the module's budget is set as ABI section 11.3 says.
 - Hooks: the header names the hooks `ResourceIncome` and `StatsAccumulate` for `UpdatePlayerEconomy`.
-  This module raises neither, and that is intended: no recording of this module holds a hook call. The kit
-  doesn't yet define how a module raises a hook (a kit gap, raised on #823).
+  This module raises neither.
 
 ### Arguments outside the block
 
@@ -152,11 +151,11 @@ A unit is *on* when bit 0 of `activateFlags` is set, and *complete* when `buildL
 
 ### Alignment
 
-Fields of `Player`, `Unit` and `UnitResources` sit at offsets that aren't a multiple of their size
+Some fields of `Player` and `Unit` sit at offsets that aren't a multiple of their size
 (`layout.json` gives each offset: `Player`'s 64-bit floats from offset 172, and its `flags` at 329). `Player`
 is 331 bytes long, so the elements of `Game.players` after the first shift every field off its natural
 alignment. Every load and store of a field must accept any alignment. The kit doesn't yet say this in the
-ABI (a gap, raised on #823).
+ABI.
 
 ### Between ticks
 
@@ -248,7 +247,7 @@ for each resource (energy, then metal; `X` stands for `energy` or `metal`):
 **Settlement.** Every counted unit of the slice, in slice order, and then *e*, has its account settled
 with the ratios of each resource. The counted units are the ones the walk above used: the
 `units.SetStateBits` imports of the cloak step (mask 4) change the unit's activation bits only, never
-its counted bit, and the replay stub changes nothing in the block. For each resource of an account:
+its counted bit. For each resource of an account:
 
 - `XMakePrev` becomes `XMake`, and `XUsePrev` becomes `XUse` (their values in this call, after the
   charges above);
@@ -313,9 +312,8 @@ With *d* = `unit.def`: if `d.extractsMetal` > 0 is false, nothing happens, with 
 - If `unit.script` is not null, imports `units.StartScriptWithArgs` after the last `GetMapCell`, with
   `script` the script's address (the block base plus `unit.script`), `name` the string `"SetSpeed"`,
   `callback` the null address (0), `update` 0, `count` 1, `a` *W* as a signed integer, and `b`, `c`, `d`
-  0. Its result is ignored. The recordings print `?` for the callback argument whatever the module passes
-  (the `pending` mode of `docs/replay-format.md`), so the replay doesn't judge it; a null is the value
-  the reference passes.
+  0. Its result is ignored. The recordings print `?` for the callback argument
+  (the `pending` mode of `docs/replay-format.md`).
 
 ### `Reset(self, playerIndex)`
 
@@ -406,8 +404,8 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   (`o result f32:...`) are the rounded values.
 - **The sums of `UpdatePlayerEconomy`**: after each counted unit's term, a sum is the 32-bit float nearest
   to the exact sum of its value before and the term (*M* ⊕ `a.energyMake`, and so on). *M*\* is the 64-bit
-  float nearest to *M* + *e*.`Make`; *M* is the 32-bit float nearest to *M*\*. *A* is the 32-bit float
-  nearest to *M*\* + `p.X`.
+  float nearest to *M* + *e*.`Make`; *M* is the 32-bit float nearest to *M*\*. *A* is
+  f32(f64(*M*\* + `p.X`)).
 - **The ratios:** *L* = f64(*A* − *S*), a 64-bit value that is not rounded to 32 bits, or 0. When they
   are not 1, *rs* = f32(*A* / *S*) and *rp* = f32(f64(*L* / *P*)). *B* = f32(f64(*L* − *P*)), or 0. The
   wasted amount adds f64(*B* − `p.XCapacity`).
@@ -522,8 +520,7 @@ No recording reaches the following, and the rule of the spec is the authority fo
   type 2 (no handicap).
 - The energy half of Q1 (`totalEnergyProduced` adding *M*\* instead of *M*), and the 16-bit wrap of *W*
   (Q9).
-- `RequestEnergy` returning 0, `RequestEnergy` with `self` not `r` (Q2), and `RequestEnergyAndMetal`
-  refused for a metal stall alone.
+- `RequestEnergy` returning 0, and `RequestEnergy` with `self` not `r` (Q2).
 - `LoadUnitAccounts` with a read that returns fewer than 24 bytes.
 - `UpdateResourceSharing` in full: the partner conditions (index 10, `unitCount`, `unitsCreated`), a
   transfer with an *amount* of 0 or below, the sends of the shared map every 450 ticks, and the player as
@@ -539,4 +536,4 @@ section 5).
 Kit `interfaces-v3` and `reference-traces-v23`, the versions the gate judges against. Interface
 `economy` 2.0.
 
-A pending interface change (#891) makes `GetEnergyUse` return the exact product as a 64-bit float in `economy` 3.0, and this spec will follow it when that tag exists.
+A pending interface change (`ozgb/byte-tactics-moddable#891`) makes `GetEnergyUse` return the exact product as a 64-bit float in `economy` 3.0, and this spec will follow it when that tag exists.
