@@ -382,8 +382,8 @@ The box name is `u` followed by `info.id` as four lower-case hexadecimal digits 
 `self.player` isn't saved. `SaveUnitAccounts` writes nothing to the account: its calls in `save-midgame`
 have no `w` line, and the bytes it writes start with `energyMake` and `metalMake`, the first float of each
 group. The kit's schema lists those two among the writes of `SaveUnitAccounts` and among the reads of
-`LoadUnitAccounts`; its write set is wider than the writes, and `LoadUnitAccounts` changes them only
-through its reads.
+`LoadUnitAccounts`; its write set is wider than the writes, and `LoadUnitAccounts` sets them only from the
+bytes it reads.
 
 ### `LoadUnitAccounts(self, info, bank)`
 
@@ -432,9 +432,8 @@ When *t* is a multiple of 450 (0 included) and the `shareMapping` bit of `player
 for each partner in order of *i*, the import `network.SendShareMapInfo(player.index, q.index)` is made,
 unless `player.index` is 10 (the partner's index is not 10). The player and partner indices, bytes of
 0 to 255, cross the `int` kind of the three sharing imports zero-extended: index 3 is the integer 3.
-The player itself is sent its own map when it
-is a partner (Q4), but never receives metal or energy. On a tick that is a multiple of both, the sharing
-imports come before the map imports.
+The player itself is sent its own map when it is a partner (Q4), but never receives metal or energy. On
+a tick that is a multiple of both, the sharing imports come before the map imports.
 
 `player` itself has no condition of its own: it needn't be active or of type 3. As the sharing player the
 slot reads its `info`, `index`, `metal`, `energy`, `shareMetal`, `shareEnergy` and `allied` bytes (and
@@ -500,11 +499,22 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   resource the stock then becomes 0, and the new `XStall` of every account with `XStall` = 0 is a NaN. The
   kit's ABI (section 3.2) says the engine canonicalises NaNs and a module must not let a result depend on
   a NaN's bit pattern, so this spec fixes no pattern for it. It defines no result of a call that reads a
-  NaN in any field, except the branches of the comparisons that see an account's stall (Q2).
-- **Comparisons with a NaN:** every ordered comparison with a NaN operand is false (IEEE 754). The tests
-  on a stall are written as "above 0" (`energyStall` > 0) in `RequestEnergy` and in the funded test, so a
-  NaN stall passes them (granted, funded), and as "at most 0" (`energyStall` ≤ 0 and `metalStall` ≤ 0) in
-  `RequestEnergyAndMetal`, so a NaN stall in either refuses. No recording reaches a NaN stall.
+  NaN in a field other than those named in the next bullet.
+- **A NaN stall or stock (not recorded):** it is reached only after a negative income exceeds the stock
+  with no stall owed, and no recording reaches it. The outcomes are these.
+  - A NaN stall counts as not above 0: `RequestEnergy`, the funded test (for an immobile and for any
+    other unit) and `RequestEnergyAndMetal` all grant on it (`RequestEnergyAndMetal` on a NaN
+    `energyStall` or `metalStall`, or both, writes as its first row does and returns 1).
+  - The settlement of a call in which an account's stall is NaN has a NaN *S*, and takes the first row
+    of each table: *S* ≤ *A* gives *rs* = 1 and *L* = *A* − *S* = NaN, and *P* ≤ *L* gives *rp* = 1
+    and *B* = *L* − *P* = NaN. *B* > `p.XCapacity` is false, so `p.X` becomes NaN and `p.XWasted` is
+    unchanged. Each account's new `XStall` is then +0.0 when its `XStall` and `XUsePaid` are finite,
+    and NaN when one of them is NaN. From then on *A* is NaN, so `p.X` stays NaN on every later call.
+  - With a NaN `energy`, the cloak payment is made: *s* = 1, `energy` stays NaN and `a.energyUse` adds
+    *c*. `SpendEnergy`, `SpendMetal` and `SpendEnergyAndMetal` refuse on a NaN stock or a NaN amount.
+  - In `UpdateResourceSharing`, a comparison "below" with a NaN operand is true: the recipient tests
+    `q.metal` < `player.metal` and `q.energy` < `player.energy`, and the choice of the smaller of the
+    amount and the room left.
 
 The roundings above state results: an implementation may compute them in any way that gives the same
 bits.
@@ -513,8 +523,8 @@ bits.
 
 - **Q1:** `totalEnergyProduced` grows by the 64-bit energy sum *M*\*, while `totalMetalProduced` grows by
   the 32-bit metal sum *M*.
-- **Q2:** a stall of NaN is not above 0 and is not at most 0 (section 5, NaN): `RequestEnergy` and the
-  funded test grant on it, and `RequestEnergyAndMetal` refuses on it.
+- **Q2:** a stall that is NaN counts as not above 0: `RequestEnergy`, the funded test and
+  `RequestEnergyAndMetal` all grant on it (section 5, NaN).
 - **Q3:** a player shares a third of its surplus metal and half of its surplus energy, and gives it to
   the partner with the highest index whose stock is below its own.
 - **Q4:** shared map information can go to the sharing player itself.
@@ -591,8 +601,7 @@ Values are given as decimals, with the 32-bit pattern where the rounding matters
    `[2]` nonzero; no other slot is a partner. The tick is a multiple of 450 and not of 60, so there is
    no transfer. The imports, in order, are `i network.SendShareMapInfo 0 0`,
    `i network.SendShareMapInfo 0 1` and `i network.SendShareMapInfo 0 2`: the player is its own partner
-   (Q4). At tick 900, a multiple of
-   both, any transfer imports come before these.
+   (Q4). At tick 900, a multiple of both, any transfer imports come before these.
 10. **Not from a recording: a transfer of zero or less.** As example 8, but `Game.players[1]` has
     `metalCapacity` 200.0 (it is full): *amount* = f32(min(300.0000089406967, 200 − 200)) = 0.0, and the
     import is made, `i players.TransferEnergy 0 1 f32:0x00000000 1`. With `metalCapacity` 150.0 the amount
