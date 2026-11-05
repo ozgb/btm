@@ -119,8 +119,8 @@ A slot holds:
   and never changed, so the unit that `SetWeaponTargetUnit` stored by `id` is the one read back;
 - a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units.
 
-**`Unit.netDirtyFlags`** (16-bit; `layout.json` gives it as one field and names no bit of it): every target set clears bits 10
-to 14 of it (it becomes `netDirtyFlags` AND 0x83ff).
+**`Unit.netDirtyFlags`** (16-bit, a word of bit-fields in `layout.json`, which doesn't name bits 10 to 14): every target set
+clears bits 10 to 14 of it (it becomes `netDirtyFlags` AND 0x83ff).
 
 ### Read
 
@@ -339,8 +339,8 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
   units, so neither check can fail.
 - Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def is not
   always attackable: the bit is set in 16 recorded searches (`console-units`, from call 73), but no
-  recording holds it deciding a pick. The kit calls it "the menu option bit 4 of the match flags": the match flags are the
-  high byte of `Game.uiOptionFlags`, and its value 4 is bit 10 of the 16-bit word.
+  recording holds it deciding a pick. The kit calls it "the menu option bit 4 of the match flags": the
+  match flags are the high byte of `Game.uiOptionFlags`, and its value 4 is bit 10 of the 16-bit word.
 - The lead with the slot's *ready* bit clear on its own: its only caller skips a slot without that bit
   (the kit describes the bit as the slot having a weapon).
 - The lead with a weapon whose never-leads flag is set (a cruise weapon) or whose `speed` is 0, for a
