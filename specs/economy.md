@@ -74,10 +74,10 @@ module sets its own (see Fuel). This section gives the entry the module must hav
 module calls each by its name, as section 4 gives.
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. The manifest gives it no budget: the module's `fuel_budget` is ten times the most fuel any
-  tick of the gate's scenarios burns it (ABI section 11.3).
+  `__fuel_get`. The manifest gives it no budget: the module's budget is set as ABI section 11.3 says.
 - Hooks: the header names the hooks `ResourceIncome` and `StatsAccumulate` for `UpdatePlayerEconomy`.
-  This module raises no hook.
+  This module raises neither, and that is intended: no recording of this module holds a hook call. The kit
+  doesn't yet define how a module raises a hook (a kit gap, raised on #823).
 
 ### Arguments outside the block
 
@@ -150,6 +150,14 @@ an extractor makes per settlement before any handicap.
 
 A unit is *on* when bit 0 of `activateFlags` is set, and *complete* when `buildLeft` equals 0.0.
 
+### Alignment
+
+Fields of `Player`, `Unit` and `UnitResources` sit at offsets that aren't a multiple of their size
+(`layout.json` gives each offset: `Player`'s 64-bit floats from offset 172, and its `flags` at 329). `Player`
+is 331 bytes long, so the elements of `Game.players` after the first shift every field off its natural
+alignment. Every load and store of a field must accept any alignment. The kit doesn't yet say this in the
+ABI (a gap, raised on #823).
+
 ### Between ticks
 
 Nothing outside the fields above.
@@ -169,9 +177,10 @@ The *slice* is every unit of the unit table from `p.unitsBegin` to `p.unitsEnd`,
 table order; the counted units of the slice take part. For a unit *u*, *a* is `u.resourceSlot` and *d*
 is `u.def`.
 
-**Per counted unit, in slice order.** Each unit's effects are complete before the next unit's begin,
-and the next unit sees them: a cloak payment changes its owner's `energy`, which a later unit of the
-same owner reads.
+**Per counted unit, in slice order.** The imports and the writes of the steps below come out in slice
+order, unit by unit. A cloak payment lowers its owner's `energy` at once, so a later unit of the same
+owner decides its own cloak against the lowered `energy`, and an income added to an account is in
+that account's `Make` for the unit's own sums.
 
 1. *Charges and production*, by the first row that matches:
 
@@ -189,6 +198,9 @@ same owner reads.
 | `d.windgenerator` > 0 | `I(a, a.energyMake, Game.windStrength × d.windgenerator)` |
 | `d.tidalgenerator` > 0 | `I(a, a.energyMake, Game.tidal × d.tidalgenerator)` |
 | any other | none |
+
+A row that matches excludes the rows after it, whether or not its effect happens: an extractor that isn't
+*granted* makes no metal, and no later row applies to it (Q5).
 
 2. *Completed units*: if the unit is complete, `I(a, a.energyMake, d.energymake)`, then
    `I(a, a.metalMake, d.metalmake)`; `p.metalCapacity` adds `d.metalstorage` and `p.energyCapacity` adds
@@ -233,9 +245,10 @@ for each resource (energy, then metal; `X` stands for `energy` or `metal`):
 - If *B* > `p.XCapacity`, `p.X` becomes `p.XCapacity` and `p.XWasted` adds *B* − `p.XCapacity`.
   Otherwise `p.X` becomes *B*.
 
-**Settlement.** Every unit of the slice that is counted at this point, in slice order (bit 28 is read
-again here, whatever `Unit.flags` holds after the `units.SetStateBits` imports above), and then *e*, has its account settled with the ratios of
-each resource. For each resource of an account:
+**Settlement.** Every counted unit of the slice, in slice order, and then *e*, has its account settled
+with the ratios of each resource. The counted units are the ones the walk above used: the
+`units.SetStateBits` imports of the cloak step (mask 4) change the unit's activation bits only, never
+its counted bit, and the replay stub changes nothing in the block. For each resource of an account:
 
 - `XMakePrev` becomes `XMake`, and `XUsePrev` becomes `XUse` (their values in this call, after the
   charges above);
@@ -299,14 +312,17 @@ With *d* = `unit.def`: if `d.extractsMetal` > 0 is false, nothing happens, with 
 - `unit.extraction` becomes `d.extractsMetal` × *W*, rounded to 32 bits.
 - If `unit.script` is not null, imports `units.StartScriptWithArgs` after the last `GetMapCell`, with
   `script` the script's address (the block base plus `unit.script`), `name` the string `"SetSpeed"`,
-  `callback` null, `update` 0, `count` 1, `a` *W* as a signed integer, and `b`, `c`, `d` 0. Its result
-  is ignored.
+  `callback` the null address (0), `update` 0, `count` 1, `a` *W* as a signed integer, and `b`, `c`, `d`
+  0. Its result is ignored. The recordings print `?` for the callback argument whatever the module passes
+  (the `pending` mode of `docs/replay-format.md`), so the replay doesn't judge it; a null is the value
+  the reference passes.
 
 ### `Reset(self, playerIndex)`
 
 The twelve floats of `self` become +0.0, and `self.player` becomes a reference to element *k* of
-`Game.players`, where *k* is the low 8 bits of `playerIndex`, with no range check. Like every `Ref`, it
-is stored as a block offset (ABI 7.1): the offset of `Game.players` in the block plus 331 × *k*. No imports.
+`Game.players`, where *k* is the low 8 bits of `playerIndex`. Like every `Ref`, it is stored as a block
+offset (ABI 7.1): the offset of `Game.players` in the block plus 331 × *k*. No imports. Callers pass a
+player's slot, 0 to 9, only; for any other *k* the result is undefined and the module need not check.
 
 ### `SaveUnitAccounts(self, info, bank)`
 
@@ -329,8 +345,10 @@ The box name is as for `SaveUnitAccounts`.
 | 0 | nothing more |
 | other | `files.BankSeekBox(bank, 0)`, then `files.BankReadBox(bank, energy group, 24)`, then `files.BankReadBox(bank, metal group, 24)` |
 
-The reads land directly in the account. The read results are ignored: a short read leaves the bytes
-past it as they were. `self.player` isn't read from the bank.
+Each read result is ignored by the module, but it says how much the read returned: after the call, the
+energy group of the account holds the bytes the first read returned, followed by the bytes it had before
+for any part of the 24 the read didn't return, and the metal group is the same for the second read.
+`self.player` isn't read from the bank.
 
 ### `UpdateResourceSharing(player)`
 
@@ -338,7 +356,9 @@ Nothing happens unless bit 0 of `Game.netGameFlags` is set. *t* is `Game.ticks` 
 integer.
 
 A *partner* is an element *q* = `Game.players[i]`, for *i* from 0 to 9, with `q.active` ≠ 0, `q.type` = 3,
-`q.index` ≠ 10, `q.unitCount` ≠ 0 or `q.unitsCreated` = 0, `q.info.kind` = 1, and `player.allied[i]` ≠ 0.
+`q.index` ≠ 10 (a free slot has index 10), `q.unitCount` ≠ 0 or `q.unitsCreated` = 0 (a player that
+has never made a unit counts, and so does one that has units), `q.info.kind` = 1, and `player.allied[i]` ≠ 0.
+`player` itself is a partner when it meets these.
 
 When *t* is a multiple of 60, metal is shared, and then energy:
 
@@ -347,13 +367,15 @@ When *t* is a multiple of 60, metal is shared, and then energy:
   the import `players.TransferEnergy(player.index, recipient.index, amount, 1)` is made, with *amount*
   the smaller of (`player.metal` − `player.shareMetal`) × *k3* and `recipient.metalCapacity` −
   `recipient.metal`, where *k3* is the 32-bit float 0x3eaaaaab (Q3). The import is made whatever
-  *amount* is, 0 or below included.
+  *amount* is: a recipient with no room left gives an *amount* of 0 or below, and the import is still
+  made with it.
 - **Energy**, read after the metal import: the same with the `shareEnergy` bit, `energy`, `shareEnergy`
   and `energyCapacity`, the factor 0.5 in place of *k3*, and the import `players.TransferMetal`.
 
 When *t* is a multiple of 450 and the `shareMapping` bit of `player.info` is set, then for each partner
 in order of *i*, the import `network.SendShareMapInfo(player.index, q.index)` is made, unless
-`player.index` is 10. The player itself is a partner when it meets the conditions (Q4). On a tick that
+`player.index` is 10 (the partner's index is never 10). The player itself is sent its own map when it
+is a partner (Q4), but never receives metal or energy, since its stock isn't below its own. On a tick that
 is a multiple of both, the sharing imports come before the map imports.
 
 No writes.
@@ -382,14 +404,16 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
 - **The result of `GetEnergyUse`:** for the wind and tidal rows it is the negated exact product rounded
   once to 32 bits (to nearest, ties to even), which is the slot's `f32` result. The recorded results
   (`o result f32:...`) are the rounded values.
-- **The sums of `UpdatePlayerEconomy`**: each sum is rounded to 32 bits after each term (*M* ⊕ `a.energyMake`,
-  and so on). *M*\* is f64(*M* + *e*.`Make`), with no 32-bit rounding; *M* is f32(*M*\*). *A* is f32(*M*\* + `p.X`).
+- **The sums of `UpdatePlayerEconomy`**: after each counted unit's term, a sum is the 32-bit float nearest
+  to the exact sum of its value before and the term (*M* ⊕ `a.energyMake`, and so on). *M*\* is the 64-bit
+  float nearest to *M* + *e*.`Make`; *M* is the 32-bit float nearest to *M*\*. *A* is the 32-bit float
+  nearest to *M*\* + `p.X`.
 - **The ratios:** *L* = f64(*A* − *S*), a 64-bit value that is not rounded to 32 bits, or 0. When they
   are not 1, *rs* = f32(*A* / *S*) and *rp* = f32(f64(*L* / *P*)). *B* = f32(f64(*L* − *P*)), or 0. The
   wasted amount adds f64(*B* − `p.XCapacity`).
 - **The stall:** with *s* = `XStall` and *q* = `XUsePaid`, both 32-bit, the new `XStall` is
-  f32(f64(f64(*s* − f64(*rs* × *s*)) + f64(*q* − f64(*rp* × *q*)))): each operation rounded to 64 bits,
-  in this order, and the last result to 32 bits.
+  f32(f64(f64(*s* − f64(*rs* × *s*)) + f64(*q* − f64(*rp* × *q*)))): the value of that expression, with
+  each f64 a rounding to 64 bits as written, and the f32 the final rounding to 32 bits.
 - **The cloak cost:** the float is truncated towards zero to a 32-bit integer, and the integer converted
   to a float exactly. A NaN or a value outside the 32-bit range gives the integer −2147483648.
 - **Extraction:** *W* is a signed 16-bit integer: it starts at 0, each cell adds `Cell.metal` + 1, and it
@@ -400,8 +424,7 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   the product *D* × *k* is rounded to 64 bits, and *C* = f64(`recipient.XCapacity` − `recipient.X`).
 - **Ticks:** `Game.ticks` and `Unit.workTime` are compared as unsigned 32-bit integers, and the
   multiples of 60 and 450 are of the unsigned value.
-- **Division:** every division is an IEEE 754 division that doesn't trap: *A* / *S* with *S* = 0 and
-  *A* < 0 gives −∞.
+- **Division:** a quotient is the IEEE 754 quotient: *A* / *S* with *S* = 0 and *A* < 0 is −∞.
 - **NaN:** the kit has no recording with a NaN in any field this module reads, and this spec doesn't
   define the result of one.
 
@@ -460,7 +483,8 @@ Values are given as decimals, with the 32-bit pattern where the rounding matters
    `footprint` (3,3), `extractsMetal` 0.001 (0x3a83126f). The nine `GetMapCell` imports are (168,8),
    (169,8), (170,8), (168,9), ... (170,10), each cell with `metal` 187, so *W* = 9 × 188 = 1692.
    `extraction` becomes f32(0.001 × 1692) = 0x3fd89375 (1.692), and the import
-   `units.StartScriptWithArgs(CobScript#3, "SetSpeed", 0, 0, 1, 1692, 0, 0, 0)` follows.
+   `units.StartScriptWithArgs(CobScript#3, "SetSpeed", ?, 0, 1, 1692, 0, 0, 0)` follows, the `?` standing
+   for the callback argument, which the line doesn't show.
 6. **`tests/replay/economy/load-midgame.txt`, the call at tick 900 of `LoadUnitAccounts` for `Unit#2`**
    (`id` 2): the box is `"u0002acc"`. The energy group read holds 3.0 at bytes 20 to 23 and the metal
    group 0x3fb4a234 at bytes 16 to 19, so `energyUsePrev` becomes 3.0 and `metalMakePrev` 1.4112.
@@ -487,6 +511,24 @@ Values are given as decimals, with the 32-bit pattern where the rounding matters
   `units.SetStateBits Unit#3 4 1`) from the 60000 energy of `player0.energy`, and no scenario runs a
   cloaked unit out of energy.
 - `UpdateMetalExtraction` for an extractor with no script: every shipped extractor has one.
+
+No recording reaches the following, and the rule of the spec is the authority for each:
+
+- `UpdatePlayerEconomy`, cloak step: the moving cost (the one cloaked unit is stationary), the cloak held
+  bit set, `workTime` above `Game.ticks`, a fractional cost truncated (Q7, the recorded cost is 7.0), a
+  negative or NaN cost, and the player of type 3 skipping the `units.SetStateBits` imports.
+- `UpdatePlayerEconomy`, income: no producer with a negative `energyuse` has `extractsMetal` or
+  `makesMetal` (Q5), so which metal row wins is not recorded; and a difficulty of 3 or more with an owner of
+  type 2 (no handicap).
+- The energy half of Q1 (`totalEnergyProduced` adding *M*\* instead of *M*), and the 16-bit wrap of *W*
+  (Q9).
+- `RequestEnergy` returning 0, `RequestEnergy` with `self` not `r` (Q2), and `RequestEnergyAndMetal`
+  refused for a metal stall alone.
+- `LoadUnitAccounts` with a read that returns fewer than 24 bytes.
+- `UpdateResourceSharing` in full: the partner conditions (index 10, `unitCount`, `unitsCreated`), a
+  transfer with an *amount* of 0 or below, the sends of the shared map every 450 ticks, and the player as
+  its own partner.
+- `Reset` with a player index of 10 or more (undefined).
 
 Not recorded, and the kit gives no reason: the rounding of *M*\*, *A* and *L* and the exact wind product,
 which give the same results as a 32-bit reading on every recorded call (only the tidal product has a pin,
