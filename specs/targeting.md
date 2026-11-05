@@ -90,24 +90,26 @@ build, set from the build's own gate runs). This section gives the rest of the e
   module gives it (ABI section 7.3): its arguments are the player, a position, a radius, flags (0), the
   buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
-  recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
-  larger buffer. The replay (`docs/replay-format.md`, "Not recorded", the entry for this import) answers a
-  call from the next recorded vector line with the same player, position, radius and flags: it writes the
+  recordings' `o out` line lists them. The replay (`docs/replay-format.md`, "Not recorded", the entry for
+  this import) answers a call from the next recorded vector line with the same player, position, radius and flags: it writes the
   first `capacity` units of the recorded list, in order, and returns the recorded count. A repeat with the
   same arguments and a larger capacity, after a count above the capacity, is answered from the same line and
-  takes no further import; any other extra call is a divergence. 3.1c puts no bound on the
-  number of candidates: it is every enemy in range that the player can see, so the module must hold the
-  whole list (the draws use its full length), and how it does so is its build's choice, as is where the
-  buffer lives (ABI sections 2.1, 2.2 and 7.3). No search in the recordings lists more than 52
-  candidates, so a buffer of at least 52 units needs no second call there. The module allocates no
+  takes no further import; any other extra call is a divergence. A search makes
+  the import once in the recordings, then draws.
+  3.1c puts no bound on the number of candidates: it is every enemy in range that the player can see, and
+  the draws use the full count. ABI section 7.3 says a caller that gets a count above its capacity calls
+  again with a larger buffer; holding the whole list, and the capacity and place of the buffer, are the
+  build's choice (ABI sections 2.1, 2.2 and 7.3). No search in the recordings lists more than 52
+  candidates. The module allocates no
   heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are the same at the end of each tick
   as at its start (ABI section 12).
   The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
   player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
-  capacity. The line `o out [...]` follows it and holds the whole list. After that line come `o Unit#N.*`
+  capacity. The line `o out [...]` follows it and holds the whole list; its length is the import's count
+  (the line has no `= n`). After that line come `o Unit#N.*`
   lines (for example `o Unit#2.flags 0x90240321`) and `o UnitDef#N.flags1` lines (8 in the recordings,
-  for example `o UnitDef#21.flags1 0x0084008a` in `skirmish4-long` at call 25768), giving the fields of
+  for example `o UnitDef#21.flags1 0x0084008a` in `skirmish4-long` at tick 25768), giving the fields of
   the listed units, and of their defs, that changed since they were last written: `flags`, `posX`,
   `posZ`, `def`, `unitDefIndex` and `activateFlags` of a unit. Each search in the recordings has one such
   import.
@@ -143,9 +145,8 @@ A slot holds:
 
 **`Unit.netDirtyFlags`** (16-bit; in `layout.json` its bits are `unknown_ba` (bits 0 and 1), `dirty` (bit 2)
 and `short` (bits 3 to 15)): every target set clears bits 10 to 14 of it, which are bits 7 to 11 of `short`
-(it becomes `netDirtyFlags` AND 0x83ff). Bits 0 to 9 (`unknown_ba`, `dirty` and bits 0 to 6 of `short`) and
-bit 15
-(bit 12 of `short`) are kept.
+(it becomes `netDirtyFlags` AND 0x83ff). Bits 0 to 9 (`unknown_ba`, `dirty` and bits 0 to 6 of `short`)
+and bit 15 (bit 12 of `short`) are kept.
 
 ### Read
 
@@ -191,7 +192,8 @@ engine never calls a slot with a *w* above 2; this spec defines nothing for a la
 
 ### `SetWeaponTargetUnit(u, target, w)`
 
-TargetX becomes the low 16 bits of `target.id`, TargetZ becomes −32768, and `u.netDirtyFlags` is cleared
+TargetX becomes the low 16 bits of `target.id` (a target of id 0 therefore leaves the slot with no target,
+section 3), TargetZ becomes −32768, and `u.netDirtyFlags` is cleared
 as in section 3. No imports. The target's own `netDirtyFlags` appears among the recorded reads (for
 example `r Unit#3.netDirtyFlags 1024` at tick 138 of `orders-guard-attacked`), is not changed, and no
 result depends on it. A null `target` is outside the contract (3.1c faults on it,
@@ -211,7 +213,9 @@ section 3. No imports.
 | no target | none | none |
 | anything else | `units.FindScript(u.script, "StartBuilding")`, its result ignored (Q2); then `units.StartScriptWithArgs(u.script, "TargetCleared", null, 0, 1, w, 0, 0, 0)`, its result ignored | TargetX = 0, TargetZ = −32768 |
 
-Both imports are always made, with `u.script` passed as it is, here and in the clear of
+Both imports are always made, with `u.script` passed as it is (`Unit.script` is stored in the block as an
+offset, and a `block` kind argument is its address, base plus offset, ABI section 7.1; the recordings show it
+as `CobScript#N`), here and in the clear of
 `GetWeaponTargetPos`; a null `u.script` is outside the contract: a unit whose def has no script
 data, or a killed unit, has a null `u.script`, and the module may trap on it.
 
@@ -222,7 +226,8 @@ TargetX becomes 0 and TargetZ −32768. No imports.
 ### `GetWeaponTargetUnit(u, w)`
 
 The unit target of the slot, or null when the slot holds no unit target. The unit is returned whether or not
-it is alive. No imports, no writes.
+it is alive. The result is a `block` kind: the address of the unit (the base of the block, `g_blockBase`, plus
+its offset, ABI section 7.1), which the recordings show as `Unit#N`. No imports, no writes.
 
 ### `GetWeaponTargetPos(u, pos, w)`
 
@@ -234,9 +239,8 @@ it is alive. No imports, no writes.
 | a unit target *t* | `units.GetSweetSpot(t, s)` | 1; `pos` = *s*, led when the weapon leads (below) |
 
 The weapon *leads* when all of these hold: the slot has a weapon (bit 1 of its flags), the slot's
-`WeaponDef` has `cruise` clear in `flags` and a `speed` ≠ 0, `t.motion` is not null, and `u.killCount`
-(unsigned 16-bit) > 5. Then, with
-*d* = `u.pos` − *s* per axis:
+`WeaponDef` has `cruise` clear in `flags` and a `speed` ≠ 0, `t.motion` is not null,
+and `u.killCount` (unsigned 16-bit) > 5. Then, with *d* = `u.pos` − *s* per axis:
 
 - the distance *D* = √(*d*.x² + *d*.y² + *d*.z²), truncated to an integer;
 - the time *T* = (*D* × 65536) / `speed`, truncated, then *T*′ = (*T* × 0xcccc) >> 16;
@@ -301,11 +305,10 @@ no writes.
 
 - **Random draws:** every draw is `services.RandomInt`, on the `rng.seed` generator of ABI section 9.3, in
   the order section 4 gives: for each pick, its index draw and then, if it is eligible, its distance draw.
-  A search with no candidates draws nothing. The module passes each bound to `services.RandomInt` as it is,
-  without a guard: a bound of 0 (a *q* of 0) is a call of `services.RandomInt(0)`, and its result is the
-  import's (ABI
+  A search with no candidates draws nothing. Each bound is drawn as it
+  stands: a *q* of 0 still makes the call `services.RandomInt(0)`, whose result is the import's (ABI
   section 9.3: a range below 2 gives 0 and leaves the generator alone). A *q* that wraps to a negative
-  value is passed as that negative bound, so its distance is 0 and the generator is left alone.
+  value is drawn as that negative bound, so its distance is 0 and the generator is left alone.
 - **Target fields:** TargetX and TargetZ are signed 16-bit. `SetWeaponTargetPos` shifts the 32-bit
   `pos.x` and `pos.z` right by 16 with the sign kept, then keeps the low 16 bits. A ground target's
   position is the signed 16-bit field times 65536, in 32 bits.
@@ -389,9 +392,8 @@ no writes.
 Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), each with the kit's reason:
 
 - `ChooseWeapon` with no slot that has a weapon (it returns 0), and with slot 1 or 2 deciding the result:
-  all 347 recorded calls have slot 0 with a weapon. The kit's reason for returning 1 or 2: no shipped unit has
-  weapon slot 0
-  empty and slot 1 or 2 defined.
+  all 347 recorded calls have slot 0 with a weapon. The kit's reason for returning 1 or 2: no shipped unit has weapon
+  slot 0 empty and slot 1 or 2 defined.
 - `SetWeaponTargetPos` with a *z* of −32768 (Q1): it needs a world *z* of 32768, and scenarios and the
   harness reject positions off the map.
 - `SetWeaponTargetUnit` with a null target: 3.1c faults on it, so it is outside the contract.
@@ -418,7 +420,7 @@ Not recorded, and the kit gives no reason:
 - A lead with `killCount` of exactly 5 or 6 when every other lead condition holds.
 - `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`.
 - A *q* that wraps below 0.
-- Two eligible picks of one kind with the same distance, a fallback among them.
+- Two eligible picks of one kind with the same distance, preferred or fallback.
 - A null `weapon{w}Def` when the lead or the paralyzer test reads it.
 - A unit target with a negative TargetX.
 - A null `u.script` in a clear.
@@ -448,5 +450,5 @@ The callback argument of `"TargetCleared"`, which the recordings show as `?`: it
 
 ## 8. Kit version
 
-Kit `interfaces-v4` and `reference-traces-v23`, the versions the gate judges against. Interface
+Kit `interfaces-v5` and `reference-traces-v23`, the versions the gate judges against. Interface
 `targeting` 1.1.
