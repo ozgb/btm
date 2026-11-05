@@ -379,11 +379,11 @@ The box name is `u` followed by `info.id` as four lower-case hexadecimal digits 
 3. `files.BankWriteBox(bank, energy group, 24)`, the energy group being the 24 bytes at `self`;
 4. `files.BankWriteBox(bank, metal group, 24)`, the metal group being the 24 bytes at `self` + 24.
 
-`self.player` isn't saved. `SaveUnitAccounts` writes nothing to the account: its calls in `save-midgame`
-have no `w` line, and the bytes it writes start with `energyMake` and `metalMake`, the first float of each
-group. The kit's schema lists those two among the writes of `SaveUnitAccounts` and among the reads of
-`LoadUnitAccounts`; its write set is wider than the writes, and `LoadUnitAccounts` sets them only from the
-bytes it reads.
+`self.player` isn't saved. `SaveUnitAccounts` only reads the account, `energyMake` and `metalMake`
+included (the first float of each group): it passes them to the save and writes nothing to the block. Its
+calls in `save-midgame` have no `w` line. The kit's schema (`interfaces-v5`) wrongly lists `energyMake`
+and `metalMake` among the writes of `SaveUnitAccounts`; it also lists them among the reads of
+`LoadUnitAccounts`, which sets them only from the bytes it reads.
 
 ### `LoadUnitAccounts(self, info, bank)`
 
