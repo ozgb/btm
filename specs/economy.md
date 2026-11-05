@@ -138,7 +138,7 @@ an extractor makes per settlement before any handicap.
   (offset 260) are the same four bytes as `buildLeft`: the module reads them as `buildLeft`, in the test
   for a complete unit. `Game.unknown_1a6b` (offsets 6763 to 7049) overlaps the first 39 bytes of
   `Game.players` (offset 7011); the module reads from it the `active` field (the first four bytes) of the
-  first player, when that player owns an account. The module reads no other field through these names.
+  first player, wherever the module reads that field. The module reads no other field through these names.
 - `UnitDef`: `energyuse`, `energymake`, `metalmake`, `extractsMetal`, `windgenerator`,
   `tidalgenerator`, `cloakcost`, `cloakcostmoving`, `energystorage`, `metalstorage` (floats), and
   `makesMetal` (unsigned byte).
@@ -160,8 +160,8 @@ A unit is *on* when bit 0 of `activateFlags` is set, and *complete* when `buildL
 
 Some fields of `Player` and `Unit` sit at offsets that aren't a multiple of their size
 (`layout.json` gives each offset: `Player`'s 64-bit floats from offset 172, and its `flags` at 329). `Player`
-is 331 bytes long, so in the elements of `Game.players` after the first, a 32-bit or 64-bit field sits at an
-address that isn't a multiple of its size. The same holds for fields of `Unit`.
+is 331 bytes long, so in the elements of `Game.players` after the first, some 32-bit or 64-bit fields sit at
+an address that isn't a multiple of their size.
 
 ### Between ticks
 
@@ -229,8 +229,7 @@ the capacities at +0.0 (so `p.energy` and `p.metal` are then capped at 0, or at 
 bit 0 of `p.flags` is set). A slice with no unit at all, one in which `p.unitsBegin` is after
 `p.unitsEnd`, is the same case. In every call the engine makes, `p.unitsBegin` and `p.unitsEnd` are the
 first and last unit of the player's own block of the unit table, a block of the same length for every player
-(250 units in the recordings), so the slice is never empty and never null; the engine calls the slot only for
-a player whose `active` is not 0 and whose `index` isn't 10.
+(250 units in the recordings), so the slice is never empty and never null.
 
 **The player.** The player's own account *e* = `p.econ` adds last to the sums, with one difference:
 for each resource, *M*\* is the sum *M* + *e*.`Make` rounded to 64 bits, and *M* is *M*\* rounded
@@ -347,7 +346,7 @@ The box name is `u` followed by `info.id` as four lower-case hexadecimal digits 
 4. `files.BankWriteBox(bank, metal group, 24)`, the metal group being the 24 bytes at `self` + 24.
 
 `self.player` isn't saved. Nothing is written to the block: the two groups are only the source of the
-bytes written, so the account is unchanged and no recording of the call has a `w` line.
+bytes written, so the account is unchanged.
 
 ### `LoadUnitAccounts(self, info, bank)`
 
@@ -360,8 +359,8 @@ The box name is as for `SaveUnitAccounts`.
 
 The module ignores each read result and makes no read other than these two. What the account holds
 afterwards depends on what each read returns (`interfaces/files.h`: the number of bytes read, up to the
-length asked, and 0 at the end of the box; the position of the box moves on by the bytes read, so the second
-read continues where the first stopped). The bytes of the account that a read doesn't return keep the
+length asked, and 0 at the end of the box). The position of the box moves on by the bytes read, so the second
+read continues where the first stopped. The bytes of the account that a read doesn't return keep the
 value they had before the call:
 
 | Result of the read | The group read afterwards |
