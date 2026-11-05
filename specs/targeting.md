@@ -26,8 +26,10 @@ weapon a unit fires first, and searches the enemies a unit can see for the best 
 ### The manifest entry
 
 The kit's manifest (`wasm/modules.json`) carries the slot signatures of this module (`signatures.targeting`)
-and its interface major, 1 (`majors.targeting`). It has no build entry for it and no budget: a clean-room
-module sets its own (see Fuel). This section gives the entry the module must have.
+and its interface major, 1 (`majors.targeting`). It has no build entry for it. A module's build sets
+its `data_base` and `table_base` (within the windows and table ranges of ABI sections 2.2 and 2.3), its
+`majors`, its `slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget belongs to its
+build, set from the build's own gate runs). This section gives the rest of the entry the module must have.
 
 - `name` and `interface`: `targeting`.
 - `exports`, in this order: `SetWeaponTargetUnit`, `SetWeaponTargetPos`, `ClearWeaponTarget`,
@@ -61,14 +63,15 @@ module sets its own (see Fuel). This section gives the entry the module must hav
 | `services.RandomInt` | `[int] -> int` | the order of a search and its distances |
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. The manifest gives it no budget and no `size_budget`, and the kit does not
-  define them for this module (see "Gaps in the kit", section 7). Its stack is the manifest's `stack_size`,
+  `__fuel_get`. Its fuel budget and `size_budget` are its build's
+  (ABI sections 11.1 and 11.3), not the kit's. Its stack is the manifest's `stack_size`,
   4096 bytes (ABI sections 2.2 and 4.1). How a manifest sets the budget is in the kit's
   `docs/module-abi.md`, section 11.3 (the game manifest's budget is ten times the most fuel any tick of the
   conformity gate's scenarios burns).
 - Hooks: the header names the hook `FilterTargets` for `FindWeaponTarget` and
-  `FindBestTargetIfFireAtWill`. This module raises no hook. The kit does not define a hook interface for modules
-  (`docs/module-abi.md` has none), so the gate's treatment of a hook is not defined either (see "Gaps in the kit", section 7).
+  `FindBestTargetIfFireAtWill`; this module raises no hook. The kit defines no hook interface for modules
+  (`docs/module-abi.md` has none), so the gate's treatment of a hook is not defined (see "Gaps in the kit",
+  section 7).
 
 ### Arguments outside the block
 
@@ -88,10 +91,12 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
-  larger buffer. No search in the recordings lists more than 52 candidates, so a buffer of at least 52
-  units needs no second call; the kit does not define how a replay judges a second call or the capacity it expects (see
-  "Gaps in the kit", section 7). The first kit tag
-  after `reference-traces-v23` will define it (ozgb/byte-tactics-moddable#892). The module allocates no
+  larger buffer. The replay (`docs/replay-format.md`, "Not recorded", the entry for this import) answers a
+  call from the next recorded vector line with the same player, position, radius and flags: it writes the
+  first `capacity` units of the recorded list, in order, and returns the recorded count. A repeat with the
+  same arguments and a larger capacity, after a count above the capacity, is answered from the same line and
+  takes no further import; any other extra call is a divergence. No search in the recordings lists more
+  than 52 candidates, so a buffer of at least 52 units needs no second call there. The module allocates no
   heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are the same at the end of each tick
   as at its start (ABI section 12).
   The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
@@ -158,7 +163,7 @@ and `short` (bits 3 to 15)): every target set clears bits 10 to 14 of it, which 
 | `Unit.flags` | 0x10000000 | `alive` (bit 28) |
 | `Unit.flags` | 0x00004000 | `killPending` (bit 14) |
 | `Unit.flags` | bits 20 and 21 | `fireOrder`, 0 to 3; 2 is fire at will |
-| `Unit.activateFlags` | 0x10 | *hidden*, for weapons that respect it |
+| `Unit.activateFlags` | 0x10 | *hidden*, for weapons that respect it (the only such weapons are those with `paralyzer` set) |
 | `UnitDef.flags1` | 0x00008000 | bit 15 of `flags1`, unnamed in the kit: *always attackable* (a target with it passes check 2 of the search whatever its attacker's player) |
 | `UnitDef.flags1` | 0x10000000 | bit 28 of `flags1`, unnamed in the kit: *reach not checked* (the shooter skips the reach import) |
 | `WeaponDef.flags` | 0x00000080 | `paralyzer` (bit 7): a weapon with it set does not pick a hidden target |
@@ -231,6 +236,9 @@ The weapon *leads* when all of these hold: the slot has a weapon (bit 1 of its f
 - the time *T* = (*D* × 65536) / `speed`, truncated, then *T*′ = (*T* × 0xcccc) >> 16;
 - `pos` = *s* + (`t.motion.velocity` × *T*′) >> 16, per axis.
 
+The factor 0xcccc / 65536 (about 0.8) is, in the kit's words, "the part of the distance a target's body offset moves the aim point"
+(`docs/replay-format.md`).
+
 Section 5 gives the widths.
 
 ### `FindWeaponTarget(u, w, useRange)`
@@ -240,7 +248,8 @@ again by `FindBestTargetIfFireAtWill`.
 
 The radius *r* is the result of the import `weapons.GetWeaponRange(u, w)` when `useRange` ≠ 0, or
 `u.def.range` when it is 0 (with no import). Then the import
-`ai.GetVisibleEnemiesInRadiusList(u.playerIndex, u.pos, r, 0, buffer, capacity)` fills the candidate list.
+`ai.GetVisibleEnemiesInRadiusList(u.playerIndex, u.pos, r, 0, buffer, capacity)` fills the candidate list,
+whose length is the count the import returns, the whole list even when it is above the capacity.
 
 The search then makes up to 50 *picks*, stopping early when the list is empty. Pick *k* (from 1) draws
 *i* = `services.RandomInt(n)`, with *n* the list's length less *k* − 1, and its candidate is the one at
@@ -273,14 +282,14 @@ no imports.
 
 ### `ChooseWeapon(u)`
 
-0 when weapon 0 has a weapon, else 1 when weapon 1 has one, else `weapon2Flags` AND 2, that is 0 or 2
+The index of the first slot (0, 1, 2) that has a weapon (bit 1 of its flags), or 0 when none has
 (Q5). No imports, no writes.
 
 ## 5. Exactness
 
 - **Random draws:** every draw is `services.RandomInt`, on the `rng.seed` generator of ABI section 9.3, in
-  the order section 4 gives: for each pick, its index draw and then, if it is eligible, its distance draw. A search with no
-  candidates draws nothing. The module passes each bound to `services.RandomInt` as it is, without a
+  the order section 4 gives: for each pick, its index draw and then, if it is eligible, its distance draw.
+  A search with no candidates draws nothing. The module passes each bound to `services.RandomInt` as it is, without a
   guard: a bound of 0 (a *q* of 0) is a call of `services.RandomInt(0)`, and its result is the import's (ABI
   section 9.3: a range below 2 gives 0 and leaves the generator alone). A *q* that wraps to a negative
   value is passed as that negative bound, so its distance is 0 and the generator is left alone.
@@ -308,7 +317,7 @@ no imports.
 - **The radius:** `UnitDef.range` is sign-extended from 16 bits, and a negative value is passed to the
   candidate import as that negative radius.
 - **`useRange`** counts as set when nonzero, and **the weapon index** of `FindWeaponTarget` is its low
-  8 bits.
+  8 bits, and that masked value is the one every import and slot field uses.
 
 ## 6. Quirks
 
@@ -373,8 +382,8 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
   results, and no recording checks them.
 - Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def is not
   always attackable: the bit is set in 16 recorded searches (`console-units`, from the
-  `FindBestTargetIfFireAtWill` call at tick 73), but no recording holds it deciding a pick. The kit's "menu option bit 4 of the match flags"
-  (`docs/replay-format.md`, "Not recorded") is this bit: `matchFlags` is the byte of `layout.json` at offset
+  `FindBestTargetIfFireAtWill` call at tick 73), but no recording holds it deciding a pick. The kit's
+  "menu option bit 4 of the match flags" (`docs/replay-format.md`, "Not recorded") is this bit: `matchFlags` is the byte of `layout.json` at offset
   229168, the high byte of the 16-bit `uiOptionFlags` at 229167, and its value 4 is 0x400 of the word.
 - The lead with the slot's *has a weapon* bit clear on its own: its only caller skips a slot without that
   bit.
@@ -394,7 +403,9 @@ Not recorded, and the kit gives no reason:
 - A unit target with a negative TargetX.
 - A null `u.script` in a clear.
 - A null target in `SetWeaponTargetUnit`.
-- A weapon index above 2 in any slot.
+- A weapon index above 2 in any slot, and the weapon index of `FindWeaponTarget` above 255.
+- A ground target with a negative coordinate (section 5 gives the shift).
+- A lead whose target has a null `motion` while `killCount` is above 5 and the other conditions hold.
 - A `unitDefIndex` of 512 or more (a `UnitTypeSet` holds 512 bits) given to a set test, and a null
   `categories`, `weaponCategories` or `u.def`: the spec defines nothing for them.
 - A TargetX that is outside the unit pool.
@@ -409,11 +420,6 @@ Recorded once, so a single recorded call or search checks it:
 
 Gaps in the kit, which this spec does not fill:
 
-- The fuel budget and `size_budget` of this module, so the spec gives no budget to choose (section 2).
-- How the gate judges `ai.GetVisibleEnemiesInRadiusList`: the recordings show it only as the vector import
-  `i ai.GetVisibleEnemiesInRadius` with `o out [...]`, with no buffer or capacity, and
-  `docs/replay-format.md` calls the recorded targeting "native code in every mode". How a second call or the
-  buffer size is judged is not defined in `reference-traces-v23`.
 - The `FilterTargets` hook: the header names it, the kit defines no hook interface, and what the gate does
   with a module that raises none is not stated (section 2).
 - The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
@@ -424,5 +430,5 @@ The callback argument of `"TargetCleared"`, which the recordings show as `?`: it
 
 ## 8. Kit version
 
-Kit `interfaces-v3` and `reference-traces-v23`, the versions the gate judges against. Interface
+Kit `interfaces-v4` and `reference-traces-v23`, the versions the gate judges against. Interface
 `targeting` 1.1.
