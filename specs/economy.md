@@ -44,8 +44,8 @@ figures of the last bullet below. This section gives the entry the module must h
   `RequestEnergyAndMetal`, `SpendEnergy`, `SpendMetal`, `SpendEnergyAndMetal`.
 - `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI 8.2). ABI 8.2 says a module exports
   four data words, and ABI 9.1 makes its exports equal its `exports`, its `data` and the two fuel
-  functions; the kit doesn't say whether a module that lists fewer than four is accepted, and a module
-  that lists and exports all four meets both sections. The module reads `g_game` and `g_blockBase` only.
+  functions; a module that lists and exports
+  all four meets both sections. The module reads `g_game` and `g_blockBase` only.
 - `data_base`, `table_base`, `fuel_budget` and `size_budget`: the build picks them, as ABI 11.1 and 11.3
   say a budget belongs to its build. `fuel_budget` is set from the build's own runs of the conformity gate
   (ten times the most fuel any tick burns, all the slot calls of a tick together, ABI 11.2 and 11.3), and
@@ -362,10 +362,11 @@ The box name is `u` followed by `info.id` as four lower-case hexadecimal digits 
 4. `files.BankWriteBox(bank, metal group, 24)`, the metal group being the 24 bytes at `self` + 24.
 
 `self.player` isn't saved. The account is unchanged by the call. The kit's schema lists `energyMake` and
-`metalMake` among the writes of `SaveUnitAccounts`, and among the reads of `LoadUnitAccounts`: those are
-the first float of each group, where the two 24-byte transfers start, and the module's behaviour doesn't
-depend on their values. It need not write them in `SaveUnitAccounts`, and the recordings can't tell,
-since an identical write has no `w` line.
+`metalMake` among the writes of `SaveUnitAccounts`, and among the reads of `LoadUnitAccounts`. `energyMake`
+and `metalMake` are the first float of each group, so the bytes written start with them: `SaveUnitAccounts`
+reads both as the first bytes of the groups it writes and changes neither, and `LoadUnitAccounts` changes
+them only through its reads. The module need not write them in `SaveUnitAccounts`, and the recordings
+can't tell, since an identical write has no `w` line.
 
 ### `LoadUnitAccounts(self, info, bank)`
 
@@ -593,8 +594,8 @@ No recording reaches the following, and the rule of the spec is the authority fo
 - `UpdatePlayerEconomy` with *S* = 0 and *A* < 0 (the NaN of section 5), and with a negative income.
 
 Pinned by a recording: the exact tidal product (`tidal-rounding.txt`). Not pinned: a 32-bit reading of
-*M*\*, *A*, *L* and the exact wind product gives the same results on every recording, and so does a single
-rounding of *rp* (the 64-bit quotient of *L* and *P*, then 32 bits, as section 5 gives it), and so does
+*M*\*, *A*, *L* and the exact wind product gives the same results on every recording, and so does rounding
+*L* / *P* once to 32 bits in place of the 64-bit quotient rounded to 32 bits, and so does
 adding *M* in place of *M*\* to `totalEnergyProduced` (Q1). For all of them this spec is the authority.
 
 ## 8. Kit version
