@@ -61,8 +61,8 @@ module sets its own (see Fuel). This section gives the entry the module must hav
 | `services.RandomInt` | `[int] -> int` | the order of a search and its distances |
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. The manifest gives it no budget, no `size_budget` and no `stack_size`, and the kit does not
-  define them for this module; how a manifest sets the budget is in the kit's `docs/module-abi.md`,
+  `__fuel_get`. The manifest gives it no budget and no `size_budget`, and the kit does not
+  define them for this module; its stack is the manifest's `stack_size`, 4096 bytes (ABI sections 2.2 and 4.1); how a manifest sets the budget is in the kit's `docs/module-abi.md`,
   section 11.3 (the game manifest's budget is ten times the most fuel any tick of the conformity gate's
   scenarios burns).
 - Hooks: the header names the hook `FilterTargets` for `FindWeaponTarget` and
@@ -88,9 +88,10 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
   larger buffer. No search in the recordings lists more than 52 candidates, so a buffer of at least 52
-  units needs no second call; the kit does not define how a replay judges a second call. The first kit tag after
-  `reference-traces-v23` will define it (ozgb/byte-tactics-moddable#892). The module allocates no heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are
-  the same at the end of each tick as at its start (ABI section 12).
+  units needs no second call; the kit does not define how a replay judges a second call. The first kit tag
+  after `reference-traces-v23` will define it (ozgb/byte-tactics-moddable#892). The module allocates no
+  heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are the same at the end of each tick
+  as at its start (ABI section 12).
   The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
   player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
@@ -276,7 +277,8 @@ no imports.
 - **Random draws:** every draw is `services.RandomInt`, on the `rng.seed` generator of ABI section 9.3, in the order section 4 gives:
   for each pick, its index draw and then, if it is eligible, its distance draw. A search with no
   candidates draws nothing. The module passes each bound to `services.RandomInt` as it is, without a
-  guard: a bound of 0 (a *q* of 0) is a call of `services.RandomInt(0)`, and its result is the import's.
+  guard: a bound of 0 (a *q* of 0) is a call of `services.RandomInt(0)`, and its result is the import's (ABI section 9.3: a range below 2 gives
+  0 and leaves the generator alone).
 - **Target fields:** TargetX and TargetZ are signed 16-bit. `SetWeaponTargetPos` shifts the 32-bit
   `pos.x` and `pos.z` right by 16 with the sign kept, then keeps the low 16 bits. A ground target's
   position is the signed 16-bit field times 65536, in 32 bits.
@@ -396,14 +398,15 @@ Recorded once, so a single recorded call or search checks it:
 
 Gaps in the kit, which this spec does not fill:
 
-- The fuel budget, `size_budget` and `stack_size` of this module (section 2).
+- The fuel budget and `size_budget` of this module (section 2).
 - How the gate judges `ai.GetVisibleEnemiesInRadiusList`: the recordings show it only as the vector import
   `i ai.GetVisibleEnemiesInRadius` with `o out [...]`, with no buffer or capacity, and
   `docs/replay-format.md` calls the recorded targeting "native code in every mode". How a second call or the
   buffer size is judged is not defined in `reference-traces-v23`.
 - The `FilterTargets` hook (section 2).
-- How the replay's stub of `services.RandomInt` advances `rng.seed`: ABI section 9.3 says only that the
-  state of that generator is `rng.seed` in the recordings. The `w rng.seed` lines are the recorded result.
+- The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
+  result and the stream words advance as the game's do, and ABI section 9.3 gives the range-below-2 case,
+  but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
 
 The callback argument of `"TargetCleared"`, which the recordings show as `?`: it is null.
 
