@@ -85,10 +85,11 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
   larger buffer. No search in the recordings lists more than 52 candidates, so a buffer of at least 52
-  units needs no second call; the kit does not define how a replay judges a second call, and
-  ozgb/byte-tactics-moddable#892 will define it. The module
-  allocates no heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are the same at the end
-  of each tick as at its start (ABI section 12).
+  units needs no second call; the kit does not define how a replay judges a second call. It is defined in
+  `docs/replay-format.md` at moddable a395edce1 (ozgb/byte-tactics-moddable#892, merged), which is not yet in a
+  tagged kit. The module allocates no heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are
+  the same at the end of each tick as at its start (ABI section 12). The module's stack (ABI section 2.2) is
+  the memory these rules leave it.
   The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
   player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
@@ -122,9 +123,10 @@ byte 4 + 28*w* of the `Unit`. The recordings name the fields of slot *w* `weapon
 A slot holds:
 
 - *no target* when TargetX = 0 and TargetZ = −32768;
-- a *unit target* when TargetZ = −32768 and TargetX ≠ 0: the unit whose index in the unit pool is
-  TargetX (read as signed 16-bit). A unit's `id` equals its index in the unit pool, so the unit that
-  `SetWeaponTargetUnit` stored by `id` is the one read back;
+- a *unit target* when TargetZ = −32768 and TargetX ≠ 0: the unit at index
+  TargetX (read as signed 16-bit) of `Game.units`: its address is the base `Game.units` plus the index
+  times 280, the size of `Unit` in `layout.json` (the unit stride 0x118 of `docs/replay-format.md`). A unit's
+  `id` equals its index, so the unit that `SetWeaponTargetUnit` stored by `id` is the one read back;
 - a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units.
 
 **`Unit.netDirtyFlags`** (16-bit; in `layout.json` its bits are `unknown_ba` (bits 0 and 1), `dirty` (bit 2)
@@ -162,9 +164,9 @@ A player is *computer-controlled* when `active` ≠ 0 and `type` = 2.
 
 ### Between ticks
 
-Nothing outside the fields above. The `rng.*` lines of the recordings are the random stream's, which
-`services.RandomInt` reads and writes (the replay's stub of that import advances them, as the game's
-draw does); this module reads and writes none of them.
+Nothing outside the fields above. The `rng.seed` lines of the recordings are the generator of
+`services.RandomInt` (ABI section 9.3: its own generator, not `rng.main`), which the replay's stub of that
+import advances as the game's draw does; this module reads and writes none of them.
 
 ## 4. Behaviour
 
@@ -194,8 +196,8 @@ section 3. No imports.
 | anything else | `units.FindScript(u.script, "StartBuilding")`, its result ignored (Q2); then `units.StartScriptWithArgs(u.script, "TargetCleared", null, 0, 1, w, 0, 0, 0)`, its result ignored | TargetX = 0, TargetZ = −32768 |
 
 Both imports are always made, with `u.script` passed as it is, here and in the clear of
-`GetWeaponTargetPos`; a null `u.script` is outside the contract: the reference faults on it (a unit whose def has no script
-data, or a killed unit, has one), and the module may trap.
+`GetWeaponTargetPos`; a null `u.script` is outside the contract: a unit whose def has no script
+data, or a killed unit, has a null `u.script`, and the module may trap on it.
 
 ### `ResetWeaponTarget(u, w)`
 
@@ -203,7 +205,8 @@ TargetX becomes 0 and TargetZ −32768. No imports.
 
 ### `GetWeaponTargetUnit(u, w)`
 
-The unit target of the slot, or null when the slot holds no unit target. No imports, no writes.
+The unit target of the slot, or null when the slot holds no unit target. The unit is returned whether or not
+it is alive. No imports, no writes.
 
 ### `GetWeaponTargetPos(u, pos, w)`
 
@@ -269,7 +272,7 @@ no imports.
 
 ## 5. Exactness
 
-- **Random draws:** every draw is `services.RandomInt`, on the main stream, in the order section 4 gives:
+- **Random draws:** every draw is `services.RandomInt`, on the `rng.seed` generator of ABI section 9.3, in the order section 4 gives:
   for each pick, its index draw and then, if it is eligible, its distance draw. A search with no
   candidates draws nothing. The module passes each bound to `services.RandomInt` as it is, without a
   guard: a bound of 0 (a *q* of 0) is a call of `services.RandomInt(0)`, and its result is the import's.
@@ -357,9 +360,8 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
 - A candidate with `alive` clear or `killPending` set: the candidate list holds only live
   units, so neither check can fail.
 - Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def is not
-  always attackable: the bit is set in 16 recorded searches (`console-units`, from call 73), but no
-  recording holds it deciding a pick. The kit calls it "the menu option bit 4 of the match flags": the
-  match flags are the high byte of `Game.uiOptionFlags`, and its value 4 is bit 10 of the 16-bit word.
+  always attackable: the bit is set in 16 recorded searches (`console-units`, from the
+  `FindBestTargetIfFireAtWill` call at tick 73), but no recording holds it deciding a pick.
 - The lead with the slot's *has a weapon* bit clear on its own: its only caller skips a slot without that
   bit.
 - The lead with a weapon that has `cruise` set or whose `speed` is 0, for a unit with more than five
@@ -379,6 +381,11 @@ Not recorded, and the kit gives no reason:
 - A null `u.script` in a clear.
 - A null target in `SetWeaponTargetUnit`.
 - A weapon index above 2 in any slot.
+- `netDirtyFlags` bits 0, 1, 3 to 9, 11 and 15 before a target set: the recordings set only bits 2, 10, 12,
+  13 and 14, so the kept and cleared rule for the others is checked by no recording.
+- `FindWeaponTarget` with weapon 1: one recorded call.
+- A search whose result is a fallback pick: one recorded search.
+- `GetWeaponTargetUnit` on a dead or recycled target.
 
 The callback argument of `"TargetCleared"`, which the recordings show as `?`: it is null.
 
