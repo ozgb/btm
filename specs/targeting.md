@@ -80,9 +80,14 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
   larger buffer. The recordings hold at most 52 candidates in a search, so a buffer of at least 52 units
-  needs no second call; the kit does not define how a replay judges a second call. The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, with the
-  player, `pos`, the radius and the flags, followed by the line `o out [...]` that holds the whole list;
-  they hold one such import for each search, and the longest list in them has 52 units.
+  needs no second call; the kit does not define how a replay judges a second call. The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose
+  arguments are the player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius
+  and the flags, as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no
+  buffer and no capacity. The line `o out [...]` follows it and holds the whole list. After that line come
+  `o Unit#N.*` lines (for example `o Unit#2.flags 0x90240321`) giving the fields of the listed units that
+  changed since they were last written, such as `flags`, `posX`, `posZ`, `def`, `unitDefIndex` and
+  `activateFlags`. The recordings
+  hold one such import for each search, and the longest list in them has 52 units.
 - **Text** given to imports (`"StartBuilding"`, `"TargetCleared"`) is a NUL-terminated string in the
   module's own memory.
 
@@ -107,8 +112,9 @@ byte 4 + 28*w* of the `Unit`. The recordings name the fields of slot *w* `weapon
 A slot holds:
 
 - *no target* when TargetX = 0 and TargetZ = −32768;
-- a *unit target* when TargetZ = −32768 and TargetX ≠ 0: the unit at index TargetX (read as signed
-  16-bit) of the unit pool, that is at `Game.units` plus TargetX times the `Unit` stride;
+- a *unit target* when TargetZ = −32768 and TargetX ≠ 0: the unit whose index in the unit pool is
+  TargetX (read as signed 16-bit). A unit's `id` is its own index in the pool, set when the pool is made
+  and never changed, so the unit that `SetWeaponTargetUnit` stored by `id` is the one read back;
 - a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units.
 
 **`Unit.netDirtyFlags`** (16-bit, a word of bit-fields in `layout.json`, which doesn't name bits 10 to 14): every target set clears bits 10 to 14 of it (it becomes
@@ -139,6 +145,9 @@ A slot holds:
 | `WeaponDef.flags` | 0x00000080 | the weapon skips hidden targets |
 | `WeaponDef.flags` | 0x02000000 | the weapon never leads |
 
+The kit's `layout.json` names none of these `Unit.flags` bits (a kit gap, raised on #823), so the table is
+the only place they are defined.
+
 A player is *computer-controlled* when `active` ≠ 0 and `type` = 2.
 
 ### Between ticks
@@ -151,7 +160,9 @@ Nothing outside the fields above. The `rng.*` lines of the recordings are the ra
 Within one call, only the order of import calls is observable. The block writes are compared at the
 end of the call, so the order they are listed in here carries no meaning.
 
-In each slot, *u* is the unit, *w* the weapon (0, 1 or 2) and "the slot" is *u*'s weapon slot *w*.
+In each slot, *u* is the unit, *w* the weapon (0, 1 or 2) and "the slot" is *u*'s weapon slot *w*. The
+engine never calls a slot with a *w* above 2: its callers loop over the three weapons, or pass the weapon
+of an order, which is 0, 1 or 2. This spec defines nothing for a larger *w*.
 
 ### `SetWeaponTargetUnit(u, target, w)`
 
@@ -208,9 +219,10 @@ The radius *r* is the result of the import `weapons.GetWeaponRange(u, w)` when `
 `ai.GetVisibleEnemiesInRadiusList(u.playerIndex, u.pos, r, 0, buffer, capacity)` fills the candidate list.
 
 The search then makes up to 50 *picks*, stopping early when the list is empty. Pick *k* (from 1) draws
-*i* = `services.RandomInt(n)`, with *n* the list's length less *k* − 1, and its candidate is element *i*
-(from 0) of the list as it stands: the list after a pick is the list before it with its last element
-moved into the picked element's place, and one shorter (Q4). The pick *t* is *eligible* when:
+*i* = `services.RandomInt(n)`, with *n* the list's length less *k* − 1, and its candidate is the one at
+position *i* (from 0) among the candidates not yet picked, which stand in this order: the list's order at
+first, and after a pick at position *p*, the same order with the candidate that stood last in the
+place of position *p*, and one shorter (Q4). The pick *t* is *eligible* when:
 
 1. *t* is targetable and not excluded;
 2. `t.def` is always attackable, or `u`'s player is computer-controlled, or bit 10 of
@@ -249,16 +261,21 @@ no imports.
   position is the signed 16-bit field times 65536, in 32 bits.
 - **The ground height:** the import's result is a signed 32-bit integer, compared signed with
   `Game.seaLevel` (0 to 255). `pos.y` is *h* × 65536, wrapping at 32 bits.
-- **The distance of a lead:** *d*.x, *d*.y and *d*.z are 32-bit differences that wrap. Each is converted
-  to a 64-bit float, and the squares and the two sums are 64-bit operations, each rounded, summed as
-  ((*d*.x² + *d*.y²) + *d*.z²). The square root is a 64-bit square root, and *D* is it truncated
-  toward zero to a 32-bit integer.
-- **The time of a lead:** *D* × 65536 is a 64-bit integer, divided by `speed` with the quotient truncated
-  toward zero, and *T* is its low 32 bits. *T* × 0xcccc is a 64-bit product, shifted right by 16 with the
-  sign kept, and *T*′ is its low 32 bits. Each velocity component times *T*′ is a 64-bit product, shifted
-  right by 16 with the sign kept; its low 32 bits are added to *s* with 32-bit wrapping.
-- **The search distance:** *dx* and *dz* are 32-bit differences that wrap; hi(*v*) is the high 32 bits of
-  the 64-bit product *v* × *v*. *q* is the 32-bit wrapping sum of the two.
+- **The distance of a lead:** *d*.x, *d*.y and *d*.z are 32-bit differences that wrap. *D* is the
+  square root of *d*.x² + *d*.y² + *d*.z² computed in 64-bit floating point, with the three squares
+  summed x and y first, then z, every operation rounded to 64 bits, and then truncated toward zero to a
+  signed 32-bit integer. A root of 2^31 or more has no such integer and gives *D* = −2^31; nothing
+  in the engine bounds it, no recording reaches it (they stay below 2^25).
+- **The time of a lead:** *T* is signed. It is the quotient of *D* × 65536 by `speed` (both signed, the
+  product exact in 64 bits) truncated toward zero, then reduced to its low 32 bits as a signed value, so a
+  quotient beyond 32 bits wraps. A negative `speed` is not rejected: it gives *T* the opposite sign to
+  *D*, and *T*′ then moves `pos` away from the target's velocity. *T*′ is *T* × 0xcccc divided by 65536
+  and rounded toward negative infinity (it always fits 32 bits). Each added offset is the product of a
+  velocity component and *T*′ divided by 65536 and rounded toward negative infinity, in exact 64-bit
+  arithmetic, reduced to its low 32 bits and added to *s* with 32-bit wrapping.
+- **The search distance:** *dx* and *dz* are 32-bit differences that wrap; hi(*v*) is *v* × *v* divided
+  by 2^32 and rounded down (the square is exact, below 2^62). *q* is hi(*dx*) + hi(*dz*) reduced to 32
+  bits as a signed value.
 - **The best picks:** a pick replaces the best of its kind only when its distance is strictly lower.
 - **The radius:** `UnitDef.range` is sign-extended from 16 bits.
 - **`useRange`** counts as set when nonzero, and **the weapon index** of `FindWeaponTarget` is its low
@@ -269,8 +286,9 @@ no imports.
 - **Q1:** a ground target whose *z* field would be −32768 is stored as −32767.
 - **Q2:** clearing a target looks up the script `"StartBuilding"` and ignores the answer.
 - **Q3:** a ground target above sea level asks for the ground height twice and uses the second answer.
-- **Q4:** a search picks candidates in random order by removing each pick and moving the last candidate
-  into its place, so the order depends on the draws and on the list's order.
+- **Q4:** each draw of a search picks, by position, among the candidates not yet picked, and a picked
+  candidate's position is then held by the candidate that stood last, so which candidate a draw yields
+  depends on the earlier draws and on the list's order, and not only on the draw.
 - **Q5:** `ChooseWeapon` returns 0 when no weapon is ready, and 2 when weapon 2 is the only one ready.
 
 ## 7. Examples
@@ -323,7 +341,9 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
   units, so neither check can fail.
 - Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def is not
   always attackable: the bit is set in 16 recorded searches (`console-units`, from call 73), but no
-  recording holds it deciding a pick.
+  recording holds it deciding a pick. The kit's "Not recorded" wording for this item, "the menu option bit 4
+  of the match flags", describes it wrongly: the bit this spec reads is bit 10 of `Game.uiOptionFlags`,
+  and the maintainer has filed a Docs issue to correct the kit.
 - The lead with the slot's *ready* bit clear on its own: its only caller skips a slot without that bit
   (the kit describes the bit as the slot having a weapon).
 - The lead with a weapon whose never-leads flag is set (a cruise weapon) or whose `speed` is 0, for a
