@@ -62,12 +62,13 @@ module sets its own (see Fuel). This section gives the entry the module must hav
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. The manifest gives it no budget and no `size_budget`, and the kit does not
-  define them for this module; its stack is the manifest's `stack_size`, 4096 bytes (ABI sections 2.2 and 4.1); how a manifest sets the budget is in the kit's `docs/module-abi.md`,
-  section 11.3 (the game manifest's budget is ten times the most fuel any tick of the conformity gate's
-  scenarios burns).
+  define them for this module (see "Gaps in the kit", section 7). Its stack is the manifest's `stack_size`,
+  4096 bytes (ABI sections 2.2 and 4.1). How a manifest sets the budget is in the kit's
+  `docs/module-abi.md`, section 11.3 (the game manifest's budget is ten times the most fuel any tick of the
+  conformity gate's scenarios burns).
 - Hooks: the header names the hook `FilterTargets` for `FindWeaponTarget` and
   `FindBestTargetIfFireAtWill`. This module raises no hook. The kit does not define a hook interface for modules
-  (`docs/module-abi.md` has none), so the gate's treatment of a hook is not defined either.
+  (`docs/module-abi.md` has none), so the gate's treatment of a hook is not defined either (see "Gaps in the kit", section 7).
 
 ### Arguments outside the block
 
@@ -88,7 +89,8 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
   larger buffer. No search in the recordings lists more than 52 candidates, so a buffer of at least 52
-  units needs no second call; the kit does not define how a replay judges a second call. The first kit tag
+  units needs no second call; the kit does not define how a replay judges a second call or the capacity it expects (see
+  "Gaps in the kit", section 7). The first kit tag
   after `reference-traces-v23` will define it (ozgb/byte-tactics-moddable#892). The module allocates no
   heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are the same at the end of each tick
   as at its start (ABI section 12).
@@ -128,7 +130,7 @@ A slot holds:
 - a *unit target* when TargetZ = −32768 and TargetX ≠ 0: the unit at index
   TargetX (read as signed 16-bit) of `Game.units`: its address is the base `Game.units` plus the index
   times 280, the size of `Unit` in `layout.json` (the unit stride 0x118 of `docs/replay-format.md`). A unit's
-  `id` equals its index, so the unit that `SetWeaponTargetUnit` stored by `id` is the one read back;
+  `id` equals its index, and the unit that `SetWeaponTargetUnit` stored by `id` is the one read back;
 - a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units.
 
 **`Unit.netDirtyFlags`** (16-bit; in `layout.json` its bits are `unknown_ba` (bits 0 and 1), `dirty` (bit 2)
@@ -168,7 +170,7 @@ A player is *computer-controlled* when `active` ≠ 0 and `type` = 2.
 
 Nothing outside the fields above. The `rng.seed` lines of the recordings are the generator of
 `services.RandomInt` (ABI section 9.3: its own generator, not `rng.main`), which the replay's stub of that
-import advances as the game's draw does; this module reads and writes none of them.
+import advances; this module reads and writes none of them.
 
 ## 4. Behaviour
 
@@ -181,7 +183,9 @@ engine never calls a slot with a *w* above 2; this spec defines nothing for a la
 ### `SetWeaponTargetUnit(u, target, w)`
 
 TargetX becomes the low 16 bits of `target.id`, TargetZ becomes −32768, and `u.netDirtyFlags` is cleared
-as in section 3. No imports. A null `target` is outside the contract: the engine never passes one, and the
+as in section 3. No imports. The target's own `netDirtyFlags` appears among the recorded reads (for
+example `r Unit#3.netDirtyFlags 1024` at tick 138 of `orders-guard-attacked`), is not changed, and no
+result depends on it. A null `target` is outside the contract: the engine never passes one, and the
 module may trap.
 
 ### `SetWeaponTargetPos(u, pos, w)`
@@ -274,11 +278,12 @@ no imports.
 
 ## 5. Exactness
 
-- **Random draws:** every draw is `services.RandomInt`, on the `rng.seed` generator of ABI section 9.3, in the order section 4 gives:
-  for each pick, its index draw and then, if it is eligible, its distance draw. A search with no
+- **Random draws:** every draw is `services.RandomInt`, on the `rng.seed` generator of ABI section 9.3, in
+  the order section 4 gives: for each pick, its index draw and then, if it is eligible, its distance draw. A search with no
   candidates draws nothing. The module passes each bound to `services.RandomInt` as it is, without a
-  guard: a bound of 0 (a *q* of 0) is a call of `services.RandomInt(0)`, and its result is the import's (ABI section 9.3: a range below 2 gives
-  0 and leaves the generator alone).
+  guard: a bound of 0 (a *q* of 0) is a call of `services.RandomInt(0)`, and its result is the import's (ABI
+  section 9.3: a range below 2 gives 0 and leaves the generator alone). A *q* that wraps to a negative
+  value is passed as that negative bound, so its distance is 0 and the generator is left alone.
 - **Target fields:** TargetX and TargetZ are signed 16-bit. `SetWeaponTargetPos` shifts the 32-bit
   `pos.x` and `pos.z` right by 16 with the sign kept, then keeps the low 16 bits. A ground target's
   position is the signed 16-bit field times 65536, in 32 bits.
@@ -300,7 +305,8 @@ no imports.
   by 2^32 and rounded down (the square is exact, at most 2^62). *q* is hi(*dx*) + hi(*dz*) reduced to 32
   bits as a signed value.
 - **The best picks:** a pick replaces the best of its kind only when its distance is strictly lower.
-- **The radius:** `UnitDef.range` is sign-extended from 16 bits.
+- **The radius:** `UnitDef.range` is sign-extended from 16 bits, and a negative value is passed to the
+  candidate import as that negative radius.
 - **`useRange`** counts as set when nonzero, and **the weapon index** of `FindWeaponTarget` is its low
   8 bits.
 
@@ -308,11 +314,12 @@ no imports.
 
 - **Q1:** a ground target whose *z* field would be −32768 is stored as −32767.
 - **Q2:** clearing a target makes the import `units.FindScript(u.script, "StartBuilding")` before the
-  `"TargetCleared"` call, and nothing depends on its result.
+  `"TargetCleared"` call, and ignores its result.
 - **Q3:** a ground target above sea level asks for the ground height twice and uses the second answer.
-- **Q4:** a draw of a search picks by position among the candidates not yet picked, and a pick moves the
-  candidate that stood last to the picked position (section 4), so the candidate a draw yields depends on
-  the earlier draws and on the list's order, not only on the draw.
+- **Q4:** a draw of a search picks by position among the candidates not yet picked. After a pick at
+  position *p*, position *p* holds the candidate that stood last (unless *p* was the last position) and no
+  other position changes, so the candidate a draw yields depends on the earlier draws and on the list's
+  order, not only on the draw.
 - **Q5:** `ChooseWeapon` returns 0 when no slot has a weapon, and 2 when slot 2 is the only one that has.
 
 ## 7. Examples
@@ -362,9 +369,13 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
   harness reject positions off the map.
 - A candidate with `alive` clear or `killPending` set: the candidate list holds only live
   units, so neither check can fail.
+- Negative `speed` in a lead, a negative `UnitDef.range` and a *q* that wraps: section 5 gives their
+  results, and no recording checks them.
 - Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def is not
   always attackable: the bit is set in 16 recorded searches (`console-units`, from the
-  `FindBestTargetIfFireAtWill` call at tick 73), but no recording holds it deciding a pick.
+  `FindBestTargetIfFireAtWill` call at tick 73), but no recording holds it deciding a pick. The kit's "menu option bit 4 of the match flags"
+  (`docs/replay-format.md`, "Not recorded") is this bit: `matchFlags` is the byte of `layout.json` at offset
+  229168, the high byte of the 16-bit `uiOptionFlags` at 229167, and its value 4 is 0x400 of the word.
 - The lead with the slot's *has a weapon* bit clear on its own: its only caller skips a slot without that
   bit.
 - The lead with a weapon that has `cruise` set or whose `speed` is 0, for a unit with more than five
@@ -398,12 +409,13 @@ Recorded once, so a single recorded call or search checks it:
 
 Gaps in the kit, which this spec does not fill:
 
-- The fuel budget and `size_budget` of this module (section 2).
+- The fuel budget and `size_budget` of this module, so the spec gives no budget to choose (section 2).
 - How the gate judges `ai.GetVisibleEnemiesInRadiusList`: the recordings show it only as the vector import
   `i ai.GetVisibleEnemiesInRadius` with `o out [...]`, with no buffer or capacity, and
   `docs/replay-format.md` calls the recorded targeting "native code in every mode". How a second call or the
   buffer size is judged is not defined in `reference-traces-v23`.
-- The `FilterTargets` hook (section 2).
+- The `FilterTargets` hook: the header names it, the kit defines no hook interface, and what the gate does
+  with a module that raises none is not stated (section 2).
 - The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
   result and the stream words advance as the game's do, and ABI section 9.3 gives the range-below-2 case,
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
