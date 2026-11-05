@@ -84,6 +84,10 @@ slots of the `files` seam, it describes a different module.
 - **The saved-game bank** (`SaveMeteors`, `LoadMeteors`) is a `handle`, passed back to the
   `HapiBank_*` services only.
 
+### Events
+
+None. No slot of this module records a sim event (kinds are listed in `docs/sim-events.md`).
+
 ## 3. State
 
 ### Owned (`SimGlobals`)

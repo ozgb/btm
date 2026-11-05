@@ -7,8 +7,10 @@ advice, and gives no reasons for the behaviour it states.
 The kit is the data kit a spec is written against (`MANIFEST.json`, `layout.json`, `interfaces/`,
 `docs/`, `tests/replay/`, `reference/`). A spec uses the kit's names (slots, services, `layout.json`
 records and fields, replay line names) and no others. When the spec needs a word for something the
-kit doesn't name, it defines the word in the spec. Observable data (saved-game keys, messages, file
-and record names) is quoted exactly.
+kit doesn't name, it defines the word in the spec. A spec that uses one of the internal terms that
+`docs/sim-events.md` defines (an order state, a call flag, a unit flag) cites the page's Terms section
+instead of defining the term again. Observable data (saved-game keys, messages, file and record names)
+is quoted exactly.
 
 ## 1. Role
 
@@ -20,6 +22,9 @@ What the subsystem is responsible for in the game, in one paragraph.
 - **The manifest entry, in full:** `name` and `interface`, `exports` in order, `data` words, the kinds
   of every slot, and every import by exact group and name with its kinds (no wildcards: the lists are
   exact, ABI 9.1). Add what each import is used for.
+- **Events:** a `### Events` subsection naming every sim event kind the subsystem records, each as
+  `SIM_EVENT_NAME` with when it is recorded, citing the kit's `docs/sim-events.md` for the arguments,
+  flags and phases rather than stating them again. A subsystem that records none says `None.`
 - Fuel: the rule version and the budget the module must meet.
 - Every argument that isn't in the block (a params record, a console command, a saved-game bank,
   a `TdfFile`): its layout, or where the kit gives it, and any field the module reads directly.
