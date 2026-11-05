@@ -94,18 +94,14 @@ build, set from the build's own gate runs). This section gives the rest of the e
   this import) answers a call from the next recorded vector line with the same player, position, radius and
   flags: it writes the first `capacity` units of the recorded list, in order, and returns the recorded count.
   A repeat with the same arguments and a larger capacity, after a count above the capacity, is answered from
-  the same line and takes no further import; any other extra call is a divergence. A search makes
-  the import once in the recordings, then draws.
-  The number of candidates has no limit (it is every enemy in range that the player can see), and the draws
-  use the full count. ABI section 7.3 says a caller that gets a count above its capacity calls
-  again with a larger buffer; holding the whole list, and the capacity and place of the buffer, are the
-  build's choice (ABI sections 2.1, 2.2 and 7.3). The writable copy of the list is not in the scratch area
-  (a module never allocates from it, ABI section 2.1): it is in the module's window, and the statics hash
-  (ABI section 12) must be the same at the end of each tick, so a copy kept in statics is left as found,
-  and the stack is outside that hash. No search in the recordings lists more than 52
-  candidates. The module allocates no
-  heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are the same at the end of each tick
-  as at its start (ABI section 12).
+  the same line and takes no further import; any other extra call is a divergence. A search makes the
+  import once in the recordings, then draws. The number of candidates has no limit (it is every enemy in
+  range that the player can see), and the draws use the full count. ABI section 7.3 says a caller that gets
+  a count above its capacity calls again with a larger buffer; holding the whole list, and the capacity and
+  place of the buffer, are the build's choice. No search in the recordings lists more than 52 candidates.
+  The build's constraints on that memory: the module allocates no heap and uses no scratch (ABI sections 2.1
+  and 2.2), and the buffer, and any list the module derives from it, is on its stack or in its statics,
+  which must be as found at the end of each tick (ABI section 12).
   The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
   player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
@@ -172,7 +168,7 @@ and bit 15 (bit 12 of `short`) are kept.
 | `Unit.flags` | 0x00004000 | `killPending` (bit 14) |
 | `Unit.flags` | bits 20 and 21 | `fireOrder`, 0 to 3; 2 is fire at will |
 | `Unit.activateFlags` | 0x10 | *hidden*, which a weapon with `paralyzer` set respects |
-| `UnitDef.flags1` | 0x00008000 | bit 15 of `flags1`, unnamed in the kit: a target with it set passes check 2 of the search whatever its attacker's player |
+| `UnitDef.flags1` | 0x00008000 | bit 15 of `flags1`, unnamed in the kit: a target with it set passes check 2 of the search whether or not the shooter's player is computer-controlled |
 | `UnitDef.flags1` | 0x10000000 | bit 28 of `flags1`, unnamed in the kit: a shooter with it set skips the reach import |
 | `WeaponDef.flags` | 0x00000080 | `paralyzer` (bit 7): a weapon with it set does not pick a hidden target |
 | `WeaponDef.flags` | 0x02000000 | `cruise` (bit 25): a weapon with it set does not lead |
@@ -204,8 +200,8 @@ TargetX becomes the low 16 bits of `target.id` (a target of id 0 therefore leave
 section 3), TargetZ becomes −32768, and `u.netDirtyFlags` is cleared
 as in section 3. No imports. The target's own `netDirtyFlags` appears among the recorded reads (for
 example `r Unit#3.netDirtyFlags 1024` at tick 138 of `orders-guard-attacked`), is not changed, and no
-result depends on it. A null `target` is outside the contract, and the module may
-trap.
+result depends on it. A null `target` is outside the contract, and the
+module may trap.
 
 ### `SetWeaponTargetPos(u, pos, w)`
 
@@ -274,9 +270,9 @@ whose length is the count the import returns, the whole list even when it is abo
 The search makes at most 50 *picks* (13 recorded searches have more than 50 candidates), and ends sooner
 when no candidate is left. Pick *k* (from 1) draws *i* = `services.RandomInt(n)`, with *n* the list's
 length less *k* − 1, and its candidate is the one at position *i* (from 0) of the candidates not yet
-picked. Those stand in this order (Q4): the list's order for pick 1; after a pick at position *p* of the *m*
-candidates then standing, the *m* − 1 left stand as L[0 .. *p*−1], L[*m*−1], L[*p*+1 .. *m*−2] (L the order
-before the pick) when *p* < *m* − 1, and as L[0 .. *m*−2] when *p* = *m* − 1. The pick *t* is *eligible* when:
+picked. Those stand in this order (Q4): the list's order for pick 1; after a pick the
+last candidate moves into the picked position (unless it was the last) and the list shortens by one.
+The pick *t* is *eligible* when:
 
 1. *t* has `alive` (bit 28 of `t.flags`) set and `killPending` (bit 14) clear;
 2. `t.def` has `flags1` bit 15 set, or `u`'s player is computer-controlled, or bit 10 of
@@ -285,13 +281,9 @@ before the pick) when *p* < *m* − 1, and as L[0 .. *m*−2] when *p* = *m* −
 4. `useRange` ≠ 0, or `t.unitDefIndex` is not in `u.def.categories`;
 5. the slot's weapon has `paralyzer` clear, or *t* is not hidden.
 
-The slot's `weapon{w}Def` is read only for a pick that passes checks 1 to 4, and by a lead only when the slot
-has a weapon. A unit with candidates but a null `weapon{w}Def` therefore faults only at the first pick that
-passes checks 1 to 4.
-
 The reach import is made for a pick exactly when 1 and 2 hold and `u.def` has `flags1` bit 28 clear,
 whatever 4 and 5 give. For an eligible pick, *distance* = `services.RandomInt(q)`, with
-*q* = hi(*dx*²) + hi(*dz*²), where *dx* and *dz* are `u.pos` − `t.pos` on those axes and hi is defined in
+*q* = hi(*dx*) + hi(*dz*), where *dx* and *dz* are `u.pos` − `t.pos` on those axes and hi is defined in
 section 5. A pick draws nothing more.
 
 An eligible pick whose `unitDefIndex` is in `u.def.weaponCategories[w]` is a *fallback*; any other is a
@@ -340,7 +332,7 @@ no writes.
   and rounded toward negative infinity (it always fits 32 bits). Each added offset is the product of a
   velocity component and *T*′ divided by 65536 and rounded toward negative infinity, in exact 64-bit
   arithmetic, reduced to its low 32 bits and added to *s* with 32-bit wrapping.
-- **The search distance:** *dx* and *dz* are 32-bit differences that wrap; hi(*v*) is *v* × *v* divided
+- **The search distance:** *dx* and *dz* are 32-bit differences that wrap; hi(*d*) is *d* × *d* divided
   by 2^32 and rounded down (the square is exact, at most 2^62). *q* is hi(*dx*) + hi(*dz*) reduced to 32
   bits as a signed value.
 - **The best picks:** a pick replaces the best of its kind only when its distance is strictly lower.
@@ -428,8 +420,10 @@ Not recorded, and the kit gives no reason:
 
 - `FindBestTargetIfFireAtWill` with a fire order of 1 or 3 (fire order 0 is recorded).
 - A `UnitDef.range` that is negative as a signed 16-bit value.
-- A lead with `killCount` of 4, 5 or 6 when every other lead condition holds (the recorded leads all have 7,
-  the recorded non-leads 0 to 3; the threshold rests on the kit's "more than five kills").
+- A lead with `killCount` of 4, 5 or 6 when every other lead condition holds. The recorded leads (16) all
+  have 7. The unit-target calls with every other lead condition met and no lead have 0 (10728), 1 (55),
+  2 (42) or 3 (21); the counts 6 and 8 occur only against a target with a null `motion`, where no lead
+  is required. The threshold rests on the kit's "more than five kills".
 - `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`.
 - A *q* that wraps below 0.
 - Two eligible fallback picks with the same distance. Preferred picks that tie are recorded, at distance 0
