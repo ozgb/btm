@@ -44,7 +44,7 @@ figures of the last bullet below. This section gives the entry the module must h
   functions; a module that lists and exports all four meets both sections. The module reads `g_game` and
   `g_blockBase` only.
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
-  `economy` 3, and for its import groups `units` 1, `los_radar` 2, `files` 1, `players` 1, `network` 1.
+  `economy` 3, and for its import groups `units` 1, `los_radar` 2, `files` 2, `players` 1, `network` 1.
 - `data_base`, `table_base`, `fuel_budget` and `size_budget`: the build picks them, as ABI 11.1 and 11.3
   say a budget belongs to its build. `fuel_budget` is set from the build's own runs of the conformity gate
   (ten times the most fuel any tick burns, all the slot calls of a tick together, ABI 11.2 and 11.3), and
@@ -379,11 +379,8 @@ The box name is `u` followed by `info.id` as four lower-case hexadecimal digits 
 3. `files.BankWriteBox(bank, energy group, 24)`, the energy group being the 24 bytes at `self`;
 4. `files.BankWriteBox(bank, metal group, 24)`, the metal group being the 24 bytes at `self` + 24.
 
-`self.player` isn't saved. `SaveUnitAccounts` only reads the account, `energyMake` and `metalMake`
-included (the first float of each group): it passes them to the save and writes nothing to the block. Its
-calls in `save-midgame` have no `w` line. The kit's schema (`interfaces-v5`) wrongly lists `energyMake`
-and `metalMake` among the writes of `SaveUnitAccounts`; it also lists them among the reads of
-`LoadUnitAccounts`, which sets them only from the bytes it reads.
+`self.player` isn't saved. `SaveUnitAccounts` reads the whole account, `energyMake` and `metalMake`
+included (the first float of each group), and `info.id`. It writes nothing to the block.
 
 ### `LoadUnitAccounts(self, info, bank)`
 
@@ -659,5 +656,5 @@ and no recording judges them: the gate's full scenarios are their only judge.
 
 ## 8. Kit version
 
-Kit `interfaces-v5` and `reference-traces-v23`, the versions the gate judges against. Interface
+Kit `interfaces-v6` and `reference-traces-v23`, the versions the gate judges against. Interface
 `economy` 3.0.
