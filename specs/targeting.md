@@ -79,6 +79,10 @@ below.
 - **Text** given to imports (`"StartBuilding"`, `"TargetCleared"`) is a NUL-terminated string in the
   module's own memory.
 
+### Events
+
+None. No slot of this module records a sim event (kinds are listed in `docs/sim-events.md`).
+
 ## 3. State
 
 ### Owned
