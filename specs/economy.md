@@ -656,5 +656,5 @@ and no recording judges them: the gate's full scenarios are their only judge.
 
 ## 8. Kit version
 
-Kit `interfaces-v6` and `reference-traces-v24`, the versions the gate judges against. Interface
+Kit `interfaces-v7` and `reference-traces-v24`, the versions the gate judges against. Interface
 `economy` 3.0.
