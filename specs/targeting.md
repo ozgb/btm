@@ -236,8 +236,12 @@ The weapon *leads* when all of these hold: the slot has a weapon (bit 1 of its f
 - the time *T* = (*D* × 65536) / `speed`, truncated, then *T*′ = (*T* × 0xcccc) >> 16;
 - `pos` = *s* + (`t.motion.velocity` × *T*′) >> 16, per axis.
 
-The factor 0xcccc / 65536 (about 0.8) is, in the kit's words, "the part of the distance a target's body offset moves the aim point"
-(`docs/replay-format.md`).
+The factor 0xcccc / 65536 (about 0.8) is, in the kit's words, "the part of the distance a target's body
+offset moves the aim point" (`docs/replay-format.md`).
+
+When `t.motion` is null there is no lead and `pos` = *s*, result 1: in `edges-economy-targeting`, from tick
+126 on, `Unit#1` aims weapon 0 at `Unit#502`, whose `motion` is null, and the call returns the sweet spot
+`units.GetSweetSpot` gave (`o pos.x 45605925`, `o result 1`), recorded 66 times.
 
 Section 5 gives the widths.
 
@@ -289,8 +293,8 @@ The index of the first slot (0, 1, 2) that has a weapon (bit 1 of its flags), or
 
 - **Random draws:** every draw is `services.RandomInt`, on the `rng.seed` generator of ABI section 9.3, in
   the order section 4 gives: for each pick, its index draw and then, if it is eligible, its distance draw.
-  A search with no candidates draws nothing. The module passes each bound to `services.RandomInt` as it is, without a
-  guard: a bound of 0 (a *q* of 0) is a call of `services.RandomInt(0)`, and its result is the import's (ABI
+  A search with no candidates draws nothing. The module passes each bound to `services.RandomInt` as it is,
+  without a guard: a bound of 0 (a *q* of 0) is a call of `services.RandomInt(0)`, and its result is the import's (ABI
   section 9.3: a range below 2 gives 0 and leaves the generator alone). A *q* that wraps to a negative
   value is passed as that negative bound, so its distance is 0 and the generator is left alone.
 - **Target fields:** TargetX and TargetZ are signed 16-bit. `SetWeaponTargetPos` shifts the 32-bit
@@ -383,8 +387,9 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
 - Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def is not
   always attackable: the bit is set in 16 recorded searches (`console-units`, from the
   `FindBestTargetIfFireAtWill` call at tick 73), but no recording holds it deciding a pick. The kit's
-  "menu option bit 4 of the match flags" (`docs/replay-format.md`, "Not recorded") is this bit: `matchFlags` is the byte of `layout.json` at offset
-  229168, the high byte of the 16-bit `uiOptionFlags` at 229167, and its value 4 is 0x400 of the word.
+  "menu option bit 4 of the match flags" (`docs/replay-format.md`, "Not recorded") is this bit: `matchFlags`
+  is the byte of `layout.json` at offset 229168, the high byte of the 16-bit `uiOptionFlags` at 229167, and
+  its value 4 is 0x400 of the word.
 - The lead with the slot's *has a weapon* bit clear on its own: its only caller skips a slot without that
   bit.
 - The lead with a weapon that has `cruise` set or whose `speed` is 0, for a unit with more than five
@@ -405,7 +410,6 @@ Not recorded, and the kit gives no reason:
 - A null target in `SetWeaponTargetUnit`.
 - A weapon index above 2 in any slot, and the weapon index of `FindWeaponTarget` above 255.
 - A ground target with a negative coordinate (section 5 gives the shift).
-- A lead whose target has a null `motion` while `killCount` is above 5 and the other conditions hold.
 - A `unitDefIndex` of 512 or more (a `UnitTypeSet` holds 512 bits) given to a set test, and a null
   `categories`, `weaponCategories` or `u.def`: the spec defines nothing for them.
 - A TargetX that is outside the unit pool.
