@@ -80,7 +80,10 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
   larger buffer. No search in the recordings lists more than 52 candidates, so a buffer of at least 52
-  units needs no second call; the kit does not define how a replay judges a second call.
+  units needs no second call; the kit does not define how a replay judges a second call. The buffer is
+  not in the module's statics (its data and bss, which ABI section 12 hashes after every tick and treats
+  a change in as fatal); it is on the module's stack (ABI section 2.2), since a module never allocates
+  from the scratch area (ABI section 2.1).
   The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
   player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
@@ -109,14 +112,14 @@ byte 4 + 28*w* of the `Unit`. The recordings name the fields of slot *w* `weapon
 | `aimTargetXOrUnitId` (byte 0) | `weapon{w}TargetX` | signed 16-bit | the target unit's id, or the ground target's *x* |
 | `aimTargetZOrUnitSentinel` (byte 2) | `weapon{w}TargetZ` | signed 16-bit | −32768 for a unit target or none, else the ground target's *z* |
 | `weapon` (byte 12) | `weapon{w}Def` | `Ref<WeaponDef>` | the weapon (read only) |
-| `flags` (byte 27) | `weapon{w}Flags` | unsigned byte | bit 1 (value 2): *ready* (read only) |
+| `flags` (byte 27) | `weapon{w}Flags` | unsigned byte | bit 1 (value 2): *has a weapon* (read only) |
 
 A slot holds:
 
 - *no target* when TargetX = 0 and TargetZ = −32768;
 - a *unit target* when TargetZ = −32768 and TargetX ≠ 0: the unit whose index in the unit pool is
-  TargetX (read as signed 16-bit). A unit's `id` is its own index in the pool, set when the pool is made
-  and never changed, so the unit that `SetWeaponTargetUnit` stored by `id` is the one read back;
+  TargetX (read as signed 16-bit). A unit's `id` equals its index in the unit pool, so the unit that
+  `SetWeaponTargetUnit` stored by `id` is the one read back;
 - a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units.
 
 **`Unit.netDirtyFlags`** (16-bit, a word of bit-fields in `layout.json`, which doesn't name bits 10 to 14): every target set
@@ -136,11 +139,11 @@ clears bits 10 to 14 of it (it becomes `netDirtyFlags` AND 0x83ff).
 
 ### Bits
 
-| Field | Mask | Word used here |
+| Field | Mask | Name |
 | --- | --- | --- |
-| `Unit.flags` | 0x10000000 | *targetable*: the unit takes part (`layout.json` names the bit `alive`, bit 28) |
-| `Unit.flags` | 0x00004000 | *excluded*: never chosen while set (`layout.json` names the bit `killPending`, bit 14) |
-| `Unit.flags` | bits 20 and 21 | the *fire order*, 0 to 3; 2 is fire at will (`layout.json` names the two bits `fireOrder`) |
+| `Unit.flags` | 0x10000000 | `alive` (bit 28) |
+| `Unit.flags` | 0x00004000 | `killPending` (bit 14) |
+| `Unit.flags` | bits 20 and 21 | `fireOrder`, 0 to 3; 2 is fire at will |
 | `Unit.activateFlags` | 0x10 | *hidden*, for weapons that respect it |
 | `UnitDef.flags1` | 0x00008000 | *always attackable* |
 | `UnitDef.flags1` | 0x10000000 | *reach not checked*: the shooter skips the reach import |
@@ -152,7 +155,8 @@ A player is *computer-controlled* when `active` ≠ 0 and `type` = 2.
 ### Between ticks
 
 Nothing outside the fields above. The `rng.*` lines of the recordings are the random stream's, which
-`services.RandomInt` reads and writes; this module reads and writes none of them.
+`services.RandomInt` reads and writes (the replay's stub of that import advances them, as the game's
+draw does); this module reads and writes none of them.
 
 ## 4. Behaviour
 
@@ -180,6 +184,9 @@ section 3. No imports.
 | no target | none | none |
 | anything else | `units.FindScript(u.script, "StartBuilding")`, its result ignored (Q2); then `units.StartScriptWithArgs(u.script, "TargetCleared", null, 0, 1, w, 0, 0, 0)`, its result ignored | TargetX = 0, TargetZ = −32768 |
 
+Both imports are always made, with `u.script` passed as it is, here and in the clear of
+`GetWeaponTargetPos`; the module does not test it for null, and when it is null the outcome is the imports'.
+
 ### `ResetWeaponTarget(u, w)`
 
 TargetX becomes 0 and TargetZ −32768. No imports.
@@ -197,7 +204,7 @@ The unit target of the slot, or null when the slot holds no unit target. No impo
 | a unit target *t* with `t.unitDefIndex` = 0 | `units.FindScript(u.script, "StartBuilding")`, its result ignored (Q2); then `units.StartScriptWithArgs(u.script, "TargetCleared", null, 0, 1, w, 0, 0, 0)`, its result ignored | 0; TargetX = 0, TargetZ = −32768 |
 | a unit target *t* | `units.GetSweetSpot(t, s)` | 1; `pos` = *s*, led when the weapon leads (below) |
 
-The weapon *leads* when all of these hold: the slot is ready, the slot's `WeaponDef` has
+The weapon *leads* when all of these hold: the slot has a weapon (bit 1 of its flags), the slot's `WeaponDef` has
 0x02000000 clear in `flags` and a `speed` ≠ 0, `t.motion` is not null, and `u.killCount` (unsigned 16-bit) > 5. Then, with
 *d* = `u.pos` − *s* per axis:
 
@@ -219,10 +226,10 @@ The radius *r* is the result of the import `weapons.GetWeaponRange(u, w)` when `
 The search then makes up to 50 *picks*, stopping early when the list is empty. Pick *k* (from 1) draws
 *i* = `services.RandomInt(n)`, with *n* the list's length less *k* − 1, and its candidate is the one at
 position *i* (from 0) among the candidates not yet picked, which stand in this order: the list's order at
-first, and after a pick at position *p*, the same order with the candidate that stood last in the
-place of position *p*, and one shorter (Q4). The pick *t* is *eligible* when:
+first, and after a pick at position *p*, the order in which the candidate that stood last takes
+position *p* and every other candidate keeps its position, with one candidate fewer (Q4). The pick *t* is *eligible* when:
 
-1. *t* is targetable and not excluded;
+1. *t* has `alive` (bit 28 of `t.flags`) set and `killPending` (bit 14) clear;
 2. `t.def` is always attackable, or `u`'s player is computer-controlled, or bit 10 of
    `Game.uiOptionFlags` is set;
 3. `u.def` is reach not checked, or the import `weapons.WeaponCanReachUnit(u, t, w)` returns nonzero;
@@ -246,22 +253,24 @@ no imports.
 
 ### `ChooseWeapon(u)`
 
-0 when weapon 0 is ready, else 1 when weapon 1 is ready, else `weapon2Flags` AND 2, that is 0 or 2
+0 when weapon 0 has a weapon, else 1 when weapon 1 has one, else `weapon2Flags` AND 2, that is 0 or 2
 (Q5). No imports, no writes.
 
 ## 5. Exactness
 
 - **Random draws:** every draw is `services.RandomInt`, on the main stream, in the order section 4 gives:
   for each pick, its index draw and then, if it is eligible, its distance draw. A search with no
-  candidates draws nothing.
+  candidates draws nothing. The module passes each bound to `services.RandomInt` as it is, without a
+  guard: a bound of 0 (a *q* of 0) is a call of `services.RandomInt(0)`, and its result is the import's.
 - **Target fields:** TargetX and TargetZ are signed 16-bit. `SetWeaponTargetPos` shifts the 32-bit
   `pos.x` and `pos.z` right by 16 with the sign kept, then keeps the low 16 bits. A ground target's
   position is the signed 16-bit field times 65536, in 32 bits.
 - **The ground height:** the import's result is a signed 32-bit integer, compared signed with
   `Game.seaLevel` (0 to 255). `pos.y` is *h* × 65536, wrapping at 32 bits.
 - **The distance of a lead:** *d*.x, *d*.y and *d*.z are 32-bit differences that wrap. *D* is the
-  square root of *d*.x² + *d*.y² + *d*.z² computed in 64-bit floating point, with the three squares
-  summed x and y first, then z, every operation rounded to 64 bits, and then truncated toward zero to a
+  square root of *d*.x² + *d*.y² + *d*.z² computed in 64-bit floating point, with each square
+  rounded to 64 bits, then the sum of the x and y squares rounded, then that sum added to the z square and
+  rounded, and then truncated toward zero to a
   signed 32-bit integer. A root of 2^31 or more has no such integer and gives *D* = −2^31; nothing
   in the engine bounds it, no recording reaches it (they stay below 2^25).
 - **The time of a lead:** *T* is signed. It is the quotient of *D* × 65536 by `speed` (both signed, the
@@ -282,12 +291,13 @@ no imports.
 ## 6. Quirks
 
 - **Q1:** a ground target whose *z* field would be −32768 is stored as −32767.
-- **Q2:** clearing a target looks up the script `"StartBuilding"` and ignores the answer.
+- **Q2:** clearing a target makes the import `units.FindScript(u.script, "StartBuilding")` before the
+  `"TargetCleared"` call, and nothing depends on its result.
 - **Q3:** a ground target above sea level asks for the ground height twice and uses the second answer.
-- **Q4:** each draw of a search picks, by position, among the candidates not yet picked, and a picked
-  candidate's position is then held by the candidate that stood last, so which candidate a draw yields
-  depends on the earlier draws and on the list's order, and not only on the draw.
-- **Q5:** `ChooseWeapon` returns 0 when no weapon is ready, and 2 when weapon 2 is the only one ready.
+- **Q4:** each draw of a search picks, by position, among the candidates not yet picked, and after a
+  pick the candidate that stood last takes the picked candidate's position, so which candidate a draw
+  yields depends on the earlier draws and on the list's order, and not only on the draw.
+- **Q5:** `ChooseWeapon` returns 0 when no slot has a weapon, and 2 when slot 2 is the only one that has.
 
 ## 7. Examples
 
@@ -301,7 +311,7 @@ no imports.
    `pos` = (42467328, 65536, 17301504), result 1.
 3. **`tests/replay/targeting/skirmish4-long.txt`, the call at tick 25755 of
    `GetWeaponTargetPos(Unit#37, pos, 0)`: a lead.** The slot holds the unit target `Unit#775`.
-   `weapon0Flags` is 18 (ready), the weapon `weapondef#16` has `flags` 0x00080a01 and `speed`
+   `weapon0Flags` is 18 (bit 1 set), the weapon `weapondef#16` has `flags` 0x00080a01 and `speed`
    655360, `Unit#775.motion` is `UnitMotion#36`, and `Unit#37.killCount` is 7. `units.GetSweetSpot`
    gives *s* = (180226455, 17441044, 103711884), and `Unit#37.pos` is (172578459, 851968, 97802795):
    - *d* = (−7647996, −16589076, −5909089), *D* = 19199130;
@@ -311,8 +321,7 @@ no imports.
 4. **`tests/replay/targeting/orders-guard-attacked.txt`, the call at tick 138 of
    `FindWeaponTarget(Unit#251, 0, 1)`.** `weapons.GetWeaponRange` gives 200, and the list is
    [`Unit#2`, `Unit#3`, `Unit#4`]. `Unit#251`'s player is computer-controlled, its def is not reach not
-   checked, and its weapon does not skip hidden targets. All three candidates are targetable, not
-   excluded, and their `unitDefIndex` 95 is not in `weaponCategories[0]`, so each is preferred.
+   checked, and its weapon does not skip hidden targets. All three candidates have `alive` set and `killPending` clear, and their `unitDefIndex` 95 is not in `weaponCategories[0]`, so each is preferred.
    `Unit#251.pos` has *x* 221249536 and *z* 92274688:
 
    | Pick | Draw | Candidate | *dx*, *dz* | *q* | Distance |
@@ -334,15 +343,15 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
   empty and slot 1 or 2 defined.
 - `SetWeaponTargetPos` with a *z* of −32768 (Q1): it needs a world *z* of 32768, and scenarios and the
   harness reject positions off the map.
-- `SetWeaponTargetUnit` with a null target: 3.1c faults on it.
-- A candidate with the targetable bit clear or the excluded bit set: the candidate list holds only live
+- `SetWeaponTargetUnit` with a null target: the outcome is unspecified for the module.
+- A candidate with `alive` clear or `killPending` set: the candidate list holds only live
   units, so neither check can fail.
 - Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def is not
   always attackable: the bit is set in 16 recorded searches (`console-units`, from call 73), but no
   recording holds it deciding a pick. The kit calls it "the menu option bit 4 of the match flags": the
   match flags are the high byte of `Game.uiOptionFlags`, and its value 4 is bit 10 of the 16-bit word.
-- The lead with the slot's *ready* bit clear on its own: its only caller skips a slot without that bit
-  (the kit describes the bit as the slot having a weapon).
+- The lead with the slot's *has a weapon* bit clear on its own: its only caller skips a slot without that
+  bit.
 - The lead with a weapon whose never-leads flag is set (a cruise weapon) or whose `speed` is 0, for a
   unit with more than five kills and the other lead conditions met: not reached by the scenario suite;
   it would need a veteran missile silo or bomber.
