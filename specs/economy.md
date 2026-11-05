@@ -42,7 +42,19 @@ module sets its own (see Fuel). This section gives the entry the module must hav
 - `exports`, in this order: `UpdateResourceSharing`, `GetEnergyUse`, `UpdatePlayerEconomy`,
   `UpdateMetalExtraction`, `Reset`, `SaveUnitAccounts`, `LoadUnitAccounts`, `RequestEnergy`,
   `RequestEnergyAndMetal`, `SpendEnergy`, `SpendMetal`, `SpendEnergyAndMetal`.
-- `data`: `g_game`, `g_blockBase` (ABI 8.2).
+- `data`: `g_game`, `g_blockBase` (ABI 8.2). ABI 8.2 speaks of four data words (the kit's
+  `wind_meteors` lists four), and ABI 9.1 makes the module's exports equal its `exports`, its `data` and
+  the two fuel functions. The module reads two of the four words, so this entry lists two, and the
+  behaviour is the same if it lists and exports all four. The kit doesn't say which of the two forms its
+  checks prefer for a module that reads two.
+- `data_base`, `table_base`, `fuel_budget` and `size_budget`: the kit defines none of them for this
+  module (its manifest has the one module `wind_meteors`, at `data_base` 196608 and `table_base` 48). The
+  module's window is `window` (65536) bytes from `data_base`. A choice must meet the rules of ABI 2: a
+  window at or above 0x10000 that ends at or below the scratch base 0xF0000 and does not overlap
+  `wind_meteors`'s window (0x30000 to 0x3FFFF); a range of `table_slots` (32) entries inside the 80 of the
+  table that does not overlap entries 48 to 79 of `wind_meteors`, so a `table_base` from 0 to 16. The
+  fixtures' `data_base` 65536 and 131072 with `table_base` 16 and 32 are examples the kit gives for other
+  modules. The budgets are set as Fuel says.
 - Slot kinds:
 
 | Slot | Kinds |
@@ -74,9 +86,18 @@ module sets its own (see Fuel). This section gives the entry the module must hav
 module calls each by its name, as section 4 gives.
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. The manifest gives it no budget: the module's budget is set as ABI section 11.3 says.
-- Hooks: the header names the hooks `ResourceIncome` and `StatsAccumulate` for `UpdatePlayerEconomy`.
-  This module raises neither.
+  `__fuel_get`. The manifest gives it no budget. ABI section 11.3 sets `fuel_budget` at ten times the most
+  fuel any tick of the conformity gate's scenarios burns for the module's own build, and the budget covers
+  every slot call of one tick together (11.2). The kit holds no such figure for this module, nor the
+  gate's scenarios, and gives no `size_budget` for it.
+- Build: the link options are those of ABI section 3.1 (`--no-stack-first` among them), the stack lies
+  inside the window, and the module's exports are exactly the list above (ABI 3.1, 9.1): a toolchain that
+  adds the exports `__heap_base` and `__data_end` has them filtered out of the link line, as ABI 3.1
+  says. The kit doesn't say what to do when the `wasm-ld` of a toolchain doesn't accept
+  `--no-stack-first`; ABI 3.1 says to check the result: the module's stack pointer global lies inside its
+  window.
+- Hooks: the header names the hooks `ResourceIncome` and `StatsAccumulate` for `UpdatePlayerEconomy`. The
+  kit defines no hook mechanism for a module (ABI 1 to 14), so the module has none.
 
 ### Arguments outside the block
 
@@ -129,7 +150,14 @@ an extractor makes per settlement before any handicap.
   when sharing), `unitsBegin`, `unitsEnd` (`Ref<Unit>`, the first and last unit of the player's slice of
   the unit table), `econ` (`Ref<UnitResources>`, the player's own account), `info`
   (`Ref<PlayerInfo>`), `allied` (bytes), `unitCount` (unsigned short), `unitsCreated` (int).
-- `PlayerInfo`: `kind` (byte), and the bits `shareMetal`, `shareEnergy`, `shareMapping`.
+- `PlayerInfo`: `kind` (byte), and the bits `shareMetal` (bit 1), `shareEnergy` (bit 2) and `shareMapping`
+  (bit 5) of the 16-bit word `flags_97_wide`, which the schema's read set of `UpdateResourceSharing`
+  names. That read set names `Game.flags_2a44`, the 16-bit word at the offset of the byte `netGameFlags`,
+  of which the slot uses bit 0.
+- `UpdateMetalExtraction`: the schema lists `Game.width` and `Game.height` among its reads, and the
+  recordings print them. The behaviour doesn't use them: the coordinates of every cell of the footprint go
+  to `los_radar.GetMapCell` as they are, off the map included (`edges-economy-targeting` has cells at
+  (−1,−1)).
 - `Unit`: `flags`, `activateFlags`, `def`, `resourceSlot` (its `player` field is the account's owner),
   `buildLeft` (float), `workTime` (int), `cell`, `footprint` (`Point16`), `script`, `id`.
 - `UnitDef`: `energyuse`, `energymake`, `metalmake`, `extractsMetal`, `windgenerator`,
@@ -331,8 +359,9 @@ The box name is `u` followed by `info.id` as four lower-case hexadecimal digits 
 3. `files.BankWriteBox(bank, energy group, 24)`, the energy group being the 24 bytes at `self`;
 4. `files.BankWriteBox(bank, metal group, 24)`, the metal group being the 24 bytes at `self` + 24.
 
-`self.player` isn't saved. Nothing is written to the block: the two groups are only the source of the
-bytes written, so the account is unchanged.
+`self.player` isn't saved. The account is unchanged by the call. The kit's schema lists `energyMake` and
+`metalMake` among the writes of `SaveUnitAccounts`: a write of the value already there, which the
+recordings can't show, since an identical write has no `w` line.
 
 ### `LoadUnitAccounts(self, info, bank)`
 
@@ -359,7 +388,7 @@ integer, and tick 0 is a multiple of both 60 and 450. A null `player.info`, or a
 that meets the other partner conditions, is outside the contract.
 
 A *partner* is an element *q* = `Game.players[i]`, for *i* from 0 to 9, with `q.active` ≠ 0, `q.type` = 3,
-`q.index` ≠ 10 (a free slot has index 10), `q.unitCount` ≠ 0 or `q.unitsCreated` = 0 (a player that
+`q.index` ≠ 10, `q.unitCount` ≠ 0 or `q.unitsCreated` = 0 (a player that
 has never made a unit counts, and so does one that has units), `q.info.kind` = 1, and `player.allied[i]` ≠ 0.
 `player` itself is a partner when it meets these.
 
@@ -373,13 +402,22 @@ When *t* is a multiple of 60 (0 included), metal is shared, and then energy:
   *amount* is: a recipient with no room left gives an *amount* of 0 or below, and the import is still
   made with it.
 - **Energy**, read after the metal import: the same with the `shareEnergy` bit, `energy`, `shareEnergy`
-  and `energyCapacity`, the factor 0.5 in place of *k3*, and the import `players.TransferMetal`.
+  and `energyCapacity`, the factor 0.5 in place of *k3*, and the import
+  `players.TransferMetal(player.index, recipient.index, amount, 1)`, with the last argument 1 as for the
+  metal import.
 
 When *t* is a multiple of 450 (0 included) and the `shareMapping` bit of `player.info` is set, then
-for each partner in order of *i*, the import `network.SendShareMapInfo(player.index, q.index)` is made, unless
-`player.index` is 10 (the partner's index is never 10). The player itself is sent its own map when it
-is a partner (Q4), but never receives metal or energy, since its stock isn't below its own. On a tick that
-is a multiple of both, the sharing imports come before the map imports.
+for each partner in order of *i*, the import `network.SendShareMapInfo(player.index, q.index)` is made,
+unless `player.index` is 10 (the partner's index is not 10). The player itself is sent its own map when it
+is a partner (Q4), but never receives metal or energy. On a tick that is a multiple of both, the sharing
+imports come before the map imports.
+
+`player` itself has no condition of its own: it needn't be active or of type 3, and the slot reads its
+`info`, `index`, stocks, capacities and `allied` bytes only. A recording of these imports would print each
+as the other imports are printed (`docs/replay-format.md`, "Values": decimal integers, a float as its
+bits), the sharing imports `i players.TransferEnergy 0 1 f32:0x41200000 1` for a transfer from player 0
+to player 1 of 10.0, and `i network.SendShareMapInfo 0 1`, with no result on either line. The kit has no
+recording of them, so the line forms are the kit's rules, not an observation.
 
 No writes.
 
@@ -405,6 +443,10 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
 - **The result of `GetEnergyUse`:** for the wind and tidal rows it is the negated exact product rounded
   once to 32 bits (to nearest, ties to even), which is the slot's `f32` result. The recorded results
   (`o result f32:...`) are the rounded values.
+- **What the recordings pin:** of the roundings below, the recordings pin the exact product of the tidal
+  row (`tidal-rounding.txt`). A reading that rounds *M*\*, *A*, *L* and the exact wind product to 32 bits
+  gives the same results on every recording, so no recording pins the 64-bit steps of those four: this
+  spec is their only authority.
 - **The sums of `UpdatePlayerEconomy`**: after each alive unit's term, a sum is the 32-bit float nearest
   to the exact sum of its value before and the term (*M* ⊕ `a.energyMake`, and so on). *M*\* is the 64-bit
   float nearest to *M* + *e*.`Make`; *M* is the 32-bit float nearest to *M*\*. *A* is
@@ -434,9 +476,9 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   with a negative `energymake` or a negative `extraction`, which a wrapped *W* gives), and *S* is +0.0
   when no account owes a stall (the sums start at +0.0, and adding stalls never gives −0.0). Then, for
   that resource, *rs* is −∞ and *L* is 0, and the stock becomes 0. Every account with `XStall` = 0
-  computes −∞ × 0, an invalid operation: its new `XStall` is the 32-bit pattern 0xFFC00000 (sign set,
-  quiet bit set, payload 0). The results of a call that reads a NaN in any field are not defined by this
-  spec.
+  computes −∞ × 0, so its new `XStall` is a NaN. The kit's ABI (section 3.2) says the engine
+  canonicalises NaNs and a module must not let a result depend on a NaN's bit pattern, so this spec
+  fixes no pattern for it. It defines no result of a call that reads a NaN in any field.
 
 ## 6. Quirks
 
@@ -444,7 +486,7 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   the 32-bit metal sum *M*.
 - **Q2:** `RequestEnergy` ignores its first argument and acts on its second.
 - **Q3:** a player shares a third of its surplus metal and half of its surplus energy, and gives it to
-  the partner with the highest index whose stock is below its own, not the one with the least.
+  the partner with the highest index whose stock is below its own.
 - **Q4:** shared map information can go to the sharing player itself.
 - **Q5:** an immobile unit that is on, with an `energyuse` below 0, earns that energy, and an extractor
   or a metal maker with a negative `energyuse` makes no metal.
@@ -452,8 +494,7 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   go to each account's owner.
 - **Q7:** the cloak cost is truncated to a whole number before it is paid.
 - **Q8:** a spend (`SpendEnergy`, `SpendMetal`, `SpendEnergyAndMetal`, and the cloak payment) takes the
-  amount from the stock at once and also counts it in the account's `Use`, so it appears in the next
-  settlement's usage.
+  amount from the stock at once and also adds it to the account's `Use`.
 - **Q9:** *W* wraps at 16 bits.
 
 ## 7. Examples
@@ -515,6 +556,10 @@ Values are given as decimals, with the 32-bit pattern where the rounding matters
   the recordings, `Unit#3` of `edges-economy-targeting`, pays at all eight calls (ticks 30 to 240,
   `units.SetStateBits Unit#3 4 1`).
 - `UpdateMetalExtraction` for an extractor with no script.
+
+Recorded: a null result of `los_radar.GetMapCell` (five imports of `edges-economy-targeting`, in the
+call at tick 5 of `UpdateMetalExtraction(Unit#2)`, for cells with x or y of −1), and the `files.BankWriteBox`
+lines of `save-midgame`.
 
 No recording reaches the following, and the rule of the spec is the authority for each:
 
