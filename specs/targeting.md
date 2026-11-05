@@ -61,10 +61,13 @@ module sets its own (see Fuel). This section gives the entry the module must hav
 | `services.RandomInt` | `[int] -> int` | the order of a search and its distances |
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. The manifest gives it no budget; how a manifest sets the budget is in the kit's
-  `docs/module-abi.md`, section 11.3.
+  `__fuel_get`. The manifest gives it no budget, no `size_budget` and no `stack_size`, and the kit does not
+  define them for this module; how a manifest sets the budget is in the kit's `docs/module-abi.md`,
+  section 11.3 (the game manifest's budget is ten times the most fuel any tick of the conformity gate's
+  scenarios burns).
 - Hooks: the header names the hook `FilterTargets` for `FindWeaponTarget` and
-  `FindBestTargetIfFireAtWill`. This module raises no hook.
+  `FindBestTargetIfFireAtWill`. This module raises no hook. The kit does not define a hook interface for modules
+  (`docs/module-abi.md` has none), so the gate's treatment of a hook is not defined either.
 
 ### Arguments outside the block
 
@@ -85,11 +88,9 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
   larger buffer. No search in the recordings lists more than 52 candidates, so a buffer of at least 52
-  units needs no second call; the kit does not define how a replay judges a second call. It is defined in
-  `docs/replay-format.md` at moddable a395edce1 (ozgb/byte-tactics-moddable#892, merged), which is not yet in a
-  tagged kit. The module allocates no heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are
-  the same at the end of each tick as at its start (ABI section 12). The module's stack (ABI section 2.2) is
-  the memory these rules leave it.
+  units needs no second call; the kit does not define how a replay judges a second call. The first kit tag after
+  `reference-traces-v23` will define it (ozgb/byte-tactics-moddable#892). The module allocates no heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are
+  the same at the end of each tick as at its start (ABI section 12).
   The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
   player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
@@ -381,11 +382,28 @@ Not recorded, and the kit gives no reason:
 - A null `u.script` in a clear.
 - A null target in `SetWeaponTargetUnit`.
 - A weapon index above 2 in any slot.
+- A `unitDefIndex` of 512 or more (a `UnitTypeSet` holds 512 bits) given to a set test, and a null
+  `categories`, `weaponCategories` or `u.def`: the spec defines nothing for them.
+- A TargetX that is outside the unit pool.
 - `netDirtyFlags` bits 0, 1, 3 to 9, 11 and 15 before a target set: the recordings set only bits 2, 10, 12,
   13 and 14, so the kept and cleared rule for the others is checked by no recording.
+- `GetWeaponTargetUnit` on a dead or recycled target.
+
+Recorded once, so a single recorded call or search checks it:
+
 - `FindWeaponTarget` with weapon 1: one recorded call.
 - A search whose result is a fallback pick: one recorded search.
-- `GetWeaponTargetUnit` on a dead or recycled target.
+
+Gaps in the kit, which this spec does not fill:
+
+- The fuel budget, `size_budget` and `stack_size` of this module (section 2).
+- How the gate judges `ai.GetVisibleEnemiesInRadiusList`: the recordings show it only as the vector import
+  `i ai.GetVisibleEnemiesInRadius` with `o out [...]`, with no buffer or capacity, and
+  `docs/replay-format.md` calls the recorded targeting "native code in every mode". How a second call or the
+  buffer size is judged is not defined in `reference-traces-v23`.
+- The `FilterTargets` hook (section 2).
+- How the replay's stub of `services.RandomInt` advances `rng.seed`: ABI section 9.3 says only that the
+  state of that generator is `rng.seed` in the recordings. The `w rng.seed` lines are the recorded result.
 
 The callback argument of `"TargetCleared"`, which the recordings show as `?`: it is null.
 
