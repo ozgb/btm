@@ -420,7 +420,8 @@ Not recorded, and the kit gives no reason:
 - A lead with `killCount` of exactly 5 or 6 when every other lead condition holds.
 - `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`.
 - A *q* that wraps below 0.
-- Two eligible picks of one kind with the same distance, preferred or fallback.
+- Two eligible fallback picks with the same distance. Preferred picks that tie are recorded, at distance 0
+  (`RandomInt 0 = 0`): the earlier pick wins, as at tick 73 of `console-units`.
 - A null `weapon{w}Def` when the lead or the paralyzer test reads it.
 - A unit target with a negative TargetX.
 - A null `u.script` in a clear.
