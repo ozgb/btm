@@ -91,15 +91,18 @@ build, set from the build's own gate runs). This section gives the rest of the e
   buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. The replay (`docs/replay-format.md`, "Not recorded", the entry for
-  this import) answers a call from the next recorded vector line with the same player, position, radius and flags: it writes the
-  first `capacity` units of the recorded list, in order, and returns the recorded count. A repeat with the
-  same arguments and a larger capacity, after a count above the capacity, is answered from the same line and
-  takes no further import; any other extra call is a divergence. A search makes
+  this import) answers a call from the next recorded vector line with the same player, position, radius and
+  flags: it writes the first `capacity` units of the recorded list, in order, and returns the recorded count.
+  A repeat with the same arguments and a larger capacity, after a count above the capacity, is answered from
+  the same line and takes no further import; any other extra call is a divergence. A search makes
   the import once in the recordings, then draws.
   The number of candidates has no limit (it is every enemy in range that the player can see), and the draws
   use the full count. ABI section 7.3 says a caller that gets a count above its capacity calls
   again with a larger buffer; holding the whole list, and the capacity and place of the buffer, are the
-  build's choice (ABI sections 2.1, 2.2 and 7.3). No search in the recordings lists more than 52
+  build's choice (ABI sections 2.1, 2.2 and 7.3). The writable copy of the list is not in the scratch area
+  (a module never allocates from it, ABI section 2.1): it is in the module's window, and the statics hash
+  (ABI section 12) must be the same at the end of each tick, so a copy kept in statics is left as found,
+  and the stack is outside that hash. No search in the recordings lists more than 52
   candidates. The module allocates no
   heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are the same at the end of each tick
   as at its start (ABI section 12).
@@ -132,7 +135,7 @@ byte 4 + 28*w* of the `Unit`. The recordings name the fields of slot *w* `weapon
 | `aimTargetXOrUnitId` (byte 0) | `weapon{w}TargetX` | signed 16-bit | the target unit's id, or the ground target's *x* |
 | `aimTargetZOrUnitSentinel` (byte 2) | `weapon{w}TargetZ` | signed 16-bit | −32768 for a unit target or none, else the ground target's *z* |
 | `weapon` (byte 12) | `weapon{w}Def` | `Ref<WeaponDef>` | the weapon (read only) |
-| `flags` (byte 27) | `weapon{w}Flags` | unsigned byte | bit 1 (value 2): *has a weapon* (read only) |
+| `flags` (byte 27) | `weapon{w}Flags` | unsigned byte | value 2 (bit 1; the kit writes "bit 2"): *has a weapon* (read only) |
 
 A slot holds:
 
@@ -180,11 +183,12 @@ A player is *computer-controlled* when `active` ≠ 0 and `type` = 2.
 
 Nothing outside the fields above. The recordings show `r rng.main`, `r rng.load` and `w rng.seed` around the
 search slots: `docs/replay-format.md` says `rng.main`, `rng.load` and `rng.seed` are the generator words of
-the block and are in the sets of the slots that draw. `rng.seed` is the generator of `services.RandomInt`
-(ABI section 9.3, not `rng.main`), which that import, answered by the host, advances: a draw returns the
-recorded result and the stream words advance as the game's do, and `rng.*` is checked like any field
-(`docs/replay-format.md`), so `w rng.seed` is compared. This module reads and writes none of the three
-itself, and never draws except through `services.RandomInt`.
+the block (in the kit's words, "the two generator streams of the block head and `g_randomSeed`") and are
+in the sets of the slots that draw; the five recordings hold 289 `r rng.seed` lines. `rng.seed` is the
+generator of `services.RandomInt` (ABI section 9.3, not `rng.main`), which that import, answered by the host,
+advances: a draw returns the recorded result and the stream words advance as the game's do, and `rng.*` is
+checked like any field (`docs/replay-format.md`), so `w rng.seed` is compared. This module reads and writes
+none of the three itself, and never draws except through `services.RandomInt`.
 
 ## 4. Behaviour
 
@@ -216,9 +220,9 @@ section 3. No imports.
 | no target | none | none |
 | anything else | `units.FindScript(u.script, "StartBuilding")`, its result ignored (Q2); then `units.StartScriptWithArgs(u.script, "TargetCleared", null, 0, 1, w, 0, 0, 0)`, its result ignored | TargetX = 0, TargetZ = −32768 |
 
-Both imports are always made, with `u.script` passed as it is (`Unit.script` is stored in the block as an
-offset, and a `block` kind argument is its address, base plus offset, ABI section 7.1; the recordings show it
-as `CobScript#N`), here and in the clear of
+Both imports are always made, with `u.script` passed as the block address, `g_blockBase` plus the offset
+`Unit.script` stores (ABI section 7.1: stored pointers are offsets, passed pointers are addresses; the
+recordings show it as `CobScript#N`), here and in the clear of
 `GetWeaponTargetPos`; a null `u.script` is outside the contract: a unit whose def has no script
 data, or a killed unit, has a null `u.script`, and the module may trap on it.
 
@@ -241,7 +245,7 @@ its offset, ABI section 7.1), which the recordings show as `Unit#N`. No imports,
 | a unit target *t* with `t.unitDefIndex` = 0 | `units.FindScript(u.script, "StartBuilding")`, its result ignored (Q2); then `units.StartScriptWithArgs(u.script, "TargetCleared", null, 0, 1, w, 0, 0, 0)`, its result ignored | 0; TargetX = 0, TargetZ = −32768 |
 | a unit target *t* | `units.GetSweetSpot(t, s)` | 1; `pos` = *s*, led when the weapon leads (below) |
 
-The weapon *leads* when all of these hold: the slot has a weapon (bit 1 of its flags), the slot's
+The weapon *leads* when all of these hold: the slot has a weapon (value 2 of its flags), the slot's
 `WeaponDef` has `cruise` clear in `flags` and a `speed` ≠ 0, `t.motion` is not null,
 and `u.killCount` (unsigned 16-bit) > 5. Then, with *d* = `u.pos` − *s* per axis:
 
@@ -270,9 +274,9 @@ whose length is the count the import returns, the whole list even when it is abo
 The search makes at most 50 *picks* (13 recorded searches have more than 50 candidates), and ends sooner
 when no candidate is left. Pick *k* (from 1) draws *i* = `services.RandomInt(n)`, with *n* the list's
 length less *k* − 1, and its candidate is the one at position *i* (from 0) of the candidates not yet
-picked. Those stand in this order (Q4): the list's order for pick 1; for each later pick, the order of the
-one before with its picked candidate gone and, when that candidate was not the last, the candidate that
-stood last in its place. The pick *t* is *eligible* when:
+picked. Those stand in this order (Q4): the list's order for pick 1; after a pick at position *p* of the *m*
+candidates then standing, the *m* − 1 left stand as L[0 .. *p*−1], L[*m*−1], L[*p*+1 .. *m*−2] (L the order
+before the pick) when *p* < *m* − 1, and as L[0 .. *m*−2] when *p* = *m* − 1. The pick *t* is *eligible* when:
 
 1. *t* has `alive` (bit 28 of `t.flags`) set and `killPending` (bit 14) clear;
 2. `t.def` has `flags1` bit 15 set, or `u`'s player is computer-controlled, or bit 10 of
@@ -280,6 +284,10 @@ stood last in its place. The pick *t* is *eligible* when:
 3. `u.def` has `flags1` bit 28 set, or the import `weapons.WeaponCanReachUnit(u, t, w)` returns nonzero;
 4. `useRange` ≠ 0, or `t.unitDefIndex` is not in `u.def.categories`;
 5. the slot's weapon has `paralyzer` clear, or *t* is not hidden.
+
+The slot's `weapon{w}Def` is read only for a pick that passes checks 1 to 4, and by a lead only when the slot
+has a weapon. A unit with candidates but a null `weapon{w}Def` therefore faults only at the first pick that
+passes checks 1 to 4.
 
 The reach import is made for a pick exactly when 1 and 2 hold and `u.def` has `flags1` bit 28 clear,
 whatever 4 and 5 give. For an eligible pick, *distance* = `services.RandomInt(q)`, with
@@ -299,7 +307,7 @@ no imports.
 ### `ChooseWeapon(u)`
 
 The index of the first slot (0, 1, 2) that has a weapon, or 0 when none has (Q5). A slot has a weapon
-when bit 1 (value 2) of its `flags` is set, and nothing else of the slot is read: the kit's "empty" slot and
+when value 2 of its `flags` is set, and nothing else of the slot is read: the kit's "empty" slot and
 "weapon ID 0" (`docs/replay-format.md`, "Not recorded") are the data that leaves that bit clear. No imports,
 no writes.
 
@@ -364,7 +372,7 @@ no writes.
    `pos` = (42467328, 65536, 17301504), result 1.
 3. **`tests/replay/targeting/skirmish4-long.txt`, the call at tick 25755 of
    `GetWeaponTargetPos(Unit#37, pos, 0)`: a lead.** The slot holds the unit target `Unit#775`.
-   `weapon0Flags` is 18 (bit 1 set), the weapon `weapondef#16` has `flags` 0x00080a01 and `speed`
+   `weapon0Flags` is 18 (value 2 set), the weapon `weapondef#16` has `flags` 0x00080a01 and `speed`
    655360, `Unit#775.motion` is `UnitMotion#36`, and `Unit#37.killCount` is 7. `units.GetSweetSpot`
    gives *s* = (180226455, 17441044, 103711884), and `Unit#37.pos` is (172578459, 851968, 97802795):
    - *d* = (−7647996, −16589076, −5909089), *D* = 19199130;
@@ -373,10 +381,10 @@ no writes.
    - `pos` = (170502831, 20246762, 100663484), result 1.
 4. **`tests/replay/targeting/orders-guard-attacked.txt`, the second `FindWeaponTarget` call of
    tick 138, `FindWeaponTarget(Unit#251, 0, 1)`.** `weapons.GetWeaponRange` gives 200, and the list is
-   [`Unit#2`, `Unit#3`, `Unit#4`]. `Unit#251`'s player is computer-controlled, its def is not reach not
-   checked, and its weapon has `paralyzer` clear. All three candidates have `alive` set and
-   `killPending` clear, and their `unitDefIndex` 95 is not in `weaponCategories[0]`, so each is preferred.
-   `Unit#251.pos` has *x* 221249536 and *z* 92274688:
+   [`Unit#2`, `Unit#3`, `Unit#4`]. `Unit#251`'s player is computer-controlled, its def has `flags1` bit 28
+   clear (so the reach import is made), and its weapon has `paralyzer` clear. All three candidates have
+   `alive` set and `killPending` clear, and their `unitDefIndex` 95 is not in `weaponCategories[0]`, so each
+   is preferred. `Unit#251.pos` has *x* 221249536 and *z* 92274688:
 
    | Pick | Draw | Candidate | *dx*, *dz* | *q* | Distance |
    | --- | --- | --- | --- | --- | --- |
@@ -394,11 +402,12 @@ no writes.
 Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), each with the kit's reason:
 
 - `ChooseWeapon` with no slot that has a weapon (it returns 0), and with slot 1 or 2 deciding the result:
-  all 347 recorded calls have slot 0 with a weapon. The kit's reason for returning 1 or 2: no shipped unit has weapon
-  slot 0 empty and slot 1 or 2 defined.
+  all 347 recorded calls have slot 0 with a weapon. The kit's reason for returning 1 or 2: no shipped unit
+  has weapon slot 0 empty and slot 1 or 2 defined.
 - `SetWeaponTargetPos` with a *z* of −32768 (Q1): it needs a world *z* of 32768, and scenarios and the
   harness reject positions off the map.
-- `SetWeaponTargetUnit` with a null target: it is outside the contract.
+- `SetWeaponTargetUnit` with a null target: 3.1c faults on it (`docs/replay-format.md`), so it is outside
+  the contract.
 - A candidate with `alive` clear or `killPending` set: the candidate list holds only live
   units, so neither check can fail.
 - Negative `speed` in a lead, a negative `UnitDef.range` and a *q* that wraps: section 5 gives their
@@ -419,7 +428,8 @@ Not recorded, and the kit gives no reason:
 
 - `FindBestTargetIfFireAtWill` with a fire order of 1 or 3 (fire order 0 is recorded).
 - A `UnitDef.range` that is negative as a signed 16-bit value.
-- A lead with `killCount` of exactly 5 or 6 when every other lead condition holds.
+- A lead with `killCount` of 4, 5 or 6 when every other lead condition holds (the recorded leads all have 7,
+  the recorded non-leads 0 to 3; the threshold rests on the kit's "more than five kills").
 - `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`.
 - A *q* that wraps below 0.
 - Two eligible fallback picks with the same distance. Preferred picks that tie are recorded, at distance 0
