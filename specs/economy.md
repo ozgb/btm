@@ -87,8 +87,8 @@ module calls each by its name, as section 4 gives.
   `resourceSlot` is `self`. The module reads its `id` only.
 - **Text and buffers** given to imports (a box name, the script name `"SetSpeed"`) are NUL-terminated
   strings in the module's own memory. The buffers given to `files.BankReadBox` and `files.BankWriteBox`
-  are the account itself, in the block. A `files.BankWriteBox` line of a recording carries the bytes
-  written (`x:` and their hexadecimal), then the length and the result.
+  are the account itself, in the block. A `files.BankWriteBox` line of a recording carries the bank
+  handle, the bytes written (`x:` and their hexadecimal), then the length and the result.
 
 ### Events
 
@@ -380,14 +380,8 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   account's `energyMake` is 0x437b4f71, `Game.tidal` is 0x42436dc7 and `tidalgenerator` is 0x41a80d9b, and
   `energyIncome` becomes 0x449fb45c; adding the product rounded to 32 bits first gives 0x449fb45b.
 - **The result of `GetEnergyUse`:** for the wind and tidal rows it is the negated exact product rounded
-  once to 32 bits (to nearest, ties to even), which is the slot's `f32` result; the 3.1c function
-  returns the product without rounding it. The slot has five callers, all outside this module, and what
-  each does with the result is: three compare it with 0 and nothing else; one ignores it; and one (the
-  computer player's rating of the unit types it may build) multiplies it by 5 and subtracts that from a
-  32-bit float before truncating the difference to an integer, so it uses the value before any 32-bit
-  store. The sign tests give the same answer on the rounded and the unrounded value unless the product is
-  smaller than the smallest 32-bit float magnitude. The recorded results (`o result f32:...`) are the
-  rounded values.
+  once to 32 bits (to nearest, ties to even), which is the slot's `f32` result. The recorded results
+  (`o result f32:...`) are the rounded values.
 - **The sums of `UpdatePlayerEconomy`**: each sum is rounded to 32 bits after each term (*M* ⊕ `a.energyMake`,
   and so on). *M*\* is f64(*M* + *e*.`Make`), with no 32-bit rounding; *M* is f32(*M*\*). *A* is f32(*M*\* + `p.X`).
 - **The ratios:** *L* = f64(*A* − *S*), a 64-bit value that is not rounded to 32 bits, or 0. When they
