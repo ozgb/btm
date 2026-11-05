@@ -72,10 +72,9 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   `SetWeaponTargetPos`, and written by `GetWeaponTargetPos` only when it returns 1. When it returns 0,
   `pos` is left as it was.
 - **The positions given to imports** (`units.GetGroundHeight`, `units.GetSweetSpot`,
-  `ai.GetVisibleEnemiesInRadiusList`) are `Vec3`s in the module's own stack, in the block, or (for
+  `ai.GetVisibleEnemiesInRadiusList`) are `Vec3`s in the module's own memory, in the block, or (for
   `GetWeaponTargetPos`) the caller's `pos`. `units.GetGroundHeight` reads only `x` and `z`;
-  `units.GetSweetSpot` writes all three. The `Vec3` a module gives `units.GetSweetSpot` lives on its stack
-  (the stack region of ABI section 2.2), never in its statics.
+  `units.GetSweetSpot` writes all three.
   What `units.GetGroundHeight` is given for *y* is not compared: the replay compares only *x* and *z* of that
   argument (a `pos=(x,z)` form in the recordings, `docs/replay-format.md`, the `vec3` mode with `"axes":
   "xz"`), as in `i units.GetGroundHeight pos=(42467328,17301504) = 1`. The *y* the game itself passes is the
@@ -84,15 +83,12 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   module gives it (ABI section 7.3): its arguments are the player, a position, a radius, flags (0), the
   buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
-  recordings' `o out` line lists them. A module that gets a count above its capacity may call again, with
-  the same player, position, radius and flags and a strictly larger capacity: the replay answers that call
-  from the same recorded line. Any other extra call of this import in a search diverges from the recording.
-  No search in the recordings lists more than 52 candidates, so a buffer of 52 units never needs the second
-  call there.
-  The candidate buffer (52 units, 208 bytes) lives on the module's own stack (the stack region of ABI
-  section 2.2, 4096 bytes in the game manifest), never in its statics: the statics must hash the same at the
-  end of each tick as at its start (ABI section 12). The module allocates no heap and uses no scratch (ABI
-  sections 2.1 and 2.2).
+  recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
+  larger buffer. No search in the recordings lists more than 52 candidates, so a buffer of at least 52
+  units needs no second call; the kit does not define how a replay judges a second call, and
+  ozgb/byte-tactics-moddable#892 will define it. The module
+  allocates no heap and uses no scratch (ABI sections 2.1 and 2.2), and its statics are the same at the end
+  of each tick as at its start (ABI section 12).
   The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
   player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
@@ -198,7 +194,8 @@ section 3. No imports.
 | anything else | `units.FindScript(u.script, "StartBuilding")`, its result ignored (Q2); then `units.StartScriptWithArgs(u.script, "TargetCleared", null, 0, 1, w, 0, 0, 0)`, its result ignored | TargetX = 0, TargetZ = −32768 |
 
 Both imports are always made, with `u.script` passed as it is, here and in the clear of
-`GetWeaponTargetPos`; a null `u.script` is outside the contract: the engine never makes the call, and the module may trap.
+`GetWeaponTargetPos`; a null `u.script` is outside the contract: the reference faults on it (a unit whose def has no script
+data, or a killed unit, has one), and the module may trap.
 
 ### `ResetWeaponTarget(u, w)`
 
