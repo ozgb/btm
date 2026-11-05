@@ -96,8 +96,8 @@ build, set from the build's own gate runs). This section gives the rest of the e
   same arguments and a larger capacity, after a count above the capacity, is answered from the same line and
   takes no further import; any other extra call is a divergence. A search makes
   the import once in the recordings, then draws.
-  3.1c puts no bound on the number of candidates: it is every enemy in range that the player can see, and
-  the draws use the full count. ABI section 7.3 says a caller that gets a count above its capacity calls
+  The number of candidates has no limit (it is every enemy in range that the player can see), and the draws
+  use the full count. ABI section 7.3 says a caller that gets a count above its capacity calls
   again with a larger buffer; holding the whole list, and the capacity and place of the buffer, are the
   build's choice (ABI sections 2.1, 2.2 and 7.3). No search in the recordings lists more than 52
   candidates. The module allocates no
@@ -169,8 +169,8 @@ and bit 15 (bit 12 of `short`) are kept.
 | `Unit.flags` | 0x00004000 | `killPending` (bit 14) |
 | `Unit.flags` | bits 20 and 21 | `fireOrder`, 0 to 3; 2 is fire at will |
 | `Unit.activateFlags` | 0x10 | *hidden*, which a weapon with `paralyzer` set respects |
-| `UnitDef.flags1` | 0x00008000 | bit 15 of `flags1`, unnamed in the kit: *always attackable* (a target with it passes check 2 of the search whatever its attacker's player) |
-| `UnitDef.flags1` | 0x10000000 | bit 28 of `flags1`, unnamed in the kit: *reach not checked* (the shooter skips the reach import) |
+| `UnitDef.flags1` | 0x00008000 | bit 15 of `flags1`, unnamed in the kit: a target with it set passes check 2 of the search whatever its attacker's player |
+| `UnitDef.flags1` | 0x10000000 | bit 28 of `flags1`, unnamed in the kit: a shooter with it set skips the reach import |
 | `WeaponDef.flags` | 0x00000080 | `paralyzer` (bit 7): a weapon with it set does not pick a hidden target |
 | `WeaponDef.flags` | 0x02000000 | `cruise` (bit 25): a weapon with it set does not lead |
 
@@ -178,9 +178,13 @@ A player is *computer-controlled* when `active` ≠ 0 and `type` = 2.
 
 ### Between ticks
 
-Nothing outside the fields above. The `rng.seed` lines of the recordings are the generator of
-`services.RandomInt` (ABI section 9.3: its own generator, not `rng.main`), which the replay's stub of that
-import advances; this module reads and writes none of them.
+Nothing outside the fields above. The recordings show `r rng.main`, `r rng.load` and `w rng.seed` around the
+search slots: `docs/replay-format.md` says `rng.main`, `rng.load` and `rng.seed` are the generator words of
+the block and are in the sets of the slots that draw. `rng.seed` is the generator of `services.RandomInt`
+(ABI section 9.3, not `rng.main`), which that import, answered by the host, advances: a draw returns the
+recorded result and the stream words advance as the game's do, and `rng.*` is checked like any field
+(`docs/replay-format.md`), so `w rng.seed` is compared. This module reads and writes none of the three
+itself, and never draws except through `services.RandomInt`.
 
 ## 4. Behaviour
 
@@ -196,9 +200,8 @@ TargetX becomes the low 16 bits of `target.id` (a target of id 0 therefore leave
 section 3), TargetZ becomes −32768, and `u.netDirtyFlags` is cleared
 as in section 3. No imports. The target's own `netDirtyFlags` appears among the recorded reads (for
 example `r Unit#3.netDirtyFlags 1024` at tick 138 of `orders-guard-attacked`), is not changed, and no
-result depends on it. A null `target` is outside the contract (3.1c faults on it,
-`docs/replay-format.md`), and the
-module may trap.
+result depends on it. A null `target` is outside the contract, and the module may
+trap.
 
 ### `SetWeaponTargetPos(u, pos, w)`
 
@@ -246,8 +249,7 @@ and `u.killCount` (unsigned 16-bit) > 5. Then, with *d* = `u.pos` − *s* per ax
 - the time *T* = (*D* × 65536) / `speed`, truncated, then *T*′ = (*T* × 0xcccc) >> 16;
 - `pos` = *s* + (`t.motion.velocity` × *T*′) >> 16, per axis.
 
-The factor 0xcccc / 65536 (about 0.8) is, in the kit's words, "the part of the distance a target's body
-offset moves the aim point" (`docs/replay-format.md`).
+The factor is 0xcccc / 65536, about 0.8.
 
 When `t.motion` is null there is no lead and `pos` = *s*, result 1: in `edges-economy-targeting`, from tick
 126 on, `Unit#1` aims weapon 0 at `Unit#502`, whose `motion` is null, and the call returns the sweet spot
@@ -273,13 +275,13 @@ one before with its picked candidate gone and, when that candidate was not the l
 stood last in its place. The pick *t* is *eligible* when:
 
 1. *t* has `alive` (bit 28 of `t.flags`) set and `killPending` (bit 14) clear;
-2. `t.def` is always attackable, or `u`'s player is computer-controlled, or bit 10 of
+2. `t.def` has `flags1` bit 15 set, or `u`'s player is computer-controlled, or bit 10 of
    `Game.uiOptionFlags` is set;
-3. `u.def` is reach not checked, or the import `weapons.WeaponCanReachUnit(u, t, w)` returns nonzero;
+3. `u.def` has `flags1` bit 28 set, or the import `weapons.WeaponCanReachUnit(u, t, w)` returns nonzero;
 4. `useRange` ≠ 0, or `t.unitDefIndex` is not in `u.def.categories`;
 5. the slot's weapon has `paralyzer` clear, or *t* is not hidden.
 
-The reach import is made for a pick exactly when 1 and 2 hold and `u.def` is not reach not checked,
+The reach import is made for a pick exactly when 1 and 2 hold and `u.def` has `flags1` bit 28 clear,
 whatever 4 and 5 give. For an eligible pick, *distance* = `services.RandomInt(q)`, with
 *q* = hi(*dx*²) + hi(*dz*²), where *dx* and *dz* are `u.pos` − `t.pos` on those axes and hi is defined in
 section 5. A pick draws nothing more.
@@ -396,13 +398,13 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
   slot 0 empty and slot 1 or 2 defined.
 - `SetWeaponTargetPos` with a *z* of −32768 (Q1): it needs a world *z* of 32768, and scenarios and the
   harness reject positions off the map.
-- `SetWeaponTargetUnit` with a null target: 3.1c faults on it, so it is outside the contract.
+- `SetWeaponTargetUnit` with a null target: it is outside the contract.
 - A candidate with `alive` clear or `killPending` set: the candidate list holds only live
   units, so neither check can fail.
 - Negative `speed` in a lead, a negative `UnitDef.range` and a *q* that wraps: section 5 gives their
   results, and no recording checks them.
-- Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def is not
-  always attackable: the bit is set in 16 recorded searches (`console-units`, from the
+- Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def has
+  `flags1` bit 15 clear: the bit is set in 16 recorded searches (`console-units`, from the
   `FindBestTargetIfFireAtWill` call at tick 73), but no recording holds it deciding a pick. The kit's
   "menu option bit 4 of the match flags" (`docs/replay-format.md`, "Not recorded") is this bit: `matchFlags`
   is the byte of `layout.json` at offset 229168, the high byte of the 16-bit `uiOptionFlags` at 229167, and
@@ -422,7 +424,8 @@ Not recorded, and the kit gives no reason:
 - A *q* that wraps below 0.
 - Two eligible fallback picks with the same distance. Preferred picks that tie are recorded, at distance 0
   (`RandomInt 0 = 0`): the earlier pick wins, as at tick 73 of `console-units`.
-- A null `weapon{w}Def` when the lead or the paralyzer test reads it.
+- A null `weapon{w}Def` when the lead or the paralyzer test reads it: it is outside the
+  contract and the module may trap.
 - A unit target with a negative TargetX.
 - A null `u.script` in a clear.
 - A weapon index above 2 in any slot, and the weapon index of `FindWeaponTarget` above 255.
@@ -447,7 +450,16 @@ Gaps in the kit, which this spec does not fill:
   result and the stream words advance as the game's do, and ABI section 9.3 gives the range-below-2 case,
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
 
-The callback argument of `"TargetCleared"`, which the recordings show as `?`: it is null.
+The callback argument of `"TargetCleared"`, which the recordings show as `?` (the `pending` mode of
+`docs/replay-format.md`: an argument that is not recorded): `ClearWeaponTarget` and the clears of
+`GetWeaponTargetPos` pass null there.
+
+No rule of the candidate tests names a kamikaze unit: the one that `docs/replay-format.md` mentions among
+the recorded candidates is judged like any other candidate.
+
+The layout has unaligned fields, such as `Unit.pos` at byte 106 and `UnitDef.flags1` at byte 577
+(`layout.json`): the module reads and writes each at its offset, and `docs/module-abi.md` says nothing
+else of alignment.
 
 ## 8. Kit version
 
