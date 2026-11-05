@@ -61,8 +61,8 @@ module sets its own (see Fuel). This section gives the entry the module must hav
 | `services.RandomInt` | `[int] -> int` | the order of a search and its distances |
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. The manifest gives it no budget: the module's `fuel_budget` is ten times the most fuel
-  any tick of the gate's scenarios burns it (ABI section 11.3).
+  `__fuel_get`. The manifest gives it no budget; how a manifest sets the budget is in the kit's
+  `docs/module-abi.md`, section 11.3.
 - Hooks: the header names the hook `FilterTargets` for `FindWeaponTarget` and
   `FindBestTargetIfFireAtWill`. This module raises no hook.
 
@@ -72,14 +72,15 @@ module sets its own (see Fuel). This section gives the entry the module must hav
   `SetWeaponTargetPos`, and written by `GetWeaponTargetPos` only when it returns 1. When it returns 0,
   `pos` is left as it was.
 - **The positions given to imports** (`units.GetGroundHeight`, `units.GetSweetSpot`,
-  `ai.GetVisibleEnemiesInRadius`) are `Vec3`s in the module's own memory or in the block.
+  `ai.GetVisibleEnemiesInRadiusList`) are `Vec3`s in the module's own memory or in the block.
   `units.GetGroundHeight` reads only `x` and `z`; `units.GetSweetSpot` writes all three.
 - **The candidate list** of a search is what `ai.GetVisibleEnemiesInRadiusList` writes to the buffer the
   module gives it (ABI section 7.3): its arguments are the player, a position, a radius, flags (0), the
   buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
-  larger buffer. The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, with the
+  larger buffer. The recordings hold at most 52 candidates in a search, so a buffer of at least 52 units
+  needs no second call; the kit does not define how a replay judges a second call. The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, with the
   player, `pos`, the radius and the flags, followed by the line `o out [...]` that holds the whole list;
   they hold one such import for each search, and the longest list in them has 52 units.
 - **Text** given to imports (`"StartBuilding"`, `"TargetCleared"`) is a NUL-terminated string in the
@@ -204,7 +205,7 @@ again by `FindBestTargetIfFireAtWill`.
 
 The radius *r* is the result of the import `weapons.GetWeaponRange(u, w)` when `useRange` ≠ 0, or
 `u.def.range` when it is 0 (with no import). Then the import
-`ai.GetVisibleEnemiesInRadius(u.playerIndex, u.pos, r, 0, list)` fills the candidate list.
+`ai.GetVisibleEnemiesInRadiusList(u.playerIndex, u.pos, r, 0, buffer, capacity)` fills the candidate list.
 
 The search then makes up to 50 *picks*, stopping early when the list is empty. Pick *k* (from 1) draws
 *i* = `services.RandomInt(n)`, with *n* the list's length less *k* − 1, and its candidate is element *i*
@@ -320,7 +321,9 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
 - `SetWeaponTargetUnit` with a null target: 3.1c faults on it.
 - A candidate with the targetable bit clear or the excluded bit set: the candidate list holds only live
   units, so neither check can fail.
-- Bit 10 of `Game.uiOptionFlags` set in a search: no scenario key sets it.
+- Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def is not
+  always attackable: the bit is set in 16 recorded searches (`console-units`, from call 73), but no
+  recording holds it deciding a pick.
 - The lead with the slot's *ready* bit clear on its own: its only caller skips a slot without that bit
   (the kit describes the bit as the slot having a weapon).
 - The lead with a weapon whose never-leads flag is set (a cruise weapon) or whose `speed` is 0, for a
@@ -329,8 +332,7 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
 
 Not recorded, and the kit gives no reason: `FindBestTargetIfFireAtWill` with a fire order of 1 or 3
 (fire order 0 is recorded); a `UnitDef.range` that needs its sign extension; a `killCount` of exactly 5
-or 6 when every other lead condition holds (the recorded unit with 6 aims at a target whose `motion` is
-null); `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`; a *q* that wraps below 0;
+or 6 when every other lead condition holds; `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`; a *q* that wraps below 0;
 a fallback pick tied on its distance with another; and the inputs outside the engine's use, whose
 result this spec doesn't define: a null `weapon{w}Def` when the lead or the hidden test reads it, and a
 unit target with a negative TargetX.
