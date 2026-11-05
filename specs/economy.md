@@ -34,26 +34,26 @@ as the header lists.
 ### The manifest entry
 
 The kit's manifest (`wasm/modules.json`) carries the slot signatures of this module (`signatures.economy`)
-and its interface major, 2 (`majors.economy`). It has no build entry for it and no budget: a clean-room
-module sets its own (see Fuel). This section gives the entry the module must have. The kind `f32` is a
+and its interface major, 2 (`majors.economy`). It has no build entry for it: the build picks the four
+figures of the last bullet below. This section gives the entry the module must have. The kind `f32` is a
 32-bit IEEE 754 float that crosses the boundary bit for bit (ABI section 7).
 
 - `name` and `interface`: `economy`.
 - `exports`, in this order: `UpdateResourceSharing`, `GetEnergyUse`, `UpdatePlayerEconomy`,
   `UpdateMetalExtraction`, `Reset`, `SaveUnitAccounts`, `LoadUnitAccounts`, `RequestEnergy`,
   `RequestEnergyAndMetal`, `SpendEnergy`, `SpendMetal`, `SpendEnergyAndMetal`.
-- `data`: `g_game`, `g_blockBase` (ABI 8.2). ABI 8.2 speaks of four data words (the kit's
-  `wind_meteors` lists four), and ABI 9.1 makes the module's exports equal its `exports`, its `data` and
-  the two fuel functions. The module reads two of the four words, so this entry lists two, and the
-  behaviour is the same if it lists and exports all four.
-- `data_base`, `table_base`, `fuel_budget` and `size_budget`: the kit defines none of them for this
-  module (its manifest has the one module `wind_meteors`, at `data_base` 196608 and `table_base` 48). The
-  module's window is `window` (65536) bytes from `data_base`. A choice must meet the rules of ABI 2: a
-  window at or above 0x10000 that ends at or below the scratch base 0xF0000 and does not overlap
-  `wind_meteors`'s window (0x30000 to 0x3FFFF); a range of `table_slots` (32) entries inside the 80 of the
-  table that does not overlap entries 48 to 79 of `wind_meteors`, so a `table_base` from 0 to 16. The
-  fixtures' `data_base` 65536 and 131072 with `table_base` 16 and 32 are examples the kit gives for other
-  modules. The budgets are set as Fuel says.
+- `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI 8.2). ABI 8.2 says a module exports
+  four data words, and ABI 9.1 makes its exports equal its `exports`, its `data` and the two fuel
+  functions; the kit doesn't say whether a module that lists fewer than four is accepted, and a module
+  that lists and exports all four meets both sections. The module reads `g_game` and `g_blockBase` only.
+- `data_base`, `table_base`, `fuel_budget` and `size_budget`: the build picks them, as ABI 11.1 and 11.3
+  say a budget belongs to its build. `fuel_budget` is set from the build's own runs of the conformity gate
+  (ten times the most fuel any tick burns, all the slot calls of a tick together, ABI 11.2 and 11.3), and
+  `size_budget` is the most bytes the build's `.wasm` may be. `data_base` and `table_base` must meet the
+  rules of ABI 2: a window of `window` (65536) bytes at or above 0x10000 that ends at or below the scratch
+  base 0xF0000 and does not overlap `wind_meteors`'s window (0x30000 to 0x3FFFF); a range of
+  `table_slots` (32) entries inside the 80 of the table that does not overlap entries 48 to 79 of
+  `wind_meteors`, so a `table_base` from 0 to 16.
 - Slot kinds:
 
 | Slot | Kinds |
@@ -85,11 +85,7 @@ module sets its own (see Fuel). This section gives the entry the module must hav
 module calls each by its name, as section 4 gives.
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. The manifest gives it no budget. ABI section 11.3 sets `fuel_budget` at ten times the most
-  fuel any tick of the conformity gate's scenarios burns for the module's own build, and the budget covers
-  every slot call of one tick together (11.2). The kit holds no such figure for this module, nor the
-  gate's scenarios, and gives no `size_budget` for it.
-- Build: built and checked as ABI 3.1 and 9.1 say.
+  `__fuel_get`.
 - Hooks: the header names the hooks `ResourceIncome` and `StatsAccumulate` for `UpdatePlayerEconomy`. The
   kit defines no hook mechanism for a module (ABI 1 to 14), so the module has none.
 
@@ -101,8 +97,10 @@ module calls each by its name, as section 4 gives.
   `resourceSlot` is `self`. The module reads its `id` only.
 - **Text and buffers** given to imports (a box name, the script name `"SetSpeed"`) are NUL-terminated
   strings in the module's own memory. The buffers given to `files.BankReadBox` and `files.BankWriteBox`
-  are the account itself, in the block. A `files.BankWriteBox` line of a recording carries the bank
-  handle, the bytes written (`x:` and their hexadecimal), then the length and the result.
+  are the account itself, in the block. A `files.BankReadBox` line of a recording prints `?` for the
+  destination, and the bytes read follow in an `o dst` line. A `files.BankWriteBox` line of a recording
+  carries the bank handle, the bytes written (`x:` and their hexadecimal), then the length and the
+  result.
 
 ### Events
 
@@ -148,10 +146,9 @@ an extractor makes per settlement before any handicap.
   (bit 5) of the 16-bit word `flags_97_wide`, which the schema's read set of `UpdateResourceSharing`
   names. That read set names `Game.flags_2a44`, the 16-bit word at the offset of the byte `netGameFlags`,
   of which the slot uses bit 0.
-- `UpdateMetalExtraction`: the schema lists `Game.width` and `Game.height` among its reads, and the
-  recordings print them. The behaviour doesn't use them: the coordinates of every cell of the footprint go
-  to `los_radar.GetMapCell` as they are, off the map included (`edges-economy-targeting` has cells at
-  (−1,−1)).
+- `UpdateMetalExtraction`: the schema lists `Game.width` and `Game.height` among its reads. The behaviour
+  doesn't depend on them: the coordinates of every cell of the footprint go to `los_radar.GetMapCell` as
+  they are, off the map included (`edges-economy-targeting` has cells at (−1,−1)).
 - `Unit`: `flags`, `activateFlags`, `def`, `resourceSlot` (its `player` field is the account's owner),
   `buildLeft` (float), `workTime` (int), `cell`, `footprint` (`Point16`), `script`, `id`.
 - `UnitDef`: `energyuse`, `energymake`, `metalmake`, `extractsMetal`, `windgenerator`,
@@ -171,6 +168,14 @@ an extractor makes per settlement before any handicap.
 
 A unit is *on* when bit 0 of `activateFlags` is set, and *complete* when `buildLeft` equals 0.0.
 
+### Layout
+
+Consecutive units of the unit table are 280 bytes apart (the size of `Unit` in `layout.json`), the
+elements of `Game.players` 331 bytes (the size of `Player`), and a `UnitResources` is 52 bytes. Every
+field is read and written at its offset in `layout.json`, whether or not the offset is a multiple of the
+field's size: `Game.players` is at 7011, the 64-bit floats of `Player` start at 172, and its `flags` is at
+329, so block accesses are unaligned.
+
 ### Between ticks
 
 Nothing outside the fields above.
@@ -186,9 +191,9 @@ Section 5 defines the arithmetic each formula below uses: *add* (`F` adds *v*) a
 
 ### `UpdatePlayerEconomy(p)`
 
-The *slice* is every unit of the unit table from `p.unitsBegin` to `p.unitsEnd`, both included, in
-table order; the alive units of the slice take part. For a unit *u*, *a* is `u.resourceSlot` and *d*
-is `u.def`.
+The *slice* is every unit of the unit table from `p.unitsBegin` to `p.unitsEnd`, both included, in table
+order (280 bytes apart); the alive units of the slice take part. For a unit *u*, *a* is `u.resourceSlot`
+and *d* is `u.def`.
 
 **Per alive unit, in slice order.** The imports and the writes of the steps below come out in slice
 order, unit by unit. A cloak payment lowers its owner's `energy` at once, so a later unit of the same
@@ -318,6 +323,9 @@ The result, by the first row that matches; no writes and no imports:
 | `def.tidalgenerator` > 0 | −(`Game.tidal` ⊗ `def.tidalgenerator`) |
 | otherwise | +0.0 |
 
+The wind and tidal rows negate their product, so a product of +0.0 gives −0.0, the pattern 0x80000000
+(`UnitDef#124` at tick 0 of `edges-economy-targeting`: `Game.tidal` 0.0, `tidalgenerator` 1.0).
+
 ### `UpdateMetalExtraction(unit)`
 
 With *d* = `unit.def`: if `d.extractsMetal` > 0 is false, nothing happens, with no imports. Otherwise:
@@ -354,8 +362,10 @@ The box name is `u` followed by `info.id` as four lower-case hexadecimal digits 
 4. `files.BankWriteBox(bank, metal group, 24)`, the metal group being the 24 bytes at `self` + 24.
 
 `self.player` isn't saved. The account is unchanged by the call. The kit's schema lists `energyMake` and
-`metalMake` among the writes of `SaveUnitAccounts`: the module need not make them, and the recordings
-can't tell, since an identical write has no `w` line.
+`metalMake` among the writes of `SaveUnitAccounts`, and among the reads of `LoadUnitAccounts`: those are
+the first float of each group, where the two 24-byte transfers start, and the module's behaviour doesn't
+depend on their values. It need not write them in `SaveUnitAccounts`, and the recordings can't tell,
+since an identical write has no `w` line.
 
 ### `LoadUnitAccounts(self, info, bank)`
 
@@ -438,19 +448,16 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
 - **The result of `GetEnergyUse`:** for the wind and tidal rows it is the negated exact product rounded
   once to 32 bits (to nearest, ties to even), which is the slot's `f32` result. The recorded results
   (`o result f32:...`) are the rounded values.
-- **What the recordings pin:** of the roundings below, the recordings pin the exact product of the tidal
-  row (`tidal-rounding.txt`). A reading that rounds *M*\*, *A*, *L* and the exact wind product to 32 bits
-  gives the same results on every recording, so no recording pins the 64-bit steps of those four: this
-  spec is their only authority.
 - **The sums of `UpdatePlayerEconomy`**: after each alive unit's term, a sum is the 32-bit float nearest
   to the exact sum of its value before and the term (*M* ⊕ `a.energyMake`, and so on). *M*\* is the 64-bit
   float nearest to *M* + *e*.`Make`; *M* is the 32-bit float nearest to *M*\*. *A* is
   f32(f64(*M*\* + `p.X`)).
 - **The ratios:** *A*, *S* and *P* are 32-bit floats. When *S* ≤ *A*, *L* is the difference *A* − *S*
-  rounded to 64 bits only (it is not rounded to 32 bits), and *rs* is 1; otherwise *L* is 0 and *rs* is the
-  quotient *A* / *S* rounded to 32 bits. When *P* ≤ *L*, *rp* is 1 and *B* is the difference *L* − *P*
-  rounded to 64 bits, then to 32 bits; otherwise *B* is 0 and *rp* is the 64-bit quotient *L* / *P* rounded to
-  32 bits. The wasted amount adds the difference *B* − `p.XCapacity` rounded to 64 bits.
+  rounded to 64 bits only (it is not rounded to 32 bits), and *rs* is 1; otherwise *L* is 0 and *rs* is
+  the quotient *A* / *S* of two 32-bit floats rounded once to 32 bits. When *P* ≤ *L*, *rp* is 1 and *B*
+  is the difference *L* − *P* rounded to 64 bits, then to 32 bits; otherwise *B* is 0 and *rp* is the
+  64-bit quotient *L* / *P* rounded to 32 bits. The wasted amount adds the difference *B* −
+  `p.XCapacity` rounded to 64 bits.
 - **The new stall of an account:** with *s* = `XStall` and *q* = `XUsePaid` (both 32-bit), the result
   is formed in this order. The product *rs* × *s* is rounded to 64 bits, and *s* minus it is rounded to
   64 bits. The product *rp* × *q* is rounded to 64 bits, and *q* minus it is rounded to 64 bits. The two
@@ -467,13 +474,16 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
 - **Ticks:** `Game.ticks` and `Unit.workTime` are compared as unsigned 32-bit integers, and the
   multiples of 60 and 450 are of the unsigned value.
 - **Division:** a quotient is the IEEE 754 quotient: *A* / *S* with *S* = 0 and *A* < 0 is −∞.
-- **NaN:** *A* is below 0 when the income of a call is negative and larger than the stock (a unit type
-  with a negative `energymake` or a negative `extraction`, which a wrapped *W* gives), and *S* is +0.0
-  when no account owes a stall (the sums start at +0.0, and adding stalls never gives −0.0). Then, for
-  that resource, *rs* is −∞ and *L* is 0, and the stock becomes 0. Every account with `XStall` = 0
-  computes −∞ × 0, so its new `XStall` is a NaN. The kit's ABI (section 3.2) says the engine
-  canonicalises NaNs and a module must not let a result depend on a NaN's bit pattern, so this spec
-  fixes no pattern for it. It defines no result of a call that reads a NaN in any field.
+- **NaN:** when the income of a call is negative and larger than the stock (a unit type with a negative
+  `energymake` or a negative `extraction`, which a wrapped *W* gives), *A* is below 0, and when no account
+  owes a stall *S* is +0.0 (the sums start at +0.0, and adding stalls never gives −0.0). For that
+  resource the stock then becomes 0, and the new `XStall` of every account with `XStall` = 0 is a NaN. The
+  kit's ABI (section 3.2) says the engine canonicalises NaNs and a module must not let a result depend on
+  a NaN's bit pattern, so this spec fixes no pattern for it. It defines no result of a call that reads a
+  NaN in any field.
+
+The roundings above state results: an implementation may compute them in any way that gives the same
+bits.
 
 ## 6. Quirks
 
@@ -582,9 +592,10 @@ No recording reaches the following, and the rule of the spec is the authority fo
   `los_radar.GetMapCell`).
 - `UpdatePlayerEconomy` with *S* = 0 and *A* < 0 (the NaN of section 5), and with a negative income.
 
-Not recorded, and the kit gives no reason: the rounding of *M*\*, *A* and *L* and the exact wind product,
-which give the same results as a 32-bit reading on every recorded call (only the tidal product has a pin,
-section 5).
+Pinned by a recording: the exact tidal product (`tidal-rounding.txt`). Not pinned: a 32-bit reading of
+*M*\*, *A*, *L* and the exact wind product gives the same results on every recording, and so does a single
+rounding of *rp* (the 64-bit quotient of *L* and *P*, then 32 bits, as section 5 gives it), and so does
+adding *M* in place of *M*\* to `totalEnergyProduced` (Q1). For all of them this spec is the authority.
 
 ## 8. Kit version
 
