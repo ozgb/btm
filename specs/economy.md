@@ -91,10 +91,7 @@ module calls each by its name, as section 4 gives.
 
 ### Events
 
-- `SIM_EVENT_MESSAGE`: recorded by the console commands that toggle the sharing of metal or of energy
-  (with the new state) and by the commands that set the amount above which metal or energy is shared
-  (with the number given), when the local player runs them in a network game. No slot above records it.
-  The arguments, flags and phases are in `docs/sim-events.md`.
+None. No slot of this module records a sim event (kinds are listed in `docs/sim-events.md`).
 
 ## 3. State
 
