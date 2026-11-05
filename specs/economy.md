@@ -130,8 +130,8 @@ an extractor makes per settlement before any handicap.
   the unit table), `econ` (`Ref<UnitResources>`, the player's own account), `info`
   (`Ref<PlayerInfo>`), `allied` (bytes), `unitCount` (unsigned short), `unitsCreated` (int).
 - `PlayerInfo`: `kind` (byte), and the bits `shareMetal`, `shareEnergy`, `shareMapping`.
-- `Unit`: `flags`, `activateFlags`, `def`, `resourceSlot` (its `player` field is the account's owner), `buildLeft` (float), `workTime` (int),
-  `cell`, `footprint` (`Point16`), `script`, `id`.
+- `Unit`: `flags`, `activateFlags`, `def`, `resourceSlot` (its `player` field is the account's owner),
+  `buildLeft` (float), `workTime` (int), `cell`, `footprint` (`Point16`), `script`, `id`.
 - `UnitDef`: `energyuse`, `energymake`, `metalmake`, `extractsMetal`, `windgenerator`,
   `tidalgenerator`, `cloakcost`, `cloakcostmoving`, `energystorage`, `metalstorage` (floats), and
   `makesMetal` (unsigned byte).
@@ -141,7 +141,7 @@ an extractor makes per settlement before any handicap.
 
 | Bits | Mask | Word used here |
 | --- | --- | --- |
-| 2 and 3 | 0x0000000c | *moving*: either bit of `unknown_110_2` set (set while the unit moves) |
+| 2 and 3 | 0x0000000c | *moving*: either bit of `unknown_110_2` set |
 | 11 | 0x00000800 | `cloakOn` (the layout's bit-field) |
 | 12 | 0x00001000 | *cloak held* (`unknown_110_12`): no cloaking while set |
 | 28 | 0x10000000 | `Unit.alive`: only alive units take part in the economy |
@@ -210,14 +210,14 @@ funded makes no metal, and no later row applies to it (Q5).
    in slice order.
 
 At the start of the call `p.energyCapacity` and `p.metalCapacity` are +0.0, before the first unit adds
-to them. A call whose slice has no alive unit makes no imports, and only the unit part is skipped: the player
-part below runs as it does for any slice, with every sum before the player's own account at +0.0 and
-the capacities at +0.0 (so `p.energy` and `p.metal` are then capped at 0, or at the storage bonuses when
-bit 0 of `p.flags` is set). A slice with no unit at all, one in which `p.unitsBegin` is after
-`p.unitsEnd`, is the same case. The slice may be of any length from 1 unit up to the whole unit table,
-so the module walks whatever length it is given: the recordings have 250 units in most calls, and the
-one-unit slice of `tests/replay/economy/tidal-rounding.txt` (`Unit#4` for both ends). A null
-`p.unitsBegin` or `p.unitsEnd` is outside the contract.
+to them. A call whose slice has no alive unit makes no imports, and only the unit part is skipped:
+the player part below runs as it does for any slice, with every sum before the player's own account
+at +0.0 and the capacities at +0.0 (so `p.energy` and `p.metal` are then capped at 0, or at the
+storage bonuses when bit 0 of `p.flags` is set). A slice with no unit at all, one in which
+`p.unitsBegin` is after `p.unitsEnd`, is the same case. The slice may be of any length, so the module
+walks whatever length it is given: the recordings have 250 units in most calls, and the one-unit slice of
+`tests/replay/economy/tidal-rounding.txt` (`Unit#4` for both ends). A null `p.unitsBegin` or
+`p.unitsEnd` is outside the contract.
 
 **The player.** The player's own account *e* = `p.econ` adds last to the sums, with one difference:
 for each resource, *M*\* is the sum *M* + *e*.`Make` rounded to 64 bits, and *M* is *M*\* rounded
@@ -355,9 +355,8 @@ bank.
 ### `UpdateResourceSharing(player)`
 
 Nothing happens unless bit 0 of `Game.netGameFlags` is set. *t* is `Game.ticks` as an unsigned 32-bit
-integer, and tick 0 is a multiple of both 60 and 450. When the slot acts at a tick that is a multiple of 60,
-or of 450, `player.info` is read, and so is the `info` of each other player that meets the conditions
-of a partner before `q.info.kind`: a null one is outside the contract.
+integer, and tick 0 is a multiple of both 60 and 450. A null `player.info`, or a null `info` of a player
+that meets the other partner conditions, is outside the contract.
 
 A *partner* is an element *q* = `Game.players[i]`, for *i* from 0 to 9, with `q.active` ≠ 0, `q.type` = 3,
 `q.index` ≠ 10 (a free slot has index 10), `q.unitCount` ≠ 0 or `q.unitsCreated` = 0 (a player that
@@ -376,8 +375,8 @@ When *t* is a multiple of 60 (0 included), metal is shared, and then energy:
 - **Energy**, read after the metal import: the same with the `shareEnergy` bit, `energy`, `shareEnergy`
   and `energyCapacity`, the factor 0.5 in place of *k3*, and the import `players.TransferMetal`.
 
-When *t* is a multiple of 450 (0 included) and the `shareMapping` bit of `player.info` is set, then for each partner
-in order of *i*, the import `network.SendShareMapInfo(player.index, q.index)` is made, unless
+When *t* is a multiple of 450 (0 included) and the `shareMapping` bit of `player.info` is set, then
+for each partner in order of *i*, the import `network.SendShareMapInfo(player.index, q.index)` is made, unless
 `player.index` is 10 (the partner's index is never 10). The player itself is sent its own map when it
 is a partner (Q4), but never receives metal or energy, since its stock isn't below its own. On a tick that
 is a multiple of both, the sharing imports come before the map imports.
@@ -431,14 +430,13 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
 - **Ticks:** `Game.ticks` and `Unit.workTime` are compared as unsigned 32-bit integers, and the
   multiples of 60 and 450 are of the unsigned value.
 - **Division:** a quotient is the IEEE 754 quotient: *A* / *S* with *S* = 0 and *A* < 0 is −∞.
-- **NaN:** *A* is below 0 when the income of a call is negative and larger than the stock (a unit type with
-  a negative `energymake` or a negative `extraction`, which a wrapped *W* gives), and *S* is +0.0 when no
-  account owes a stall (the sums start at +0.0, and adding stalls never gives −0.0). Then, for that resource,
-  *rs* is −∞ and *L* is 0, and the stock becomes 0. Every account with `XStall` = 0 computes −∞ × 0, an
-  invalid operation: its new `XStall` is the default quiet NaN, the 32-bit pattern 0xFFC00000 (sign set,
-  quiet bit set, payload 0), which is what the reference stores. The module must write that pattern
-  itself, since the sign of a NaN that WebAssembly arithmetic produces is not fixed. The results of a call
-  that reads a NaN in any field are not defined by this spec.
+- **NaN:** *A* is below 0 when the income of a call is negative and larger than the stock (a unit type
+  with a negative `energymake` or a negative `extraction`, which a wrapped *W* gives), and *S* is +0.0
+  when no account owes a stall (the sums start at +0.0, and adding stalls never gives −0.0). Then, for
+  that resource, *rs* is −∞ and *L* is 0, and the stock becomes 0. Every account with `XStall` = 0
+  computes −∞ × 0, an invalid operation: its new `XStall` is the 32-bit pattern 0xFFC00000 (sign set,
+  quiet bit set, payload 0). The results of a call that reads a NaN in any field are not defined by this
+  spec.
 
 ## 6. Quirks
 
@@ -448,8 +446,8 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
 - **Q3:** a player shares a third of its surplus metal and half of its surplus energy, and gives it to
   the partner with the highest index whose stock is below its own, not the one with the least.
 - **Q4:** shared map information can go to the sharing player itself.
-- **Q5:** an immobile unit that is on, with an `energyuse` below 0, earns that energy, and an extractor or a
-  metal maker with a negative `energyuse` makes no metal.
+- **Q5:** an immobile unit that is on, with an `energyuse` below 0, earns that energy, and an extractor
+  or a metal maker with a negative `energyuse` makes no metal.
 - **Q6:** capacities go to `p`, the player whose slice is walked, but the handicap and the cloak payment
   go to each account's owner.
 - **Q7:** the cloak cost is truncated to a whole number before it is paid.
