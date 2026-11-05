@@ -28,9 +28,6 @@ surplus metal and energy, and the map, with allied remote players.
 | `SpendEnergy`, `SpendMetal` | when a player gives energy or metal away |
 | `SpendEnergyAndMetal` | when a weapon with a per-shot cost fires |
 
-Every slot that the header marks "thiscall in 3.1c" takes the account (`self`) as its first argument,
-as the header lists.
-
 ### The manifest entry
 
 The kit's manifest (`wasm/modules.json`) carries the slot signatures of this module (`signatures.economy`)
@@ -44,8 +41,10 @@ figures of the last bullet below. This section gives the entry the module must h
   `RequestEnergyAndMetal`, `SpendEnergy`, `SpendMetal`, `SpendEnergyAndMetal`.
 - `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI 8.2). ABI 8.2 says a module exports
   four data words, and ABI 9.1 makes its exports equal its `exports`, its `data` and the two fuel
-  functions; a module that lists and exports
-  all four meets both sections. The module reads `g_game` and `g_blockBase` only.
+  functions; a module that lists and exports all four meets both sections. The module reads `g_game` and
+  `g_blockBase` only.
+- `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
+  `economy` 2, and for its import groups `units` 1, `los_radar` 2, `files` 1, `players` 1, `network` 1.
 - `data_base`, `table_base`, `fuel_budget` and `size_budget`: the build picks them, as ABI 11.1 and 11.3
   say a budget belongs to its build. `fuel_budget` is set from the build's own runs of the conformity gate
   (ten times the most fuel any tick burns, all the slot calls of a tick together, ABI 11.2 and 11.3), and
@@ -86,8 +85,7 @@ module calls each by its name, as section 4 gives.
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`.
-- Hooks: the header names the hooks `ResourceIncome` and `StatsAccumulate` for `UpdatePlayerEconomy`. The
-  kit defines no hook mechanism for a module (ABI 1 to 14), so the module has none.
+- Hooks: none.
 
 ### Arguments outside the block
 
@@ -182,9 +180,9 @@ Nothing outside the fields above.
 
 ## 4. Behaviour
 
-Within one call, only the order of import calls is observable. The block writes are compared at the
-end of the call, so their order matters only where two of them add to the same field: those add in
-the order given here, because each addition rounds.
+Within one call, only the order of import calls is observable. The order of block writes carries no
+meaning, except through the sums: where two additions go to the same field, each rounds, so the result
+depends on the order, and the order given here is the one to use.
 
 Section 5 defines the arithmetic each formula below uses: *add* (`F` adds *v*) and *income*
 (`I(a, F, v)`).
@@ -241,10 +239,12 @@ to them. A call whose slice has no alive unit makes no imports, and only the uni
 the player part below runs as it does for any slice, with every sum before the player's own account
 at +0.0 and the capacities at +0.0 (so `p.energy` and `p.metal` are then capped at 0, or at the
 storage bonuses when bit 0 of `p.flags` is set). A slice with no unit at all, one in which
-`p.unitsBegin` is after `p.unitsEnd`, is the same case. The slice may be of any length, so the module
-walks whatever length it is given: the recordings have 250 units in most calls, and the one-unit slice of
-`tests/replay/economy/tidal-rounding.txt` (`Unit#4` for both ends). A null `p.unitsBegin` or
-`p.unitsEnd` is outside the contract.
+`p.unitsBegin` is after `p.unitsEnd`, is the same case. The callers pass the first and the last unit of
+one player's block of the unit table, a block of the same length for every player, so a slice has one or
+more units and `p.unitsEnd` is a whole number of units (280 bytes each) after `p.unitsBegin`. The
+recordings have 250 units in most calls, and the one-unit slice of
+`tests/replay/economy/tidal-rounding.txt` (`Unit#4` for both ends). A distance between the two that isn't
+a multiple of 280, and a null `p.unitsBegin` or `p.unitsEnd`, are outside the contract.
 
 **The player.** The player's own account *e* = `p.econ` adds last to the sums, with one difference:
 for each resource, *M*\* is the sum *M* + *e*.`Make` rounded to 64 bits, and *M* is *M*\* rounded
@@ -347,9 +347,12 @@ With *d* = `unit.def`: if `d.extractsMetal` > 0 is false, nothing happens, with 
 The twelve floats of `self` become +0.0, and `self.player` becomes a reference to element *k* of
 `Game.players`, where *k* is the low 8 bits of `playerIndex`. Like every `Ref`, it is stored as a block
 offset (ABI 7.1), a 32-bit offset from the block's base (the data word `g_blockBase`; 0 is null): the
-address of that element, minus `g_blockBase`. That is the offset of the game record from the block's base
-(`g_game` − `g_blockBase`), plus the offset of `Game.players` in `Game` (7011), plus 331 × *k*. No imports. Callers pass a
-player's slot, 0 to 9, only; for any other *k* the result is undefined and the module need not check.
+address of that element, minus `g_blockBase`. That is the offset of the game record from the block's
+base (the value of `g_game` minus the value of `g_blockBase`), plus the offset of `Game.players` in
+`Game` (7011), plus 331 × *k*. The value of a data word is the 4 bytes at the address its export holds
+(ABI 8.2: the export is an i32 global holding the address of a 4-byte location, and the host writes the
+word there before every slot call). No imports. Callers pass a player's slot, 0 to 9, only; for any
+other *k* the result is undefined and the module need not check.
 
 ### `SaveUnitAccounts(self, info, bank)`
 
@@ -406,8 +409,8 @@ When *t* is a multiple of 60 (0 included), metal is shared, and then energy:
   `recipient.metal`, where *k3* is the 32-bit float 0x3eaaaaab (Q3). The import is made whatever
   *amount* is: a recipient with no room left gives an *amount* of 0 or below, and the import is still
   made with it.
-- **Energy**, read after the metal import: the same with the `shareEnergy` bit, `energy`, `shareEnergy`
-  and `energyCapacity`, the factor 0.5 in place of *k3*, and the import
+- **Energy**, after the metal part (its import, when made, comes first): the same with the `shareEnergy`
+  bit, `energy`, `shareEnergy` and `energyCapacity`, the factor 0.5 in place of *k3*, and the import
   `players.TransferMetal(player.index, recipient.index, amount, 1)`, with the last argument 1 as for the
   metal import.
 
@@ -594,11 +597,12 @@ No recording reaches the following, and the rule of the spec is the authority fo
 - `UpdatePlayerEconomy` with *S* = 0 and *A* < 0 (the NaN of section 5), and with a negative income.
 
 Pinned by a recording: the exact tidal product (`tidal-rounding.txt`). Not pinned: a 32-bit reading of
-*M*\*, *A*, *L* and the exact wind product gives the same results on every recording, and so does rounding
-*L* / *P* once to 32 bits in place of the 64-bit quotient rounded to 32 bits, and so does
-adding *M* in place of *M*\* to `totalEnergyProduced` (Q1). For all of them this spec is the authority.
+*M*\*, *A*, *L* and the exact wind product gives the same results on every recording, and so does
+rounding *L* / *P* once to 32 bits in place of the 64-bit quotient rounded to 32 bits, and so does
+adding *M* in place of *M*\* to `totalEnergyProduced` (Q1). For all of them this spec is the authority,
+and no recording judges them: the gate's full scenarios are their only judge.
 
 ## 8. Kit version
 
-Kit `interfaces-v3` and `reference-traces-v23`, the versions the gate judges against. Interface
+Kit `interfaces-v4` and `reference-traces-v23`, the versions the gate judges against. Interface
 `economy` 2.0.
