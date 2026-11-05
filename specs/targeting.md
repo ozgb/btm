@@ -197,11 +197,10 @@ engine never calls a slot with a *w* above 2; this spec defines nothing for a la
 ### `SetWeaponTargetUnit(u, target, w)`
 
 TargetX becomes the low 16 bits of `target.id` (a target of id 0 therefore leaves the slot with no target,
-section 3), TargetZ becomes −32768, and `u.netDirtyFlags` is cleared
-as in section 3. No imports. The target's own `netDirtyFlags` appears among the recorded reads (for
-example `r Unit#3.netDirtyFlags 1024` at tick 138 of `orders-guard-attacked`), is not changed, and no
-result depends on it. A null `target` is outside the contract, and the
-module may trap.
+section 3), TargetZ becomes −32768, and `u.netDirtyFlags` is cleared as in
+section 3. No imports. The target's own `netDirtyFlags` appears among the recorded reads (for example
+`r Unit#3.netDirtyFlags 1024` at tick 138 of `orders-guard-attacked`), is not changed, and no result depends
+on it. A null `target` is outside the contract, and the module may trap.
 
 ### `SetWeaponTargetPos(u, pos, w)`
 
@@ -270,9 +269,9 @@ whose length is the count the import returns, the whole list even when it is abo
 The search makes at most 50 *picks* (13 recorded searches have more than 50 candidates), and ends sooner
 when no candidate is left. Pick *k* (from 1) draws *i* = `services.RandomInt(n)`, with *n* the list's
 length less *k* − 1, and its candidate is the one at position *i* (from 0) of the candidates not yet
-picked. Those stand in this order (Q4): the list's order for pick 1; after a pick the
-last candidate moves into the picked position (unless it was the last) and the list shortens by one.
-The pick *t* is *eligible* when:
+picked. Those stand in this order (Q4): the list's order for pick 1; after a
+pick the last candidate moves into the picked position (unless it was the last) and the list shortens by
+one. The pick *t* is *eligible* when:
 
 1. *t* has `alive` (bit 28 of `t.flags`) set and `killPending` (bit 14) clear;
 2. `t.def` has `flags1` bit 15 set, or `u`'s player is computer-controlled, or bit 10 of
@@ -422,8 +421,8 @@ Not recorded, and the kit gives no reason:
 - A `UnitDef.range` that is negative as a signed 16-bit value.
 - A lead with `killCount` of 4, 5 or 6 when every other lead condition holds. The recorded leads (16) all
   have 7. The unit-target calls with every other lead condition met and no lead have 0 (10728), 1 (55),
-  2 (42) or 3 (21); the counts 6 and 8 occur only against a target with a null `motion`, where no lead
-  is required. The threshold rests on the kit's "more than five kills".
+  2 (42) or 3 (21). The count 8 occurs only against a target with a null `motion` (66 calls), and 6 only in
+  a call with no target (tick 118 of `edges-economy-targeting`). The threshold rests on the kit's "more than five kills".
 - `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`.
 - A *q* that wraps below 0.
 - Two eligible fallback picks with the same distance. Preferred picks that tie are recorded, at distance 0
