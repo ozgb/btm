@@ -538,3 +538,5 @@ section 5).
 
 Kit `interfaces-v3` and `reference-traces-v23`, the versions the gate judges against. Interface
 `economy` 2.0.
+
+A pending interface change (#891) makes `GetEnergyUse` return the exact product as a 64-bit float in `economy` 3.0, and this spec will follow it when that tag exists.
