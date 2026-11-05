@@ -45,8 +45,7 @@ module sets its own (see Fuel). This section gives the entry the module must hav
 - `data`: `g_game`, `g_blockBase` (ABI 8.2). ABI 8.2 speaks of four data words (the kit's
   `wind_meteors` lists four), and ABI 9.1 makes the module's exports equal its `exports`, its `data` and
   the two fuel functions. The module reads two of the four words, so this entry lists two, and the
-  behaviour is the same if it lists and exports all four. The kit doesn't say which of the two forms its
-  checks prefer for a module that reads two.
+  behaviour is the same if it lists and exports all four.
 - `data_base`, `table_base`, `fuel_budget` and `size_budget`: the kit defines none of them for this
   module (its manifest has the one module `wind_meteors`, at `data_base` 196608 and `table_base` 48). The
   module's window is `window` (65536) bytes from `data_base`. A choice must meet the rules of ABI 2: a
@@ -90,12 +89,7 @@ module calls each by its name, as section 4 gives.
   fuel any tick of the conformity gate's scenarios burns for the module's own build, and the budget covers
   every slot call of one tick together (11.2). The kit holds no such figure for this module, nor the
   gate's scenarios, and gives no `size_budget` for it.
-- Build: the link options are those of ABI section 3.1 (`--no-stack-first` among them), the stack lies
-  inside the window, and the module's exports are exactly the list above (ABI 3.1, 9.1): a toolchain that
-  adds the exports `__heap_base` and `__data_end` has them filtered out of the link line, as ABI 3.1
-  says. The kit doesn't say what to do when the `wasm-ld` of a toolchain doesn't accept
-  `--no-stack-first`; ABI 3.1 says to check the result: the module's stack pointer global lies inside its
-  window.
+- Build: built and checked as ABI 3.1 and 9.1 say.
 - Hooks: the header names the hooks `ResourceIncome` and `StatsAccumulate` for `UpdatePlayerEconomy`. The
   kit defines no hook mechanism for a module (ABI 1 to 14), so the module has none.
 
@@ -360,8 +354,8 @@ The box name is `u` followed by `info.id` as four lower-case hexadecimal digits 
 4. `files.BankWriteBox(bank, metal group, 24)`, the metal group being the 24 bytes at `self` + 24.
 
 `self.player` isn't saved. The account is unchanged by the call. The kit's schema lists `energyMake` and
-`metalMake` among the writes of `SaveUnitAccounts`: a write of the value already there, which the
-recordings can't show, since an identical write has no `w` line.
+`metalMake` among the writes of `SaveUnitAccounts`: the module need not make them, and the recordings
+can't tell, since an identical write has no `w` line.
 
 ### `LoadUnitAccounts(self, info, bank)`
 
@@ -412,12 +406,13 @@ unless `player.index` is 10 (the partner's index is not 10). The player itself i
 is a partner (Q4), but never receives metal or energy. On a tick that is a multiple of both, the sharing
 imports come before the map imports.
 
-`player` itself has no condition of its own: it needn't be active or of type 3, and the slot reads its
-`info`, `index`, stocks, capacities and `allied` bytes only. A recording of these imports would print each
-as the other imports are printed (`docs/replay-format.md`, "Values": decimal integers, a float as its
-bits), the sharing imports `i players.TransferEnergy 0 1 f32:0x41200000 1` for a transfer from player 0
-to player 1 of 10.0, and `i network.SendShareMapInfo 0 1`, with no result on either line. The kit has no
-recording of them, so the line forms are the kit's rules, not an observation.
+`player` itself has no condition of its own: it needn't be active or of type 3. As the sharing player the
+slot reads its `info`, `index`, `metal`, `energy`, `shareMetal`, `shareEnergy` and `allied` bytes (and
+`player` is read again as an element of `Game.players` in the partner test). A recording of these imports
+would print each as the other imports are printed (`docs/replay-format.md`, "Values": decimal integers, a
+float as its bits), the sharing imports `i players.TransferEnergy 0 1 f32:0x41200000 1` for a transfer
+from player 0 to player 1 of 10.0, and `i network.SendShareMapInfo 0 1`, with no result on either line.
+The kit has no recording of them, so the line forms are the kit's rules, not an observation.
 
 No writes.
 
@@ -558,8 +553,8 @@ Values are given as decimals, with the 32-bit pattern where the rounding matters
 - `UpdateMetalExtraction` for an extractor with no script.
 
 Recorded: a null result of `los_radar.GetMapCell` (five imports of `edges-economy-targeting`, in the
-call at tick 5 of `UpdateMetalExtraction(Unit#2)`, for cells with x or y of −1), and the `files.BankWriteBox`
-lines of `save-midgame`.
+call at tick 5 of `UpdateMetalExtraction(Unit#2)`, for cells with x or y of −1), and the
+`files.BankWriteBox` lines of `save-midgame`.
 
 No recording reaches the following, and the rule of the spec is the authority for each:
 
