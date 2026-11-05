@@ -13,7 +13,7 @@ surplus metal and energy, and the map, with allied remote players.
 
 ## 2. Interface
 
-### Slots (`interfaces/economy.h`, version 2.0)
+### Slots (`interfaces/economy.h`, version 3.0)
 
 | Slot | When the engine calls it |
 | --- | --- |
@@ -31,9 +31,9 @@ surplus metal and energy, and the map, with allied remote players.
 ### The manifest entry
 
 The kit's manifest (`wasm/modules.json`) carries the slot signatures of this module (`signatures.economy`)
-and its interface major, 2 (`majors.economy`). It has no build entry for it: the build picks the four
-figures of the last bullet below. This section gives the entry the module must have. The kind `f32` is a
-32-bit IEEE 754 float that crosses the boundary bit for bit (ABI section 7).
+and its interface major, 3 (`majors.economy`). It has no build entry for it: the build picks the four
+figures of the last bullet below. This section gives the entry the module must have. The kinds `f32` and
+`f64` are IEEE 754 floats of 32 and 64 bits that cross the boundary bit for bit (ABI section 7).
 
 - `name` and `interface`: `economy`.
 - `exports`, in this order: `UpdateResourceSharing`, `GetEnergyUse`, `UpdatePlayerEconomy`,
@@ -44,7 +44,7 @@ figures of the last bullet below. This section gives the entry the module must h
   functions; a module that lists and exports all four meets both sections. The module reads `g_game` and
   `g_blockBase` only.
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
-  `economy` 2, and for its import groups `units` 1, `los_radar` 2, `files` 1, `players` 1, `network` 1.
+  `economy` 3, and for its import groups `units` 1, `los_radar` 2, `files` 1, `players` 1, `network` 1.
 - `data_base`, `table_base`, `fuel_budget` and `size_budget`: the build picks them, as ABI 11.1 and 11.3
   say a budget belongs to its build. `fuel_budget` is set from the build's own runs of the conformity gate
   (ten times the most fuel any tick burns, all the slot calls of a tick together, ABI 11.2 and 11.3), and
@@ -58,7 +58,7 @@ figures of the last bullet below. This section gives the entry the module must h
 | Slot | Kinds |
 | --- | --- |
 | `UpdateResourceSharing`, `UpdatePlayerEconomy`, `UpdateMetalExtraction` | `[block] -> void` |
-| `GetEnergyUse` | `[block] -> f32` |
+| `GetEnergyUse` | `[block] -> f64` |
 | `Reset` | `[block, int] -> void` |
 | `SaveUnitAccounts`, `LoadUnitAccounts` | `[block, block, handle] -> void` |
 | `RequestEnergy` | `[block, block, f32] -> int` |
@@ -85,7 +85,9 @@ module calls each by its name, as section 4 gives.
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`.
-- Hooks: none.
+- Hooks: `interfaces/economy.h` annotates `UpdatePlayerEconomy` with "Hooks: ResourceIncome,
+  StatsAccumulate" and every other slot with "Hooks: none". The kit defines no hook in the module ABI, and
+  the import list above (exact, ABI 9.1) has none, so the module raises none; no recording shows one.
 
 ### Arguments outside the block
 
@@ -193,10 +195,13 @@ The *slice* is every unit of the unit table from `p.unitsBegin` to `p.unitsEnd`,
 order (280 bytes apart); the alive units of the slice take part. For a unit *u*, *a* is `u.resourceSlot`
 and *d* is `u.def`.
 
-**Per alive unit, in slice order.** The imports and the writes of the steps below come out in slice
-order, unit by unit. A cloak payment lowers its owner's `energy` at once, so a later unit of the same
-owner decides its own cloak against the lowered `energy`, and an income added to an account is in
-that account's `Make` for the unit's own sums.
+**Per alive unit, in slice order.** The order that is required is this: the imports (the
+`units.SetStateBits` of the cloak step) come out unit by unit in slice order; a cloak payment and an
+income take effect at the point the steps below give, since a later unit's cloak decision and every sum
+rounds on what came before. The steps are otherwise a list of outcomes, and any order of independent
+writes that gives the same final values is equal. A cloak payment lowers its owner's `energy` at once,
+so a later unit of the same owner decides its own cloak against the lowered `energy`, and an income
+added to an account is in that account's `Make` for the unit's own sums.
 
 1. *Charges and production*, by the first row that matches. An immobile unit that is on is *funded* when
    its `d.energyuse` ≥ 0 and `a.energyStall` is not above 0 (a negative `energyuse` never funds it):
@@ -318,13 +323,24 @@ The result, by the first row that matches; no writes and no imports:
 
 | Case | Result |
 | --- | --- |
-| `def.energyuse` ≠ 0 | `def.energyuse` |
-| `def.windgenerator` > 0 | −(`Game.windStrength` ⊗ `def.windgenerator`) |
-| `def.tidalgenerator` > 0 | −(`Game.tidal` ⊗ `def.tidalgenerator`) |
+| `def.energyuse` ≠ 0 | `def.energyuse`, a 32-bit float, widened exactly to 64 bits |
+| `def.windgenerator` > 0 | −(the exact product of `Game.windStrength` and `def.windgenerator`), as a 64-bit float |
+| `def.tidalgenerator` > 0 | −(the exact product of `Game.tidal` and `def.tidalgenerator`), as a 64-bit float |
 | otherwise | +0.0 |
 
-The wind and tidal rows negate their product, so a product of +0.0 gives −0.0, the pattern 0x80000000
-(`UnitDef#124` at tick 0 of `edges-economy-targeting`: `Game.tidal` 0.0, `tidalgenerator` 1.0).
+The result is a 64-bit float. The product of two 32-bit floats is exactly a 64-bit float, so the
+generator rows round nothing, and the consumer row is the widened value, whatever its sign. The "exact
+product of its two 32-bit factors" that the kit's `interfaces/economy.h` and `docs/ai-ratings.md` give
+is the generator rows only. The wind and tidal rows negate their product, so a product of +0.0 gives
+−0.0, the pattern 0x8000000000000000 (`UnitDef#124` at tick 0 of `edges-economy-targeting`:
+`Game.tidal` 0.0, `tidalgenerator` 1.0). Recorded (kit `reference-traces-v23`, `economy 3.0`):
+
+- a consumer: `UnitDef#3` of `duel-shore-to-shore`, `energyuse` 0x3dcccccd, gives 0x3fb99999a0000000
+  (the widened value); `UnitDef#112` of `edges-economy-targeting`, `energyuse` −20.0, gives
+  0xc034000000000000;
+- a tidal generator: `UnitDef#259` of `duel-coast-to-coast` at tick 0, `Game.tidal` 15.0 (0x41700000),
+  `tidalgenerator` 1.0, gives 0xc02e000000000000 (−15.0);
+- a wind generator: example 7 of section 7.
 
 ### `UpdateMetalExtraction(unit)`
 
@@ -416,7 +432,9 @@ When *t* is a multiple of 60 (0 included), metal is shared, and then energy:
 
 When *t* is a multiple of 450 (0 included) and the `shareMapping` bit of `player.info` is set, then
 for each partner in order of *i*, the import `network.SendShareMapInfo(player.index, q.index)` is made,
-unless `player.index` is 10 (the partner's index is not 10). The player itself is sent its own map when it
+unless `player.index` is 10 (the partner's index is not 10). The player and partner indices, bytes of
+0 to 255, cross the `int` kind of the three sharing imports zero-extended: index 3 is the integer 3.
+The player itself is sent its own map when it
 is a partner (Q4), but never receives metal or energy. On a tick that is a multiple of both, the sharing
 imports come before the map imports.
 
@@ -449,9 +467,9 @@ is of the exact values. A float field or argument is a 32-bit float unless secti
   `tests/replay/economy/tidal-rounding.txt`, the call at tick 6270 of `UpdatePlayerEconomy(Player#0)`: the
   account's `energyMake` is 0x437b4f71, `Game.tidal` is 0x42436dc7 and `tidalgenerator` is 0x41a80d9b, and
   `energyIncome` becomes 0x449fb45c; adding the product rounded to 32 bits first gives 0x449fb45b.
-- **The result of `GetEnergyUse`:** for the wind and tidal rows it is the negated exact product rounded
-  once to 32 bits (to nearest, ties to even), which is the slot's `f32` result. The recorded results
-  (`o result f32:...`) are the rounded values.
+- **The result of `GetEnergyUse`:** the slot's result is a 64-bit float: for the wind and tidal rows the
+  negated exact product (no rounding is needed), and for a consumer its 32-bit `energyuse` widened. The
+  recorded results are `o result f64:...`.
 - **The sums of `UpdatePlayerEconomy`**: after each alive unit's term, a sum is the 32-bit float nearest
   to the exact sum of its value before and the term (*M* ⊕ `a.energyMake`, and so on). *M*\* is the 64-bit
   float nearest to *M* + *e*.`Make`; *M* is the 32-bit float nearest to *M*\*. *A* is
@@ -550,7 +568,19 @@ Values are given as decimals, with the 32-bit pattern where the rounding matters
    group 0x3fb4a234 at bytes 16 to 19, so `energyUsePrev` becomes 3.0 and `metalMakePrev` 1.4112.
 7. **`tests/replay/economy/duel-shore-to-shore.txt`, a call at tick 2310 of `GetEnergyUse(UnitDef#135)`**,
    a wind generator: `energyuse` is 0, `windgenerator` 30 and `Game.windStrength` 0.1246 (0x3dff2e49), so
-   the result is −(0.1246 ⊗ 30) = −3.738 (0xc06f3b64).
+   the result is −(0.1246 × 30), the exact product, −3.7380000203847885 (0xc00de76c8e000000 as a 64-bit
+   float).
+8. **Not from a recording: `UpdateResourceSharing` at tick 60.** `Game.netGameFlags` has bit 0 set.
+   `player` is `Game.players[0]` (index 0, type 1) with `metal` 1000.0, `shareMetal` 100.0, `energy` 500.0
+   and `shareEnergy` 200.0, and its `info` has `shareMetal` and `shareEnergy` set and `shareMapping`
+   clear.
+   `Game.players[1]` is active, of type 3, with index 1, `unitCount` 5, `info.kind` 1, `metal` 200.0,
+   `metalCapacity` 1000.0 and `energy` 600.0, and `player.allied[1]` ≠ 0. No other slot is a partner. The
+   tick is a multiple of 60 and not of 450. Metal: 1000 > 100, and the recipient is player 1 (200 < 1000).
+   *amount* = f32(min(900 × 0.3333333432674408, 1000 − 200)) = f32(300.0000089406967) = 300.0
+   (0x43960000), so the one import is `players.TransferEnergy(0, 1, 300.0, 1)`, recorded as
+   `i players.TransferEnergy 0 1 f32:0x43960000 1`. Energy: 500 > 200, but no partner has `energy` below
+   500 (player 1 has 600), so no import is made. No map is sent. Nothing is written.
 
 **Not recorded in the kit's recordings** (`docs/replay-format.md`, "Not recorded"):
 
@@ -604,5 +634,5 @@ and no recording judges them: the gate's full scenarios are their only judge.
 
 ## 8. Kit version
 
-Kit `interfaces-v4` and `reference-traces-v23`, the versions the gate judges against. Interface
-`economy` 2.0.
+Kit `interfaces-v5` and `reference-traces-v23`, the versions the gate judges against. Interface
+`economy` 3.0.
