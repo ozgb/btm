@@ -25,10 +25,9 @@ weapon a unit fires first, and searches the enemies a unit can see for the best 
 
 ### The manifest entry
 
-The engine's manifest (`docs/module-abi.md` section 4) has no `targeting` entry yet, and the ABI's
-kinds (section 7) have none for the list of units that `ai.GetVisibleEnemiesInRadius` fills. Until
-both are settled, this section gives what the entry must hold apart from that kind, marked `units`
-below.
+The kit's manifest (`wasm/modules.json`) carries the slot signatures of this module (`signatures.targeting`)
+and its interface major, 1 (`majors.targeting`). It has no build entry for it and no budget: a clean-room
+module sets its own (see Fuel). This section gives the entry the module must have.
 
 - `name` and `interface`: `targeting`.
 - `exports`, in this order: `SetWeaponTargetUnit`, `SetWeaponTargetPos`, `ClearWeaponTarget`,
@@ -58,11 +57,12 @@ below.
 | `units.GetSweetSpot` | `[block, linear] -> void` | the point to aim at on a target unit |
 | `weapons.GetWeaponRange` | `[block, int] -> int` | the search radius |
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
-| `ai.GetVisibleEnemiesInRadius` | `[int, linear, int, int, units] -> void` | the candidates of a search |
+| `ai.GetVisibleEnemiesInRadiusList` | `[int, linear, int, int, linear, int] -> int` | the candidates of a search |
 | `services.RandomInt` | `[int] -> int` | the order of a search and its distances |
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. The budget comes with the manifest entry.
+  `__fuel_get`. The manifest gives it no budget: the module's `fuel_budget` is ten times the most fuel
+  any tick of the gate's scenarios burns it (ABI section 11.3).
 - Hooks: the header names the hook `FilterTargets` for `FindWeaponTarget` and
   `FindBestTargetIfFireAtWill`. This module raises no hook.
 
@@ -74,8 +74,14 @@ below.
 - **The positions given to imports** (`units.GetGroundHeight`, `units.GetSweetSpot`,
   `ai.GetVisibleEnemiesInRadius`) are `Vec3`s in the module's own memory or in the block.
   `units.GetGroundHeight` reads only `x` and `z`; `units.GetSweetSpot` writes all three.
-- **The candidate list** given to `ai.GetVisibleEnemiesInRadius` starts empty for each search; the
-  import appends the candidates to it, in the order the recording's `o out` line lists them.
+- **The candidate list** of a search is what `ai.GetVisibleEnemiesInRadiusList` writes to the buffer the
+  module gives it (ABI section 7.3): its arguments are the player, a position, a radius, flags (0), the
+  buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
+  capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
+  recordings' `o out` line lists them. A module that gets a count above its capacity calls again with a
+  larger buffer. The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, with the
+  player, `pos`, the radius and the flags, followed by the line `o out [...]` that holds the whole list;
+  they hold one such import for each search, and the longest list in them has 52 units.
 - **Text** given to imports (`"StartBuilding"`, `"TargetCleared"`) is a NUL-terminated string in the
   module's own memory.
 
@@ -87,16 +93,15 @@ None. No slot of this module records a sim event (kinds are listed in `docs/sim-
 
 ### Owned
 
-**The weapon slots** of a unit: `Unit.weapons` is three slots of 28 bytes, slot *w* at byte 4 + 28*w*
-of the `Unit`. `layout.json` gives no record for a slot, so this spec names its fields as the
-recordings do, `weapon{w}TargetX` and so on:
+**The weapon slots** of a unit: `Unit.weapons` is three `UnitWeaponSlot` records of 28 bytes, slot *w* at
+byte 4 + 28*w* of the `Unit`. The recordings name the fields of slot *w* `weapon{w}TargetX` and so on:
 
-| Bytes of the slot | Replay name | Type | Meaning |
+| Field of `UnitWeaponSlot` | Replay name | Type | Meaning |
 | --- | --- | --- | --- |
-| 0 | `weapon{w}TargetX` | signed 16-bit | the target unit's id, or the ground target's *x* |
-| 2 | `weapon{w}TargetZ` | signed 16-bit | −32768 for a unit target or none, else the ground target's *z* |
-| 12 | `weapon{w}Def` | `Ref<WeaponDef>` | the weapon (read only) |
-| 27 | `weapon{w}Flags` | unsigned byte | bit 1 (value 2): *ready* (read only) |
+| `aimTargetXOrUnitId` (byte 0) | `weapon{w}TargetX` | signed 16-bit | the target unit's id, or the ground target's *x* |
+| `aimTargetZOrUnitSentinel` (byte 2) | `weapon{w}TargetZ` | signed 16-bit | −32768 for a unit target or none, else the ground target's *z* |
+| `weapon` (byte 12) | `weapon{w}Def` | `Ref<WeaponDef>` | the weapon (read only) |
+| `flags` (byte 27) | `weapon{w}Flags` | unsigned byte | bit 1 (value 2): *ready* (read only) |
 
 A slot holds:
 
@@ -105,7 +110,7 @@ A slot holds:
   16-bit) of the unit pool, that is at `Game.units` plus TargetX times the `Unit` stride;
 - a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units.
 
-**`Unit.netDirtyFlags`** (16-bit): every target set clears bits 10 to 14 of it (it becomes
+**`Unit.netDirtyFlags`** (16-bit, a word of bit-fields in `layout.json`, which doesn't name bits 10 to 14): every target set clears bits 10 to 14 of it (it becomes
 `netDirtyFlags` AND 0x83ff).
 
 ### Read
@@ -124,8 +129,8 @@ A slot holds:
 
 | Field | Mask | Word used here |
 | --- | --- | --- |
-| `Unit.flags` | 0x10000000 | *targetable*: the unit takes part |
-| `Unit.flags` | 0x00004000 | *excluded*: never chosen while set |
+| `Unit.flags` | 0x10000000 | *targetable*: the unit takes part (the kit's documents call it the alive flag) |
+| `Unit.flags` | 0x00004000 | *excluded*: never chosen while set (the kit's documents call it the dying flag) |
 | `Unit.flags` | bits 20 and 21 | the *fire order*, 0 to 3; 2 is fire at will |
 | `Unit.activateFlags` | 0x10 | *hidden*, for weapons that respect it |
 | `UnitDef.flags1` | 0x00008000 | *always attackable* |
@@ -306,31 +311,33 @@ no imports.
    `units.StartScriptWithArgs(CobScript#3, "TargetCleared", null, 0, 1, 1, 0, 0, 0)`. TargetX becomes 0
    and TargetZ −32768.
 
-Not covered by any recording:
+Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), each with the kit's reason:
 
-- `ChooseWeapon` returning 1 or 2 (every recorded call returns 0), and `SetWeaponTargetPos` with a
-  *z* of −32768 (Q1).
-- `FindBestTargetIfFireAtWill` with a fire order other than 2, and `GetWeaponTargetPos` with a unit
-  target whose `unitDefIndex` is 0.
-- In the search: the targetable and excluded bits, a shooter whose player is not computer-controlled,
-  a shooter whose def is reach not checked, and a `UnitDef.range` that needs its sign extended.
-- Each lead condition on its own (ready, the never-leads flag, a `speed` of 0, a null `motion`).
-- `FindWeaponTarget` with more than 50 candidates, with a fallback pick chosen, or with two equal
-  distances.
-- The always-attackable flag, bit 10 of `Game.uiOptionFlags`, `UnitDef.categories` with a candidate
-  in it, and a weapon that skips hidden targets. The recordings would match even if each of these
-  checks were removed.
-- A `killCount` of exactly 5 or 6 when every other lead condition holds.
-- `SetWeaponTargetUnit` with a null target, and a ground height below or equal to sea level.
-- Inputs outside the engine's use, whose result this spec doesn't define: a null `weapon{w}Def` when
-  the lead or the hidden test reads it, a unit target with a negative TargetX, and a *q* that wraps
-  below 0.
-- A distance draw with *q* = 0 (a candidate within one map unit on both *x* and *z*): the module passes
-  0 to `services.RandomInt`.
-- The callback argument of `"TargetCleared"`, which the recordings show as `?`: it is null.
+- `ChooseWeapon` returning 1 or 2 (every recorded call returns 0): no shipped unit has weapon slot 0
+  empty and slot 1 or 2 defined.
+- `SetWeaponTargetPos` with a *z* of −32768 (Q1): it needs a world *z* of 32768, and scenarios and the
+  harness reject positions off the map.
+- `SetWeaponTargetUnit` with a null target: 3.1c faults on it.
+- A candidate with the targetable bit clear or the excluded bit set: the candidate list holds only live
+  units, so neither check can fail.
+- Bit 10 of `Game.uiOptionFlags` set in a search: no scenario key sets it.
+- The lead with the slot's *ready* bit clear on its own: its only caller skips a slot without that bit
+  (the kit describes the bit as the slot having a weapon).
+- The lead with a weapon whose never-leads flag is set (a cruise weapon) or whose `speed` is 0, for a
+  unit with more than five kills and the other lead conditions met: not reached by the scenario suite;
+  it would need a veteran missile silo or bomber.
+
+Not recorded, and the kit gives no reason: `FindBestTargetIfFireAtWill` with a fire order of 1 or 3
+(fire order 0 is recorded); a `UnitDef.range` that needs its sign extension; a `killCount` of exactly 5
+or 6 when every other lead condition holds (the recorded unit with 6 aims at a target whose `motion` is
+null); `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`; a *q* that wraps below 0;
+a fallback pick tied on its distance with another; and the inputs outside the engine's use, whose
+result this spec doesn't define: a null `weapon{w}Def` when the lead or the hidden test reads it, and a
+unit target with a negative TargetX.
+
+The callback argument of `"TargetCleared"`, which the recordings show as `?`: it is null.
 
 ## 8. Kit version
 
-The targeting recordings are not in a tagged kit yet: this spec was written against an untagged kit
-export, interfaces version `interfaces-v1` (targeting 1.1). The gate pair for targeting is the first
-`reference-traces-v*` tag that holds `tests/replay/targeting/`.
+Kit `interfaces-v3` and `reference-traces-v23`, the versions the gate judges against. Interface
+`targeting` 1.1.
