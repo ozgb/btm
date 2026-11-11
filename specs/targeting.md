@@ -107,8 +107,8 @@ build, set from the build's own gate runs). This section gives the rest of the e
   as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
   capacity. The line `o out [...]` follows it and holds the whole list; its length is the import's count
   (the line has no `= n`). After that line come `o Unit#N.*`
-  lines (for example `o Unit#2.flags 0x90240321`) and `o UnitDef#N.flags1` lines (8 in the recordings,
-  for example `o UnitDef#21.flags1 0x0084008a` in `skirmish4-long` at tick 25768), giving the fields of
+  lines (for example `o Unit#2.flags 0x90240321`) and `o UnitDef#N.flags1` lines (10 in the recordings,
+  for example `o UnitDef#208.flags1 0x0084008a` in `skirmish4-long` at tick 25768), giving the fields of
   the listed units, and of their defs, that changed since they were last written: `flags`, `posX`,
   `posZ`, `def`, `unitDefIndex` and `activateFlags` of a unit. Each search in the recordings has one such
   import.
@@ -467,5 +467,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v6` and `reference-traces-v24`, the versions the gate judges against. Interface
+Kit `interfaces-v6` and `reference-traces-v26`, the versions the gate judges against. Interface
 `targeting` 1.1.
