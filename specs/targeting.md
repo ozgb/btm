@@ -467,5 +467,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v6` and `reference-traces-v26`, the versions the gate judges against. Interface
+Kit `interfaces-v10` and `reference-traces-v27`, the versions the gate judges against. Interface
 `targeting` 1.1.
