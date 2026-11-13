@@ -180,7 +180,7 @@ A player is *computer-controlled* when `active` ≠ 0 and `type` = 2.
 Nothing outside the fields above. The recordings show `r rng.main`, `r rng.load` and `w rng.seed` around the
 search slots: `docs/replay-format.md` says `rng.main`, `rng.load` and `rng.seed` are the generator words of
 the block (in the kit's words, "the two generator streams of the block head and `g_randomSeed`") and are
-in the sets of the slots that draw; the five recordings hold 289 `r rng.seed` lines. `rng.seed` is the
+in the sets of the slots that draw; the seven recordings hold 408 `r rng.seed` lines. `rng.seed` is the
 generator of `services.RandomInt` (ABI section 9.3, not `rng.main`), which that import, answered by the host,
 advances: a draw returns the recorded result and the stream words advance as the game's do, and `rng.*` is
 checked like any field (`docs/replay-format.md`), so `w rng.seed` is compared. This module reads and writes
@@ -317,8 +317,10 @@ no writes.
   `Game.seaLevel` (0 to 255): a height strictly above `seaLevel` asks again and is used, and a height at or
   below it gives *h* = `seaLevel` after the one call. The kit's "ground under the sea
   (`units.GetGroundHeight` returns 1)" is the second case, with a `seaLevel` of 44 (11 calls in
-  `edges-economy-targeting`, each with one import call); with `seaLevel` 0 a height of 1 is the first case,
-  as in example 2. `pos.y` is *h* × 65536, wrapping at 32 bits.
+  `edges-economy-targeting`, each with one import call). A height equal to `seaLevel` is the second case
+  too: in `edges-targeting-lead`, with `seaLevel` 1, a height of 1 gives one import call and `o pos.y 65536`
+  (16 calls, from tick 11). With `seaLevel` 0 a height of 1 is the first case, as in example 2. `pos.y`
+  is *h* × 65536, wrapping at 32 bits.
 - **The distance of a lead:** *d*.x, *d*.y and *d*.z are 32-bit differences that wrap. *D* is the
   square root of *d*.x² + *d*.y² + *d*.z², in double precision (64-bit IEEE): each square is rounded to
   double, the sum is rounded as (x² + y²) + z² in that order, and the root is truncated toward zero to a
@@ -401,14 +403,11 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
   the contract.
 - A candidate with `alive` clear or `killPending` set: the candidate list holds only live
   units, so neither check can fail.
-- Negative `speed` in a lead, a negative `UnitDef.range` and a *q* that wraps: section 5 gives their
-  results, and no recording checks them.
-- Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def has
-  `flags1` bit 15 clear: the bit is set in 16 recorded searches (`console-units`, from the
-  `FindBestTargetIfFireAtWill` call at tick 73), but no recording holds it deciding a pick. The kit's
-  "menu option bit 4 of the match flags" (`docs/replay-format.md`, "Not recorded") is this bit: `matchFlags`
-  is the byte of `layout.json` at offset 229168, the high byte of the 16-bit `uiOptionFlags` at 229167, and
-  its value 4 is 0x400 of the word.
+- `FindBestTargetIfFireAtWill` with a fire order of 3. The kit's reason: a unit's fire order comes from its
+  unit type's standing fire order (0 or 2 in the shipped units, 2 when it has none), from an order whose
+  modes are 0, 1 and 2, or from the unit that built it.
+- A negative `UnitDef.range`. The kit's reason: the range is the unit type's `sightdistance`, which lies
+  between 55 and 490 in the shipped units. Section 5 gives the result.
 - The lead with the slot's *has a weapon* bit clear on its own: its only caller skips a slot without that
   bit.
 - The lead with a weapon that has `cruise` set or whose `speed` is 0, for a unit with more than five
@@ -417,15 +416,8 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
 
 Not recorded, and the kit gives no reason:
 
-- `FindBestTargetIfFireAtWill` with a fire order of 1 or 3 (fire order 0 is recorded).
-- A `UnitDef.range` that is negative as a signed 16-bit value.
-- A lead with `killCount` of 4, 5 or 6 when every other lead condition holds. The recorded leads (16) all
-  have 7. The unit-target calls with every other lead condition met and no lead have 0 (10728), 1 (55),
-  2 (42) or 3 (21). The count 8 occurs only against a target with a null `motion` (66 calls), and 6 only in
-  a call with no target (tick 118 of `edges-economy-targeting`).
-  The threshold rests on the kit's "more than five kills".
-- `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`.
-- A *q* that wraps below 0.
+- Negative `speed` in a lead (section 5 gives the result).
+- A *q* that wraps below 0 (section 5 gives the result).
 - Two eligible fallback picks with the same distance. Preferred picks that tie are recorded, at distance 0
   (`RandomInt 0 = 0`): the earlier pick wins, as at tick 73 of `console-units`.
 - A null `weapon{w}Def` when the lead or the paralyzer test reads it: it is outside the
@@ -440,6 +432,25 @@ Not recorded, and the kit gives no reason:
 - `netDirtyFlags` bits 0, 1, 3 to 9, 11 and 15 before a target set: the recordings set only bits 2, 10, 12,
   13 and 14, so the kept and cleared rule for the others is checked by no recording.
 - `GetWeaponTargetUnit` on a dead or recycled target.
+
+Recorded, in `orders-immediate` and `edges-targeting-lead` (the kit's `docs/replay-format.md` lists both):
+
+- `FindBestTargetIfFireAtWill` with a fire order of 1: the call at tick 752 of `orders-immediate`
+  (`Unit#1.flags` 0x90d00321), which returns null with no import. Fire order 0 is recorded in 8 calls, and
+  fire order 2 in the rest.
+- `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel` (section 5, the ground height).
+- Bit 10 of `Game.uiOptionFlags` deciding a pick: the bit is set in 174 recorded searches (16 in
+  `console-units`, from the `FindBestTargetIfFireAtWill` call at tick 73, and 158 in `edges-targeting-lead`).
+  In 9 searches of `edges-targeting-lead` it is what makes a pick eligible: `Unit#1`, whose player is not
+  computer-controlled, picks `Unit#502`, whose def has `flags1` bit 15 clear, first in the
+  `FindWeaponTarget` call at tick 83 (`o out [Unit#502]`, `o result Unit#502`).
+- The lead's kill count. The unit-target calls of `GetWeaponTargetPos` with every other lead condition met
+  have a `killCount` of 0 (12054 calls), 1 (279), 2 (267), 3 (133), 4 (140), 5 (133), 6 (129), 7 (121) or
+  8 (69). With 5 or fewer, `pos` is the sweet spot; with 6 or more the lead applies, and it moves `pos` in
+  79 calls: one with 6 kills (`Unit#2` at tick 1072 of `edges-targeting-lead`, with the velocity of
+  `UnitMotion#8`) and 78 with 7 (62 in `edges-targeting-lead`, and the 16 of `skirmish4-long`, among them
+  example 3). In the others the velocity adds nothing. The kit says the target moves in the calls with 4
+  and 5 kills (`docs/replay-format.md`, the list of `edges-targeting-lead`).
 
 Recorded once, so a single recorded call or search checks it:
 
