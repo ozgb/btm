@@ -131,7 +131,7 @@ byte 4 + 28*w* of the `Unit`. The recordings name the fields of slot *w* `weapon
 | `aimTargetXOrUnitId` (byte 0) | `weapon{w}TargetX` | signed 16-bit | the target unit's id, or the ground target's *x* |
 | `aimTargetZOrUnitSentinel` (byte 2) | `weapon{w}TargetZ` | signed 16-bit | −32768 for a unit target or none, else the ground target's *z* |
 | `weapon` (byte 12) | `weapon{w}Def` | `Ref<WeaponDef>` | the weapon (read only) |
-| `flags` (byte 27) | `weapon{w}Flags` | unsigned byte | value 2 (bit 1; the kit writes "bit 2"): *has a weapon* (read only) |
+| `flags` (byte 27) | `weapon{w}Flags` | unsigned byte | value 2 (bit 1): *has a weapon* (read only) |
 
 A slot holds:
 
@@ -299,8 +299,8 @@ no imports.
 
 The index of the first slot (0, 1, 2) that has a weapon, or 0 when none has (Q5). A slot has a weapon
 when value 2 of its `flags` is set, and nothing else of the slot is read: the kit's "empty" slot and
-"weapon ID 0" (`docs/replay-format.md`, "Not recorded") are the data that leaves that bit clear. No imports,
-no writes.
+"a weapon of ID 0" (`docs/replay-format.md`, "Not recorded") are the data that leaves that bit clear. No
+imports, no writes.
 
 ## 5. Exactness
 
@@ -396,7 +396,8 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
 
 - `ChooseWeapon` with no slot that has a weapon (it returns 0), and with slot 1 or 2 deciding the result:
   all 347 recorded calls have slot 0 with a weapon. The kit's reason for returning 1 or 2: no shipped unit
-  has weapon slot 0 empty and slot 1 or 2 defined.
+  has weapon slot 0 empty and slot 1 or 2 defined. Its reason for no weapon at all: the only caller is the
+  attack order, which runs only for a unit with the armed bit, and such a unit has a slot with a weapon.
 - `SetWeaponTargetPos` with a *z* of −32768 (Q1): it needs a world *z* of 32768, and scenarios and the
   harness reject positions off the map.
 - `SetWeaponTargetUnit` with a null target: 3.1c faults on it (`docs/replay-format.md`), so it is outside
@@ -478,5 +479,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v10` and `reference-traces-v27`, the versions the gate judges against. Interface
+Kit `interfaces-v11` and `reference-traces-v28`, the versions the gate judges against. Interface
 `targeting` 1.1.
