@@ -3,46 +3,54 @@
 ## 1. Role
 
 Each of a unit's three weapons has a target: nothing, an enemy unit, or a point on the ground. The
-targeting subsystem stores and clears those targets, says where a weapon should aim (following a
+targeting subsystem applies the events other modules publish to set, clear and reset those targets,
+publishes an effect when it clears a weapon's target, says where a weapon should aim (following a
 unit's sweet spot, and leading a moving unit when the weapon and the shooter qualify), picks which
 weapon a unit fires first, and searches the enemies a unit can see for the best one to attack.
 
 ## 2. Interface
 
-### Slots (`interfaces/targeting.h`, version 1.1)
+### Slots (`interfaces/targeting.h`, version 2.0)
 
 | Slot | When the engine calls it |
 | --- | --- |
-| `SetWeaponTargetUnit`, `SetWeaponTargetPos` | when an order or a script gives a weapon a target |
-| `ClearWeaponTarget` | when a weapon gives up its target and the unit's script must be told |
-| `ResetWeaponTarget` | when a weapon's target is dropped silently |
-| `GetWeaponTargetUnit`, `GetWeaponTargetPos` | every tick a weapon aims or fires |
+| `Apply` | once for each event delivered from targeting's inbox, in the order the events were published |
+| `GetWeaponTargetUnit` | when another module asks which unit a weapon aims at |
+| `GetWeaponTargetPos` | every tick a weapon aims or fires |
 | `FindWeaponTarget` | when a weapon with no target looks for one |
 | `FindBestTargetIfFireAtWill` | when an idle unit looks for something to attack |
 | `ChooseWeapon` | when a unit attacks, to pick the weapon that fires first |
+
+The events are those of `TargetingEventKind` in the header: `TARGETING_SET_UNIT` (96), `TARGETING_SET_POS`
+(97), `TARGETING_CLEAR` (98) and `TARGETING_RESET` (99), called SET_UNIT, SET_POS, CLEAR and RESET below.
+Other modules publish them; the engine holds the inbox and delivers it, through `Apply`, before each call of
+`GetWeaponTargetUnit`, `GetWeaponTargetPos`, `FindWeaponTarget` and `FindBestTargetIfFireAtWill`, and at
+each phase boundary (the header; `docs/schedule.md` lists `targeting.Apply` once in every phase and in the
+work after the phases). An
+event may also be delivered as soon as it is published, inside its publisher's call (`interfaces/services.h`,
+`SchedPublish`). Each `Apply` takes effect at once: an event's changes are all made in its `Apply`.
 
 `ChooseWeapon` takes the unit as its only argument, as the header lists.
 
 ### The manifest entry
 
 The kit's manifest (`wasm/modules.json`) carries the slot signatures of this module (`signatures.targeting`)
-and its interface major, 1 (`majors.targeting`). It has no build entry for it. A module's build sets
+and its interface major, 2 (`majors.targeting`). It has no build entry for it. A module's build sets
 its `data_base` and `table_base` (within the windows and table ranges of ABI sections 2.2 and 2.3), its
-`majors`, its `slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget belongs to its
+`slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget belongs to its
 build, set from the build's own gate runs). This section gives the rest of the entry the module must have.
 
 - `name` and `interface`: `targeting`.
-- `exports`, in this order: `SetWeaponTargetUnit`, `SetWeaponTargetPos`, `ClearWeaponTarget`,
-  `ResetWeaponTarget`, `GetWeaponTargetUnit`, `GetWeaponTargetPos`, `FindWeaponTarget`,
+- `exports`, in this order: `Apply`, `GetWeaponTargetUnit`, `GetWeaponTargetPos`, `FindWeaponTarget`,
   `FindBestTargetIfFireAtWill`, `ChooseWeapon`.
 - `data`: `g_game`, `g_blockBase` (ABI 8.2).
+- `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
+  `targeting` 2, and for its import groups `units` 1, `weapons` 1, `ai` 3, `services` 1.
 - Slot kinds:
 
 | Slot | Kinds |
 | --- | --- |
-| `SetWeaponTargetUnit` | `[block, block, int] -> void` |
-| `SetWeaponTargetPos` | `[block, linear, int] -> void` |
-| `ClearWeaponTarget`, `ResetWeaponTarget` | `[block, int] -> void` |
+| `Apply` | `[linear] -> int` |
 | `GetWeaponTargetUnit` | `[block, int] -> block` |
 | `GetWeaponTargetPos` | `[block, linear, int] -> int` |
 | `FindWeaponTarget` | `[block, int, int] -> block` |
@@ -53,15 +61,18 @@ build, set from the build's own gate runs). This section gives the rest of the e
 
 | Import | Kinds | Used for |
 | --- | --- | --- |
-| `units.FindScript` | `[block, linear] -> int` | clearing a target |
-| `units.StartScriptWithArgs` | `[block, linear, linear, int, int, int, int, int, int] -> int` | telling the script a target is cleared |
 | `units.GetGroundHeight` | `[linear] -> int` | the height of a ground target |
 | `units.GetSweetSpot` | `[block, linear] -> void` | the point to aim at on a target unit |
 | `weapons.GetWeaponRange` | `[block, int] -> int` | the search radius |
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
 | `ai.GetVisibleEnemiesInRadiusList` | `[int, linear, int, int, linear, int] -> int` | the candidates of a search |
 | `services.RandomInt` | `[int] -> int` | the order of a search and its distances |
+| `services.SchedPublish` | `[int, linear, int] -> void` | publishing the effect `TARGETING_EFFECT_CLEARED` |
 
+  The kinds of `services.SchedPublish` follow its declaration in `interfaces/services.h` (an `int` outbox,
+  the address of the record in the module's memory, and the record's size as an unsigned 32-bit `int`): the
+  manifest's `signatures.services` has no entry for it (see "Gaps in the kit", section 7), so this spec
+  takes the header's declaration as the import's signature.
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. Its fuel budget and `size_budget` are its build's
   (ABI sections 11.1 and 11.3), not the kit's. Its stack is the manifest's `stack_size`,
@@ -75,9 +86,30 @@ build, set from the build's own gate runs). This section gives the rest of the e
 
 ### Arguments outside the block
 
-- **`pos`** (`SetWeaponTargetPos`, `GetWeaponTargetPos`) is a `Vec3` in the caller's memory: read by
-  `SetWeaponTargetPos`, and written by `GetWeaponTargetPos` only when it returns 1. When it returns 0,
-  `pos` is left as it was.
+- **The event** of `Apply` is a `TargetingEvent` (`interfaces/targeting.h`) of 28 bytes, at a `linear`
+  address the engine gives (ABI section 7). The module reads it and does not write it:
+
+| Bytes | Field | Type | Replay line |
+| --- | --- | --- | --- |
+| 0 to 3 | `kind` | signed 32-bit | `a event.kind 98` |
+| 4 to 7 | `unit` | unsigned 32-bit: a block offset, 0 for null | `a event.unit Unit#3` |
+| 8 to 11 | `weapon` | signed 32-bit | `a event.weapon 1` |
+| 12 to 15 | `target` | unsigned 32-bit: a block offset, 0 for null | `a event.target Unit#251` |
+| 16 to 27 | `pos` | three signed 32-bit words, *x*, *y*, *z* | `a event.posX 42467328` (and `posY`, `posZ`) |
+
+  `unit` and `target` are stored pointers, so they are offsets from the block's base (ABI section 7.1; the
+  recordings write them as `Unit#N` or `null`, the `ref` field kind of `docs/replay-format.md`). The unit is
+  at `g_blockBase` plus the offset. Fields a kind does not use are 0 (the header).
+- **The effect** the module publishes is a `TargetingEvent` too, in the module's own memory (its stack or its
+  statics), given to `services.SchedPublish` as `SchedPublish(9, effect, 28)`: 9 is `SCHED_TARGETING`, the
+  module's outbox (`interfaces/services.h`), and 28 the record's size. The CLEARED effect of a unit *u* and a
+  weapon *w* has `kind` 112 (`TARGETING_EFFECT_CLEARED`), `unit` the block offset of *u* (its address less
+  `g_blockBase`), `weapon` *w*, and `target` and the three words of `pos` 0. The recordings show the import as
+  `i services.SchedPublish 9 28`: the outbox and the size are compared, and the record is not recorded (the
+  `skip` mode of `docs/replay-format.md`, "Services"). The header says what the subscribers do with it: the
+  unit's script runs its TargetCleared function with the weapon's number.
+- **`pos`** (`GetWeaponTargetPos`) is a `Vec3` in the caller's memory, written only when the slot returns 1.
+  When it returns 0, `pos` is left as it was.
 - **The positions given to imports** (`units.GetGroundHeight`, `units.GetSweetSpot`,
   `ai.GetVisibleEnemiesInRadiusList`) are `Vec3`s in the module's own memory, in the block, or (for
   `GetWeaponTargetPos`) the caller's `pos`. `units.GetGroundHeight` reads only `x` and `z`;
@@ -112,12 +144,11 @@ build, set from the build's own gate runs). This section gives the rest of the e
   the listed units, and of their defs, that changed since they were last written: `flags`, `posX`,
   `posZ`, `def`, `unitDefIndex` and `activateFlags` of a unit. Each search in the recordings has one such
   import.
-- **Text** given to imports (`"StartBuilding"`, `"TargetCleared"`) is a NUL-terminated string in the
-  module's own memory.
 
 ### Events
 
-None. No slot of this module records a sim event (kinds are listed in `docs/sim-events.md`).
+None. No slot of this module records a sim event (kinds are listed in `docs/sim-events.md`). The CLEARED
+effect is published to the module's outbox through `services.SchedPublish`, not recorded as a sim event.
 
 ## 3. State
 
@@ -131,7 +162,7 @@ byte 4 + 28*w* of the `Unit`. The recordings name the fields of slot *w* `weapon
 | `aimTargetXOrUnitId` (byte 0) | `weapon{w}TargetX` | signed 16-bit | the target unit's id, or the ground target's *x* |
 | `aimTargetZOrUnitSentinel` (byte 2) | `weapon{w}TargetZ` | signed 16-bit | −32768 for a unit target or none, else the ground target's *z* |
 | `weapon` (byte 12) | `weapon{w}Def` | `Ref<WeaponDef>` | the weapon (read only) |
-| `flags` (byte 27) | `weapon{w}Flags` | unsigned byte | value 2 (bit 1; the kit writes "bit 2"): *has a weapon* (read only) |
+| `flags` (byte 27) | `weapon{w}Flags` | unsigned byte | value 2 (bit 1): *has a weapon* (read only) |
 
 A slot holds:
 
@@ -139,20 +170,20 @@ A slot holds:
 - a *unit target* when TargetZ = −32768 and TargetX ≠ 0: the unit at index
   TargetX (read as signed 16-bit) of `Game.units`: its address is the base `Game.units` plus the index
   times 280, the size of `Unit` in `layout.json` (the unit stride 0x118 of `docs/replay-format.md`). A unit's
-  `id` equals its index, and the unit that `SetWeaponTargetUnit` stored by `id` is the one read back;
-- a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units.
+  `id` equals its index, and the unit that a SET_UNIT stored by `id` is the one read back;
+- a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units. A slot
+  whose TargetX and TargetZ are both 0 is a ground target at (0, 0), not *no target*.
 
 **`Unit.netDirtyFlags`** (16-bit; in `layout.json` its bits are `unknown_ba` (bits 0 and 1), `dirty` (bit 2)
-and `short` (bits 3 to 15)): every target set clears bits 10 to 14 of it, which are bits 7 to 11 of `short`
-(it becomes `netDirtyFlags` AND 0x83ff). Bits 0 to 9 (`unknown_ba`, `dirty` and bits 0 to 6 of `short`)
-and bit 15 (bit 12 of `short`) are kept.
+and `short` (bits 3 to 15)): every SET_UNIT and SET_POS applied clears bits 10 to 14 of it, which are bits 7
+to 11 of `short` (it becomes `netDirtyFlags` AND 0x83ff). Bits 0 to 9 (`unknown_ba`, `dirty` and bits 0 to 6
+of `short`) and bit 15 (bit 12 of `short`) are kept.
 
 ### Read
 
 - `Game`: `units`, `seaLevel` (unsigned byte), `uiOptionFlags` (bit 10, value 0x400).
 - `Unit`: `pos` (`Vec3`: 32-bit *x*, *y*, *z*, 65536 to a map unit), `id`, `def`, `player`,
-  `playerIndex`, `unitDefIndex`, `killCount`, `motion`, `activateFlags`, `flags`, `script`
-  (the layout's `Ref<UnitScript>`; the recordings show the object as `CobScript#N`).
+  `playerIndex`, `unitDefIndex`, `killCount`, `motion`, `activateFlags`, `flags`.
 - `UnitMotion`: `velocity` (`Vec3`).
 - `Player`: `active` (int), `type` (byte).
 - `UnitDef`: `range` (signed 16-bit), `flags1`, `categories`, `weaponCategories` (`Ref<UnitTypeSet>[3]`).
@@ -177,14 +208,16 @@ A player is *computer-controlled* when `active` ≠ 0 and `type` = 2.
 
 ### Between ticks
 
-Nothing outside the fields above. The recordings show `r rng.main`, `r rng.load` and `w rng.seed` around the
-search slots: `docs/replay-format.md` says `rng.main`, `rng.load` and `rng.seed` are the generator words of
-the block (in the kit's words, "the two generator streams of the block head and `g_randomSeed`") and are
-in the sets of the slots that draw; the five recordings hold 289 `r rng.seed` lines. `rng.seed` is the
-generator of `services.RandomInt` (ABI section 9.3, not `rng.main`), which that import, answered by the host,
-advances: a draw returns the recorded result and the stream words advance as the game's do, and `rng.*` is
-checked like any field (`docs/replay-format.md`), so `w rng.seed` is compared. This module reads and writes
-none of the three itself, and never draws except through `services.RandomInt`.
+Nothing outside the fields above. The module keeps no event between calls: the inbox is the engine's, and
+each `Apply` has applied its event when it returns. The recordings show `r rng.main`, `r rng.load` and
+`w rng.seed` around the search slots: `docs/replay-format.md` says `rng.main`, `rng.load` and `rng.seed` are
+the generator words of the block (in the kit's words, "the two generator streams of the block head and
+`g_randomSeed`") and are in the sets of the slots that draw; the seven recordings hold 408 `r rng.seed`
+lines. `rng.seed` is the generator of `services.RandomInt` (ABI section 9.3, not `rng.main`), which that
+import, answered by the host, advances: a draw returns the recorded result and the stream words advance as
+the game's do, and `rng.*` is checked like any field (`docs/replay-format.md`), so `w rng.seed` is compared.
+This module reads and writes none of the three itself, and never draws except through
+`services.RandomInt`.
 
 ## 4. Behaviour
 
@@ -192,38 +225,34 @@ Within one call, only the order of import calls is observable. The block writes 
 end of the call, so the order they are listed in here carries no meaning.
 
 In each slot, *u* is the unit, *w* the weapon (0, 1 or 2) and "the slot" is *u*'s weapon slot *w*. The
-engine never calls a slot with a *w* above 2; this spec defines nothing for a larger *w*.
+engine never calls `GetWeaponTargetUnit`, `GetWeaponTargetPos` or `FindWeaponTarget` with a *w* above 2;
+this spec defines nothing for a larger *w* there. *Publishing CLEARED* for *u* and *w* is the import
+`services.SchedPublish(9, effect, 28)` with the CLEARED effect of *u* and *w* (section 2), whose call returns
+nothing.
 
-### `SetWeaponTargetUnit(u, target, w)`
+### `Apply(event)`
 
-TargetX becomes the low 16 bits of `target.id` (a target of id 0 therefore leaves the slot with no target,
-section 3), TargetZ becomes −32768, and `u.netDirtyFlags` is cleared as in
-section 3. No imports. The target's own `netDirtyFlags` appears among the recorded reads (for example
-`r Unit#3.netDirtyFlags 1024` at tick 138 of `orders-guard-attacked`), is not changed, and no result depends
-on it. A null `target` is outside the contract, and the module may trap.
+*u* is the unit at the block offset `event.unit`, null when it is 0; *w* is `event.weapon`, a signed
+32-bit value; *t* is the unit at the block offset `event.target`, null when it is 0. The result is the
+event's *outcome*.
 
-### `SetWeaponTargetPos(u, pos, w)`
+| The event | Imports, in order | Writes | Outcome |
+| --- | --- | --- | --- |
+| any kind, with *u* null or *w* outside 0 to 2 | none | none | 0 |
+| SET_UNIT with *t* null | none | none | 0 |
+| SET_UNIT | none | TargetX = the low 16 bits of `t.id`, TargetZ = −32768; `u.netDirtyFlags` cleared as in section 3 | 1 |
+| SET_POS | none | TargetX = `pos[0]` >> 16 and TargetZ = `pos[2]` >> 16, each as its low 16 bits (section 5), except that a TargetZ of −32768 is stored as −32767 (Q1); `u.netDirtyFlags` cleared as in section 3 | 1 |
+| CLEAR, the slot with no target | none | none | 0 |
+| CLEAR, the slot with a unit or a ground target | publishing CLEARED for *u* and *w* | TargetX = 0, TargetZ = −32768 | 1 |
+| RESET, the slot with no target | none | none | 0 |
+| RESET, the slot with a unit or a ground target | none | TargetX = 0, TargetZ = −32768 | 1 |
+| any other kind | none | none | 0 |
 
-TargetX becomes *x* = `pos.x` >> 16 and TargetZ becomes *z* = `pos.z` >> 16, each as its low 16 bits
-(section 5). When *z* is −32768, TargetZ becomes −32767 instead (Q1). `u.netDirtyFlags` is cleared as in
-section 3. No imports.
-
-### `ClearWeaponTarget(u, w)`
-
-| The slot | Imports, in order | Writes |
-| --- | --- | --- |
-| no target | none | none |
-| anything else | `units.FindScript(u.script, "StartBuilding")`, its result ignored (Q2); then `units.StartScriptWithArgs(u.script, "TargetCleared", null, 0, 1, w, 0, 0, 0)`, its result ignored | TargetX = 0, TargetZ = −32768 |
-
-Both imports are always made, with `u.script` passed as the block address, `g_blockBase` plus the offset
-`Unit.script` stores (ABI section 7.1: stored pointers are offsets, passed pointers are addresses; the
-recordings show it as `CobScript#N`), here and in the clear of
-`GetWeaponTargetPos`; a null `u.script` is outside the contract: a unit whose def has no script
-data, or a killed unit, has a null `u.script`, and the module may trap on it.
-
-### `ResetWeaponTarget(u, w)`
-
-TargetX becomes 0 and TargetZ −32768. No imports.
+`pos[1]` is not read. A SET_UNIT whose `t.id` is 0 leaves the slot with no target (section 3), with
+outcome 1. The `event` record is not written. A nonzero `event.unit` or `event.target` that is not the
+offset of a unit is outside the contract. A SET_UNIT reads `t.id` and nothing else of *t*: the target's own
+`netDirtyFlags` appears among the recorded reads (for example `r Unit#3.netDirtyFlags 1024` at tick 138 of
+`orders-guard-attacked`), is not changed, and no result depends on it.
 
 ### `GetWeaponTargetUnit(u, w)`
 
@@ -236,8 +265,8 @@ its offset, ABI section 7.1), which the recordings show as `Unit#N`. No imports,
 | The slot | Imports, in order | Result and writes |
 | --- | --- | --- |
 | no target | none | 0 |
-| a ground target at (*x*, *z*) = (TargetX × 65536, TargetZ × 65536) | `units.GetGroundHeight` of (*x*, *z*), giving *h*₁. If *h*₁ > `Game.seaLevel`: `units.GetGroundHeight` of (*x*, *z*) again, giving *h* (Q3); otherwise *h* = `Game.seaLevel` | 1; `pos` = (*x*, *h* × 65536, *z*) |
-| a unit target *t* with `t.unitDefIndex` = 0 | `units.FindScript(u.script, "StartBuilding")`, its result ignored (Q2); then `units.StartScriptWithArgs(u.script, "TargetCleared", null, 0, 1, w, 0, 0, 0)`, its result ignored | 0; TargetX = 0, TargetZ = −32768 |
+| a ground target at (*x*, *z*) = (TargetX × 65536, TargetZ × 65536) | `units.GetGroundHeight` of (*x*, *z*), giving *h*₁. If *h*₁ > `Game.seaLevel`: `units.GetGroundHeight` of (*x*, *z*) again, giving *h* (Q2); otherwise *h* = `Game.seaLevel` | 1; `pos` = (*x*, *h* × 65536, *z*) |
+| a unit target *t* with `t.unitDefIndex` = 0 | publishing CLEARED for *u* and *w* | 0; TargetX = 0, TargetZ = −32768 |
 | a unit target *t* | `units.GetSweetSpot(t, s)` | 1; `pos` = *s*, led when the weapon leads (below) |
 
 The weapon *leads* when all of these hold: the slot has a weapon (value 2 of its flags), the slot's
@@ -269,7 +298,7 @@ whose length is the count the import returns, the whole list even when it is abo
 The search makes at most 50 *picks* (13 recorded searches have more than 50 candidates), and ends sooner
 when no candidate is left. Pick *k* (from 1) draws *i* = `services.RandomInt(n)`, with *n* the list's
 length less *k* − 1, and its candidate is the one at position *i* (from 0) of the candidates not yet
-picked. Those stand in this order (Q4): the list's order for pick 1; after a
+picked. Those stand in this order (Q3): the list's order for pick 1; after a
 pick the last candidate moves into the picked position (unless it was the last) and the list shortens by
 one. The pick *t* is *eligible* when:
 
@@ -287,38 +316,42 @@ section 5. A pick draws nothing more.
 
 An eligible pick whose `unitDefIndex` is in `u.def.weaponCategories[w]` is a *fallback*; any other is a
 *preferred* pick. The result is the preferred pick with the lowest distance, or, when there is none, the
-fallback with the lowest distance, or null. Between equal distances the earlier pick wins.
+fallback with the lowest distance, or null. Between equal distances the earlier pick wins. No writes.
 
 ### `FindBestTargetIfFireAtWill(u)`
 
 When `u`'s fire order is 2, the result and every import are those of the search for (*u*, 0, 0),
 defined under `FindWeaponTarget`: the radius is `u.def.range`, with no range import. Otherwise null, with
-no imports.
+no imports. No writes.
 
 ### `ChooseWeapon(u)`
 
-The index of the first slot (0, 1, 2) that has a weapon, or 0 when none has (Q5). A slot has a weapon
+The index of the first slot (0, 1, 2) that has a weapon, or 0 when none has (Q4). A slot has a weapon
 when value 2 of its `flags` is set, and nothing else of the slot is read: the kit's "empty" slot and
-"weapon ID 0" (`docs/replay-format.md`, "Not recorded") are the data that leaves that bit clear. No imports,
-no writes.
+"a weapon of ID 0" (`docs/replay-format.md`, "Not recorded") are the data that leaves that bit clear. No
+imports, no writes.
 
 ## 5. Exactness
 
 - **Random draws:** every draw is `services.RandomInt`, on the `rng.seed` generator of ABI section 9.3, in
   the order section 4 gives: for each pick, its index draw and then, if it is eligible, its distance draw.
-  A search with no candidates draws nothing. Each bound is drawn as it
-  stands: a *q* of 0 still makes the call `services.RandomInt(0)`, whose result is the import's (ABI
-  section 9.3: a range below 2 gives 0 and leaves the generator alone). A *q* that wraps to a negative
+  A search with no candidates draws nothing. `Apply` and `GetWeaponTargetPos` never draw. Each bound is
+  drawn as it stands: a *q* of 0 still makes the call `services.RandomInt(0)`, whose result is the import's
+  (ABI section 9.3: a range below 2 gives 0 and leaves the generator alone). A *q* that wraps to a negative
   value is drawn as that negative bound, so its distance is 0 and the generator is left alone.
-- **Target fields:** TargetX and TargetZ are signed 16-bit. `SetWeaponTargetPos` shifts the 32-bit
-  `pos.x` and `pos.z` right by 16 with the sign kept, then keeps the low 16 bits. A ground target's
-  position is the signed 16-bit field times 65536, in 32 bits.
+- **Target fields:** TargetX and TargetZ are signed 16-bit. A SET_POS shifts the 32-bit `pos[0]` and
+  `pos[2]` right by 16 with the sign kept, then keeps the low 16 bits. A ground target's position is the
+  signed 16-bit field times 65536, in 32 bits.
+- **The event's weapon:** `event.weapon` is compared as a signed 32-bit value: a negative one is outside
+  0 to 2.
 - **The ground height:** the import's result is a signed 32-bit integer, compared signed with
   `Game.seaLevel` (0 to 255): a height strictly above `seaLevel` asks again and is used, and a height at or
   below it gives *h* = `seaLevel` after the one call. The kit's "ground under the sea
   (`units.GetGroundHeight` returns 1)" is the second case, with a `seaLevel` of 44 (11 calls in
-  `edges-economy-targeting`, each with one import call); with `seaLevel` 0 a height of 1 is the first case,
-  as in example 2. `pos.y` is *h* × 65536, wrapping at 32 bits.
+  `edges-economy-targeting`, each with one import call). A height equal to `seaLevel` is the second case
+  too: in `edges-targeting-lead`, with `seaLevel` 1, a height of 1 gives one import call and `o pos.y 65536`
+  (16 calls, from tick 11). With `seaLevel` 0 a height of 1 is the first case, as in example 2. `pos.y`
+  is *h* × 65536, wrapping at 32 bits.
 - **The distance of a lead:** *d*.x, *d*.y and *d*.z are 32-bit differences that wrap. *D* is the
   square root of *d*.x² + *d*.y² + *d*.z², in double precision (64-bit IEEE): each square is rounded to
   double, the sum is rounded as (x² + y²) + z² in that order, and the root is truncated toward zero to a
@@ -343,24 +376,23 @@ no writes.
 ## 6. Quirks
 
 - **Q1:** a ground target whose *z* field would be −32768 is stored as −32767.
-- **Q2:** clearing a target makes the import `units.FindScript(u.script, "StartBuilding")` before the
-  `"TargetCleared"` call, and ignores its result.
-- **Q3:** a ground target above sea level asks for the ground height twice and uses the second answer.
-- **Q4:** the candidate a draw yields depends on the earlier draws and on the list's order, not only on
+- **Q2:** a ground target above sea level asks for the ground height twice and uses the second answer.
+- **Q3:** the candidate a draw yields depends on the earlier draws and on the list's order, not only on
   the draw: the candidates not yet picked stand in the order section 4 gives, which is not the list's order
   with the picked ones left out.
-- **Q5:** `ChooseWeapon` returns 0 when no slot has a weapon, and 2 when slot 2 is the only one that has.
+- **Q4:** `ChooseWeapon` returns 0 when no slot has a weapon, and 2 when slot 2 is the only one that has.
 
 ## 7. Examples
 
-1. **`tests/replay/targeting/orders-guard-attacked.txt`, call at tick 20 of
-   `SetWeaponTargetUnit(Unit#2, Unit#251, 0)`.** `Unit#251.id` is 251, so `Unit#2.weapon0TargetX`
-   becomes 251. TargetZ is already −32768 and `netDirtyFlags` is 0, so neither changes.
-2. **`tests/replay/targeting/orders-tier2-spider.txt`, calls at ticks 20 and 21 for `Unit#3`, weapon 0.**
-   `SetWeaponTargetPos` with `pos` = (42467328, 65536, 17301504) stores TargetX = 42467328 >> 16 = 648
-   and TargetZ = 17301504 >> 16 = 264. At tick 21, `GetWeaponTargetPos` asks for the ground height at
-   (42467328, 17301504) and gets 1, which is above `Game.seaLevel` (0), so it asks again and gets 1:
-   `pos` = (42467328, 65536, 17301504), result 1.
+1. **`tests/replay/targeting/orders-guard-attacked.txt`, the second `Apply` at tick 20: a SET_UNIT.**
+   `event.kind` 96, `event.unit` `Unit#2`, `event.weapon` 0, `event.target` `Unit#251`. `Unit#251.id` is
+   251, so `Unit#2.weapon0TargetX` becomes 251. TargetZ is already −32768 and `netDirtyFlags` is 0, so
+   neither changes. No imports, `o result 1`.
+2. **`tests/replay/targeting/orders-tier2-spider.txt`, the SET_POS at tick 20 and the call at tick 21 for
+   `Unit#3`, weapon 0.** The `Apply` with `event.kind` 97 and `pos` = (42467328, 65536, 17301504) stores
+   TargetX = 42467328 >> 16 = 648 and TargetZ = 17301504 >> 16 = 264, outcome 1. At tick 21,
+   `GetWeaponTargetPos` asks for the ground height at (42467328, 17301504) and gets 1, which is above
+   `Game.seaLevel` (0), so it asks again and gets 1: `pos` = (42467328, 65536, 17301504), result 1.
 3. **`tests/replay/targeting/skirmish4-long.txt`, the call at tick 25755 of
    `GetWeaponTargetPos(Unit#37, pos, 0)`: a lead.** The slot holds the unit target `Unit#775`.
    `weapon0Flags` is 18 (value 2 set), the weapon `weapondef#16` has `flags` 0x00080a01 and `speed`
@@ -383,63 +415,95 @@ no writes.
    | 2 | `RandomInt 2` = 1 | `Unit#3` | 7492839, 7500034 | 26167 | 1502 |
    | 3 | `RandomInt 1` = 0 | `Unit#2` | 8912896, 5111808 | 24580 | 10558 |
 
-   Each pick's reach import returns 1. The result is `Unit#3`.
-5. **`tests/replay/targeting/orders-tier2-spider.txt`, the call at tick 120 of
-   `ClearWeaponTarget(Unit#3, 1)`.** The slot holds a target, so the imports are
-   `units.FindScript(CobScript#3, "StartBuilding")` (−1, ignored) and then
-   `units.StartScriptWithArgs(CobScript#3, "TargetCleared", null, 0, 1, 1, 0, 0, 0)`. TargetX becomes 0
-   and TargetZ −32768.
+   Each pick's reach import returns 1. The result is `Unit#3`, and the SET_UNIT that follows at the same
+   tick stores 3 in `Unit#251.weapon0TargetX`.
+5. **`tests/replay/targeting/orders-tier2-spider.txt`, the four `Apply` calls of tick 120 for `Unit#3`: CLEAR.**
+   The first clears weapon 0, which holds a target: the import `i services.SchedPublish 9 28` (publishing
+   CLEARED for `Unit#3` and weapon 0), TargetX becomes 0 and TargetZ −32768, `o result 1`. The second clears
+   weapon 0 again, which now holds no target: no import, no write, `o result 0`. The third clears weapon 1,
+   which holds a target: the same import, TargetX 0, TargetZ −32768, `o result 1`. The fourth clears weapon 2,
+   which holds no target: no import, no write, `o result 0`.
+6. **`tests/replay/targeting/orders-tier2-spider.txt`, the first `Apply` at tick 0: a RESET of a new unit.**
+   `Unit#1.weapon0TargetX` and `weapon0TargetZ` are both 0, a ground target at (0, 0), so the slot holds a
+   target: TargetZ becomes −32768 (TargetX is already 0) with no import, `o result 1`. A RESET of a slot with
+   no target has outcome 0, as at tick 160 of `console-units` (`Unit#251`, weapon 0).
+7. **`tests/replay/targeting/console-units.txt`, the call at tick 140 of
+   `GetWeaponTargetPos(Unit#252, pos, 0)`.** The slot holds the unit target `Unit#2`, whose `unitDefIndex`
+   is 0: the import `i services.SchedPublish 9 28` (CLEARED for `Unit#252` and weapon 0), TargetX becomes 0
+   (TargetZ is already −32768), `o result 0`, and `pos` is not written.
 
-Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), each with the kit's reason:
+Recorded, with counts over the seven recordings:
+
+- `Apply`: 792 SET_UNIT, all with outcome 1; 16 SET_POS, all with outcome 1; 1711 CLEAR, 419 of them of a
+  slot with a target (one `services.SchedPublish` each, outcome 1) and 1292 of a slot with none (outcome 0);
+  339 RESET, 336 with outcome 1 and 3 with outcome 0.
+- `GetWeaponTargetPos` of a unit target whose `unitDefIndex` is 0: 7 calls (3 in `console-units`, 4 in
+  `edges-targeting-lead`), each publishing CLEARED.
+
+The outcomes of the next two lists are defined, where at all, by this spec alone: no recording checks them.
+
+Not recorded in the kit's recordings, and reached by no scenario (`docs/replay-format.md`, "Not recorded"),
+each with the kit's reason:
 
 - `ChooseWeapon` with no slot that has a weapon (it returns 0), and with slot 1 or 2 deciding the result:
   all 347 recorded calls have slot 0 with a weapon. The kit's reason for returning 1 or 2: no shipped unit
-  has weapon slot 0 empty and slot 1 or 2 defined.
-- `SetWeaponTargetPos` with a *z* of −32768 (Q1): it needs a world *z* of 32768, and scenarios and the
+  has weapon slot 0 empty and slot 1 or 2 defined. Its reason for no weapon at all: the only caller is the
+  attack order, which runs only for a unit with the armed bit, and such a unit has a slot with a weapon.
+- An `Apply` of a SET_POS with a *z* of −32768 (Q1): it needs a world *z* of 32768, and scenarios and the
   harness reject positions off the map.
-- `SetWeaponTargetUnit` with a null target: 3.1c faults on it (`docs/replay-format.md`), so it is outside
-  the contract.
+- An `Apply` of an event it rejects (a null unit, a weapon outside 0 to 2, or a SET_UNIT with a null
+  target): every publisher passes a live unit and its own weapon number.
 - A candidate with `alive` clear or `killPending` set: the candidate list holds only live
   units, so neither check can fail.
-- Negative `speed` in a lead, a negative `UnitDef.range` and a *q* that wraps: section 5 gives their
-  results, and no recording checks them.
-- Bit 10 of `Game.uiOptionFlags` set when a pick's shooter is not computer-controlled and its def has
-  `flags1` bit 15 clear: the bit is set in 16 recorded searches (`console-units`, from the
-  `FindBestTargetIfFireAtWill` call at tick 73), but no recording holds it deciding a pick. The kit's
-  "menu option bit 4 of the match flags" (`docs/replay-format.md`, "Not recorded") is this bit: `matchFlags`
-  is the byte of `layout.json` at offset 229168, the high byte of the 16-bit `uiOptionFlags` at 229167, and
-  its value 4 is 0x400 of the word.
+- `FindBestTargetIfFireAtWill` with a fire order of 3. The kit's reason: a unit's fire order comes from its
+  unit type's standing fire order (0 or 2 in the shipped units, 2 when it has none), from an order whose
+  modes are 0, 1 and 2, or from the unit that built it.
+- A negative `UnitDef.range`. The kit's reason: the range is the unit type's `sightdistance`, which lies
+  between 55 and 490 in the shipped units. Section 5 gives the result.
 - The lead with the slot's *has a weapon* bit clear on its own: its only caller skips a slot without that
   bit.
 - The lead with a weapon that has `cruise` set or whose `speed` is 0, for a unit with more than five
   kills and the other lead conditions met: not reached by the scenario suite; it would need a veteran
   missile silo or bomber.
 
-Not recorded, and the kit gives no reason:
+Not recorded, and the kit gives no reason and does not say whether a scenario reaches them:
 
-- `FindBestTargetIfFireAtWill` with a fire order of 1 or 3 (fire order 0 is recorded).
-- A `UnitDef.range` that is negative as a signed 16-bit value.
-- A lead with `killCount` of 4, 5 or 6 when every other lead condition holds. The recorded leads (16) all
-  have 7. The unit-target calls with every other lead condition met and no lead have 0 (10728), 1 (55),
-  2 (42) or 3 (21). The count 8 occurs only against a target with a null `motion` (66 calls), and 6 only in
-  a call with no target (tick 118 of `edges-economy-targeting`).
-  The threshold rests on the kit's "more than five kills".
-- `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel`.
-- A *q* that wraps below 0.
+- An `Apply` of a kind other than the four (outcome 0, no change).
+- Negative `speed` in a lead (section 5 gives the result).
+- A *q* that wraps below 0 (section 5 gives the result).
 - Two eligible fallback picks with the same distance. Preferred picks that tie are recorded, at distance 0
   (`RandomInt 0 = 0`): the earlier pick wins, as at tick 73 of `console-units`.
 - A null `weapon{w}Def` when the lead or the paralyzer test reads it: it is outside the
   contract and the module may trap.
 - A unit target with a negative TargetX.
-- A null `u.script` in a clear.
-- A weapon index above 2 in any slot, and the weapon index of `FindWeaponTarget` above 255.
+- A weapon index above 2 in `GetWeaponTargetUnit` or `GetWeaponTargetPos`, and the weapon index of
+  `FindWeaponTarget` above 255.
 - A ground target with a negative coordinate (section 5 gives the shift).
 - A `unitDefIndex` of 512 or more (a `UnitTypeSet` holds 512 bits) given to a set test, and a null
   `categories`, `weaponCategories` or `u.def`: the spec defines nothing for them.
 - A TargetX that is outside the unit pool.
-- `netDirtyFlags` bits 0, 1, 3 to 9, 11 and 15 before a target set: the recordings set only bits 2, 10, 12,
-  13 and 14, so the kept and cleared rule for the others is checked by no recording.
+- `netDirtyFlags` bits 0, 1, 3 to 9, 11 and 15 before a SET_UNIT or SET_POS: the recordings set only bits 2,
+  10, 12, 13 and 14, so the kept and cleared rule for the others is checked by no recording.
 - `GetWeaponTargetUnit` on a dead or recycled target.
+
+Recorded, in `orders-immediate` and `edges-targeting-lead` (the kit's `docs/replay-format.md` lists both):
+
+- `FindBestTargetIfFireAtWill` with a fire order of 1: the call at tick 752 of `orders-immediate`
+  (`Unit#1.flags` 0x90d00321), which returns null with no import. Fire order 0 is recorded in 8 calls, and
+  fire order 2 in the rest.
+- `GetWeaponTargetPos` over ground whose height equals `Game.seaLevel` (section 5, the ground height).
+- Bit 10 of `Game.uiOptionFlags` deciding a pick: the bit is set in 174 recorded searches (16 in
+  `console-units`, from the `FindBestTargetIfFireAtWill` call at tick 73, and 158 in `edges-targeting-lead`).
+  In 9 searches of `edges-targeting-lead` it is what makes a pick eligible: `Unit#1`, whose player is not
+  computer-controlled, picks `Unit#502`, whose def has `flags1` bit 15 clear, first in the
+  `FindWeaponTarget` call at tick 83 (`o out [Unit#502]`, `o result Unit#502`).
+- The lead's kill count. The unit-target calls of `GetWeaponTargetPos` with every other lead condition met
+  have a `killCount` of 0 (12054 calls), 1 (279), 2 (267), 3 (133), 4 (140), 5 (133), 6 (129), 7 (121) or
+  8 (69). With 5 or fewer, `pos` is the sweet spot; with 6 or more the lead applies, and it moves `pos` in
+  79 calls: one with 6 kills (`Unit#2` at tick 1072 of `edges-targeting-lead`, with the velocity of
+  `UnitMotion#8`) and 78 with 7 (62 in `edges-targeting-lead`, and the 16 of `skirmish4-long`, among them
+  example 3). In the others the velocity adds nothing. The kit says the target moves in the calls with 4
+  and 5 kills (`docs/replay-format.md`, the list of `edges-targeting-lead`).
 
 Recorded once, so a single recorded call or search checks it:
 
@@ -453,10 +517,21 @@ Gaps in the kit, which this spec does not fill:
 - The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
   result and the stream words advance as the game's do, and ABI section 9.3 gives the range-below-2 case,
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
-
-The callback argument of `"TargetCleared"`, which the recordings show as `?` (the `pending` mode of
-`docs/replay-format.md`: an argument that is not recorded): `ClearWeaponTarget` and the clears of
-`GetWeaponTargetPos` pass null there.
+- `services.SchedPublish` for a module: `signatures.services` of `wasm/modules.json` has no entry for it, and
+  ABI section 9.3 neither lists it nor says how the host answers it (that section still gives the services
+  minor as 12; `interfaces/services.h` is at 1.14). The kinds in section 2 come from the declaration.
+- The CLEARED record: the recordings carry only the outbox and the size of `services.SchedPublish`, not the
+  record's fields, so no recording checks `kind`, `unit`, `weapon` or the zero fields of section 2. The
+  replay schema's targeting entry (`data/replay_schema.json`) lists only `RandomInt` among its services; the
+  `i services.SchedPublish` lines come from the schema's general entry for that service.
+- The header calls `TargetingEvent.unit` and `target` "the handle economy's events use", and ABI section 8.1
+  gives "handle" another meaning (an opaque number for an engine object). They are block offsets: the replay
+  schema gives both the `ref` kind, an offset from the block base (`docs/replay-format.md`), and ABI
+  section 7.1 stores pointers so.
+- The dump of targeting's events (`docs/trace-format.md`, section 8.26, dumped and not hashed) records each
+  effect "when targeting publishes it to its outbox". The kit does not say whether a module records its
+  effects there itself (`interfaces/services.h` declares `HarnessTargetingEvent`); no recording shows that
+  import, and the list of section 2 leaves it out.
 
 No rule of the candidate tests names a kamikaze unit: the one that `docs/replay-format.md` mentions among
 the recorded candidates is judged like any other candidate.
@@ -467,5 +542,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v6` and `reference-traces-v26`, the versions the gate judges against. Interface
-`targeting` 1.1.
+Kit `interfaces-v13` and `reference-traces-v28`, the versions the gate judges against. Interface
+`targeting` 2.0.
