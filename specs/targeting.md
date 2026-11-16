@@ -28,7 +28,7 @@ Other modules publish them; the engine holds the inbox and delivers it, through 
 each phase boundary (the header; `docs/schedule.md` lists `targeting.Apply` once in every phase and in the
 work after the phases). An
 event may also be delivered as soon as it is published, inside its publisher's call (`interfaces/services.h`,
-`SchedPublish`). The module holds no queue: each `Apply` applies its one event.
+`SchedPublish`). Each `Apply` takes effect at once: an event's changes are all made in its `Apply`.
 
 `ChooseWeapon` takes the unit as its only argument, as the header lists.
 
@@ -71,7 +71,8 @@ build, set from the build's own gate runs). This section gives the rest of the e
 
   The kinds of `services.SchedPublish` follow its declaration in `interfaces/services.h` (an `int` outbox,
   the address of the record in the module's memory, and the record's size as an unsigned 32-bit `int`): the
-  manifest's `signatures.services` has no entry for it (see "Gaps in the kit", section 7).
+  manifest's `signatures.services` has no entry for it (see "Gaps in the kit", section 7), so this spec
+  takes the header's declaration as the import's signature.
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. Its fuel budget and `size_budget` are its build's
   (ABI sections 11.1 and 11.3), not the kit's. Its stack is the manifest's `stack_size`,
@@ -439,7 +440,10 @@ Recorded, with counts over the seven recordings:
 - `GetWeaponTargetPos` of a unit target whose `unitDefIndex` is 0: 7 calls (3 in `console-units`, 4 in
   `edges-targeting-lead`), each publishing CLEARED.
 
-Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), each with the kit's reason:
+The outcomes of the next two lists are defined, where at all, by this spec alone: no recording checks them.
+
+Not recorded in the kit's recordings, and reached by no scenario (`docs/replay-format.md`, "Not recorded"),
+each with the kit's reason:
 
 - `ChooseWeapon` with no slot that has a weapon (it returns 0), and with slot 1 or 2 deciding the result:
   all 347 recorded calls have slot 0 with a weapon. The kit's reason for returning 1 or 2: no shipped unit
@@ -462,7 +466,7 @@ Not recorded in the kit's recordings (`docs/replay-format.md`, "Not recorded"), 
   kills and the other lead conditions met: not reached by the scenario suite; it would need a veteran
   missile silo or bomber.
 
-Not recorded, and the kit gives no reason:
+Not recorded, and the kit gives no reason and does not say whether a scenario reaches them:
 
 - An `Apply` of a kind other than the four (outcome 0, no change).
 - Negative `speed` in a lead (section 5 gives the result).
