@@ -67,12 +67,11 @@ build, set from the build's own gate runs). This section gives the rest of the e
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
 | `ai.GetVisibleEnemiesInRadiusList` | `[int, linear, int, int, linear, int] -> int` | the candidates of a search |
 | `services.RandomInt` | `[int] -> int` | the order of a search and its distances |
+| `services.HarnessTargetingEvent` | `[linear, int] -> void` | recording the effect for the dump's targeting events |
 | `services.SchedPublish` | `[int, linear, int] -> void` | publishing the effect `TARGETING_EFFECT_CLEARED` |
 
-  The kinds of `services.SchedPublish` follow its declaration in `interfaces/services.h` (an `int` outbox,
-  the address of the record in the module's memory, and the record's size as an unsigned 32-bit `int`): the
-  manifest's `signatures.services` has no entry for it (see "Gaps in the kit", section 7), so this spec
-  takes the header's declaration as the import's signature.
+  The kinds of the services imports are those of the manifest's `signatures.services` and of ABI
+  section 9.3.
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. Its fuel budget and `size_budget` are its build's
   (ABI sections 11.1 and 11.3), not the kit's. Its stack is the manifest's `stack_size`,
@@ -108,6 +107,12 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `i services.SchedPublish 9 28`: the outbox and the size are compared, and the record is not recorded (the
   `skip` mode of `docs/replay-format.md`, "Services"). The header says what the subscribers do with it: the
   unit's script runs its TargetCleared function with the weapon's number.
+- **The recording of the effect**: just before each `SchedPublish` of an effect, the module calls
+  `services.HarnessTargetingEvent(effect, 1)` with the same record (ABI section 9.3, "Who records the dump's
+  events"), which records it for the dump's targeting events (`docs/trace-format.md`, section 8.26); the
+  engine records the events it delivers to `Apply`, so the module records nothing for them. A replay does not
+  record the `HarnessTargetingEvent` call and no trace row hashes the dump's events, so neither the
+  recordings nor the traces show it (ABI section 9.3).
 - **`pos`** (`GetWeaponTargetPos`) is a `Vec3` in the caller's memory, written only when the slot returns 1.
   When it returns 0, `pos` is left as it was.
 - **The positions given to imports** (`units.GetGroundHeight`, `units.GetSweetSpot`,
@@ -227,8 +232,9 @@ end of the call, so the order they are listed in here carries no meaning.
 In each slot, *u* is the unit, *w* the weapon (0, 1 or 2) and "the slot" is *u*'s weapon slot *w*. The
 engine never calls `GetWeaponTargetUnit`, `GetWeaponTargetPos` or `FindWeaponTarget` with a *w* above 2;
 this spec defines nothing for a larger *w* there. *Publishing CLEARED* for *u* and *w* is the import
-`services.SchedPublish(9, effect, 28)` with the CLEARED effect of *u* and *w* (section 2), whose call returns
-nothing.
+`services.HarnessTargetingEvent(effect, 1)` and then the import `services.SchedPublish(9, effect, 28)`, both
+with the CLEARED effect of *u* and *w* (section 2); neither returns anything, and the recordings show only
+the second.
 
 ### `Apply(event)`
 
@@ -418,19 +424,21 @@ imports, no writes.
    Each pick's reach import returns 1. The result is `Unit#3`, and the SET_UNIT that follows at the same
    tick stores 3 in `Unit#251.weapon0TargetX`.
 5. **`tests/replay/targeting/orders-tier2-spider.txt`, the four `Apply` calls of tick 120 for `Unit#3`: CLEAR.**
-   The first clears weapon 0, which holds a target: the import `i services.SchedPublish 9 28` (publishing
-   CLEARED for `Unit#3` and weapon 0), TargetX becomes 0 and TargetZ −32768, `o result 1`. The second clears
-   weapon 0 again, which now holds no target: no import, no write, `o result 0`. The third clears weapon 1,
-   which holds a target: the same import, TargetX 0, TargetZ −32768, `o result 1`. The fourth clears weapon 2,
-   which holds no target: no import, no write, `o result 0`.
+   The first clears weapon 0, which holds a target: the recorded import `i services.SchedPublish 9 28`
+   (publishing CLEARED for `Unit#3` and weapon 0, after the unrecorded `HarnessTargetingEvent`), TargetX
+   becomes 0 and TargetZ −32768, `o result 1`. The second clears weapon 0 again, which now holds no target: no
+   import, no write, `o result 0`. The third clears weapon 1, which holds a target: the same import, TargetX
+   0, TargetZ −32768, `o result 1`. The fourth clears weapon 2, which holds no target: no import, no write,
+   `o result 0`.
 6. **`tests/replay/targeting/orders-tier2-spider.txt`, the first `Apply` at tick 0: a RESET of a new unit.**
    `Unit#1.weapon0TargetX` and `weapon0TargetZ` are both 0, a ground target at (0, 0), so the slot holds a
    target: TargetZ becomes −32768 (TargetX is already 0) with no import, `o result 1`. A RESET of a slot with
    no target has outcome 0, as at tick 160 of `console-units` (`Unit#251`, weapon 0).
 7. **`tests/replay/targeting/console-units.txt`, the call at tick 140 of
    `GetWeaponTargetPos(Unit#252, pos, 0)`.** The slot holds the unit target `Unit#2`, whose `unitDefIndex`
-   is 0: the import `i services.SchedPublish 9 28` (CLEARED for `Unit#252` and weapon 0), TargetX becomes 0
-   (TargetZ is already −32768), `o result 0`, and `pos` is not written.
+   is 0: the recorded import `i services.SchedPublish 9 28` (publishing CLEARED for `Unit#252` and weapon 0,
+   after the unrecorded `HarnessTargetingEvent`), TargetX becomes 0 (TargetZ is already −32768), `o result 0`,
+   and `pos` is not written.
 
 Recorded, with counts over the seven recordings:
 
@@ -517,21 +525,8 @@ Gaps in the kit, which this spec does not fill:
 - The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
   result and the stream words advance as the game's do, and ABI section 9.3 gives the range-below-2 case,
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
-- `services.SchedPublish` for a module: `signatures.services` of `wasm/modules.json` has no entry for it, and
-  ABI section 9.3 neither lists it nor says how the host answers it (that section still gives the services
-  minor as 12; `interfaces/services.h` is at 1.14). The kinds in section 2 come from the declaration.
 - The CLEARED record: the recordings carry only the outbox and the size of `services.SchedPublish`, not the
-  record's fields, so no recording checks `kind`, `unit`, `weapon` or the zero fields of section 2. The
-  replay schema's targeting entry (`data/replay_schema.json`) lists only `RandomInt` among its services; the
-  `i services.SchedPublish` lines come from the schema's general entry for that service.
-- The header calls `TargetingEvent.unit` and `target` "the handle economy's events use", and ABI section 8.1
-  gives "handle" another meaning (an opaque number for an engine object). They are block offsets: the replay
-  schema gives both the `ref` kind, an offset from the block base (`docs/replay-format.md`), and ABI
-  section 7.1 stores pointers so.
-- The dump of targeting's events (`docs/trace-format.md`, section 8.26, dumped and not hashed) records each
-  effect "when targeting publishes it to its outbox". The kit does not say whether a module records its
-  effects there itself (`interfaces/services.h` declares `HarnessTargetingEvent`); no recording shows that
-  import, and the list of section 2 leaves it out.
+  record's fields, so no recording checks `kind`, `unit`, `weapon` or the zero fields of section 2.
 
 No rule of the candidate tests names a kamikaze unit: the one that `docs/replay-format.md` mentions among
 the recorded candidates is judged like any other candidate.
@@ -542,5 +537,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v13` and `reference-traces-v28`, the versions the gate judges against. Interface
+Kit `interfaces-v14` and `reference-traces-v29`, the versions the gate judges against. Interface
 `targeting` 2.0.
