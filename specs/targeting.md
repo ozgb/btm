@@ -45,7 +45,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `FindBestTargetIfFireAtWill`, `ChooseWeapon`.
 - `data`: `g_game`, `g_blockBase` (ABI 8.2).
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
-  `targeting` 2, and for its import groups `units` 1, `weapons` 1, `ai` 3, `services` 1.
+  `targeting` 2, and for its import groups `units` 1, `weapons` 1, `ai` 4, `services` 1.
 - Slot kinds:
 
 | Slot | Kinds |
@@ -537,5 +537,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v16` and `reference-traces-v29`, the versions the gate judges against. Interface
+Kit `interfaces-v17` and `reference-traces-v29`, the versions the gate judges against. Interface
 `targeting` 2.0.
