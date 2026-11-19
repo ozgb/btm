@@ -34,10 +34,12 @@ event may also be delivered as soon as it is published, inside its publisher's c
 
 ### The manifest entry
 
-The kit's manifest (`wasm/modules.json`) carries the slot signatures of this module (`signatures.targeting`)
-and its interface major, 2 (`majors.targeting`). It has no build entry for it. A module's build sets
-its `data_base` and `table_base` (within the windows and table ranges of ABI sections 2.2 and 2.3), its
-`slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget belongs to its
+The kit's manifest (`wasm/modules.json`) carries this module's interface major, 2 (`majors.targeting`), and
+the majors of its import groups. It has no build entry for it, and its `signatures` list only the names the
+manifest's modules use (ABI section 10.1), so they hold none of this module's slots and, of its imports, only
+`services.RandomInt`: the kinds below, in the terms of ABI section 7, are the ones to build against. A
+module's build sets its `data_base` and `table_base` (within the windows and table ranges of ABI sections 2.2
+and 2.3), its `slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget belongs to its
 build, set from the build's own gate runs). This section gives the rest of the entry the module must have.
 
 - `name` and `interface`: `targeting`.
@@ -45,7 +47,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `FindBestTargetIfFireAtWill`, `ChooseWeapon`.
 - `data`: `g_game`, `g_blockBase` (ABI 8.2).
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
-  `targeting` 2, and for its import groups `units` 2, `scripts` 1, `weapons` 1, `los_radar` 3, `services` 1.
+  `targeting` 2, and for its import groups `map` 5, `scripts` 1, `weapons` 1, `los_radar` 3, `services` 1.
 - Slot kinds:
 
 | Slot | Kinds |
@@ -61,7 +63,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
 
 | Import | Kinds | Used for |
 | --- | --- | --- |
-| `units.GetGroundHeight` | `[linear] -> int` | the height of a ground target |
+| `map.GetGroundHeight` | `[linear] -> int` | the height of a ground target (`interfaces/map.h`, version 5.0) |
 | `scripts.GetSweetSpot` | `[block, linear] -> void` | the point to aim at on a target unit |
 | `weapons.GetWeaponRange` | `[block, int] -> int` | the search radius |
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
@@ -70,8 +72,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
 | `services.HarnessTargetingEvent` | `[linear, int] -> void` | recording the effect for the dump's targeting events |
 | `services.SchedPublish` | `[int, linear, int] -> void` | publishing the effect `TARGETING_EFFECT_CLEARED` |
 
-  The kinds of the services imports are those of the manifest's `signatures.services` and of ABI
-  section 9.3.
+  The kinds of the services imports are those of ABI section 9.3.
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. Its fuel budget and `size_budget` are its build's
   (ABI sections 11.1 and 11.3), not the kit's. Its stack is the manifest's `stack_size`,
@@ -115,13 +116,13 @@ build, set from the build's own gate runs). This section gives the rest of the e
   recordings nor the traces show it (ABI section 9.3).
 - **`pos`** (`GetWeaponTargetPos`) is a `Vec3` in the caller's memory, written only when the slot returns 1.
   When it returns 0, `pos` is left as it was.
-- **The positions given to imports** (`units.GetGroundHeight`, `scripts.GetSweetSpot`,
+- **The positions given to imports** (`map.GetGroundHeight`, `scripts.GetSweetSpot`,
   `los_radar.GetVisibleEnemiesInRadiusList`) are `Vec3`s in the module's own memory, in the block, or (for
-  `GetWeaponTargetPos`) the caller's `pos`. `units.GetGroundHeight` reads only `x` and `z`;
+  `GetWeaponTargetPos`) the caller's `pos`. `map.GetGroundHeight` reads only `x` and `z`;
   `scripts.GetSweetSpot` writes all three.
-  What `units.GetGroundHeight` is given for *y* is not compared: the replay compares only *x* and *z* of that
+  What `map.GetGroundHeight` is given for *y* is not compared: the replay compares only *x* and *z* of that
   argument (a `pos=(x,z)` form in the recordings, `docs/replay-format.md`, the `vec3` mode with `"axes":
-  "xz"`), as in `i units.GetGroundHeight pos=(42467328,17301504) = 1`. The *y* the game itself passes is the
+  "xz"`), as in `i map.GetGroundHeight pos=(42467328,17301504) = 1`. The *y* the game itself passes is the
   *y* the caller's `pos` held on entry, which the module may pass unchanged, or any other value.
 - **The candidate list** of a search is what `los_radar.GetVisibleEnemiesInRadiusList` writes to the buffer
   the module gives it (ABI section 7.3): its arguments are the player, a position, a radius, flags (0), the
@@ -272,7 +273,7 @@ its offset, ABI section 7.1), which the recordings show as `Unit#N`. No imports,
 | The slot | Imports, in order | Result and writes |
 | --- | --- | --- |
 | no target | none | 0 |
-| a ground target at (*x*, *z*) = (TargetX × 65536, TargetZ × 65536) | `units.GetGroundHeight` of (*x*, *z*), giving *h*₁. If *h*₁ > `Game.seaLevel`: `units.GetGroundHeight` of (*x*, *z*) again, giving *h* (Q2); otherwise *h* = `Game.seaLevel` | 1; `pos` = (*x*, *h* × 65536, *z*) |
+| a ground target at (*x*, *z*) = (TargetX × 65536, TargetZ × 65536) | `map.GetGroundHeight` of (*x*, *z*), giving *h*₁. If *h*₁ > `Game.seaLevel`: `map.GetGroundHeight` of (*x*, *z*) again, giving *h* (Q2); otherwise *h* = `Game.seaLevel` | 1; `pos` = (*x*, *h* × 65536, *z*) |
 | a unit target *t* with `t.unitDefIndex` = 0 | publishing CLEARED for *u* and *w* | 0; TargetX = 0, TargetZ = −32768 |
 | a unit target *t* | `scripts.GetSweetSpot(t, s)` | 1; `pos` = *s*, led when the weapon leads (below) |
 
@@ -354,7 +355,7 @@ imports, no writes.
 - **The ground height:** the import's result is a signed 32-bit integer, compared signed with
   `Game.seaLevel` (0 to 255): a height strictly above `seaLevel` asks again and is used, and a height at or
   below it gives *h* = `seaLevel` after the one call. The kit's "ground under the sea
-  (`units.GetGroundHeight` returns 1)" is the second case, with a `seaLevel` of 44 (11 calls in
+  (`map.GetGroundHeight` returns 1)" is the second case, with a `seaLevel` of 44 (11 calls in
   `edges-economy-targeting`, each with one import call). A height equal to `seaLevel` is the second case
   too: in `edges-targeting-lead`, with `seaLevel` 1, a height of 1 gives one import call and `o pos.y 65536`
   (16 calls, from tick 11). With `seaLevel` 0 a height of 1 is the first case, as in example 2. `pos.y`
@@ -528,9 +529,6 @@ Gaps in the kit, which this spec does not fill:
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
 - The CLEARED record: the recordings carry only the outbox and the size of `services.SchedPublish`, not the
   record's fields, so no recording checks `kind`, `unit`, `weapon` or the zero fields of section 2.
-- The manifest's `signatures` for `scripts.GetSweetSpot`: `wasm/modules.json` has no `scripts` group and
-  still lists `GetSweetSpot` under `units`, which `interfaces/units.h` 2.0 no longer has. The import is
-  `scripts.GetSweetSpot`, as `interfaces/scripts.h` and the recordings name it, with the kinds of section 2.
 
 No rule of the candidate tests names a kamikaze unit: the one that `docs/replay-format.md` mentions among
 the recorded candidates is judged like any other candidate.
@@ -541,5 +539,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v20` and `reference-traces-v30`, the versions the gate judges against. Interface
+Kit `interfaces-v21` and `reference-traces-v30`, the versions the gate judges against. Interface
 `targeting` 2.0.
