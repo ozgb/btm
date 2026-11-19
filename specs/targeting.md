@@ -6,7 +6,7 @@ Each of a unit's three weapons has a target: nothing, an enemy unit, or a point 
 targeting subsystem applies the events other modules publish to set, clear and reset those targets,
 publishes an effect when it clears a weapon's target, says where a weapon should aim (following a
 unit's sweet spot, and leading a moving unit when the weapon and the shooter qualify), picks which
-weapon a unit fires first, and searches the enemies a unit can see for the best one to attack.
+weapon a unit fires first, and searches the enemies los_radar lists for a unit, for the best one to attack.
 
 ## 2. Interface
 
@@ -45,7 +45,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `FindBestTargetIfFireAtWill`, `ChooseWeapon`.
 - `data`: `g_game`, `g_blockBase` (ABI 8.2).
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
-  `targeting` 2, and for its import groups `units` 1, `weapons` 1, `ai` 4, `services` 1.
+  `targeting` 2, and for its import groups `units` 1, `weapons` 1, `los_radar` 3, `services` 1.
 - Slot kinds:
 
 | Slot | Kinds |
@@ -65,7 +65,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
 | `units.GetSweetSpot` | `[block, linear] -> void` | the point to aim at on a target unit |
 | `weapons.GetWeaponRange` | `[block, int] -> int` | the search radius |
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
-| `ai.GetVisibleEnemiesInRadiusList` | `[int, linear, int, int, linear, int] -> int` | the candidates of a search |
+| `los_radar.GetVisibleEnemiesInRadiusList` | `[int, linear, int, int, linear, int] -> int` | the candidates of a search |
 | `services.RandomInt` | `[int] -> int` | the order of a search and its distances |
 | `services.HarnessTargetingEvent` | `[linear, int] -> void` | recording the effect for the dump's targeting events |
 | `services.SchedPublish` | `[int, linear, int] -> void` | publishing the effect `TARGETING_EFFECT_CLEARED` |
@@ -116,15 +116,15 @@ build, set from the build's own gate runs). This section gives the rest of the e
 - **`pos`** (`GetWeaponTargetPos`) is a `Vec3` in the caller's memory, written only when the slot returns 1.
   When it returns 0, `pos` is left as it was.
 - **The positions given to imports** (`units.GetGroundHeight`, `units.GetSweetSpot`,
-  `ai.GetVisibleEnemiesInRadiusList`) are `Vec3`s in the module's own memory, in the block, or (for
+  `los_radar.GetVisibleEnemiesInRadiusList`) are `Vec3`s in the module's own memory, in the block, or (for
   `GetWeaponTargetPos`) the caller's `pos`. `units.GetGroundHeight` reads only `x` and `z`;
   `units.GetSweetSpot` writes all three.
   What `units.GetGroundHeight` is given for *y* is not compared: the replay compares only *x* and *z* of that
   argument (a `pos=(x,z)` form in the recordings, `docs/replay-format.md`, the `vec3` mode with `"axes":
   "xz"`), as in `i units.GetGroundHeight pos=(42467328,17301504) = 1`. The *y* the game itself passes is the
   *y* the caller's `pos` held on entry, which the module may pass unchanged, or any other value.
-- **The candidate list** of a search is what `ai.GetVisibleEnemiesInRadiusList` writes to the buffer the
-  module gives it (ABI section 7.3): its arguments are the player, a position, a radius, flags (0), the
+- **The candidate list** of a search is what `los_radar.GetVisibleEnemiesInRadiusList` writes to the buffer
+  the module gives it (ABI section 7.3): its arguments are the player, a position, a radius, flags (0), the
   buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
   recordings' `o out` line lists them. The replay (`docs/replay-format.md`, "Not recorded", the entry for
@@ -132,17 +132,18 @@ build, set from the build's own gate runs). This section gives the rest of the e
   flags: it writes the first `capacity` units of the recorded list, in order, and returns the recorded count.
   A repeat with the same arguments and a larger capacity, after a count above the capacity, is answered from
   the same line and takes no further import; any other extra call is a divergence. A search makes the
-  import once in the recordings, then draws. The number of candidates has no limit (it is every enemy in
-  range that the player can see), and the draws use the full count. ABI section 7.3 says a caller that gets
+  import once in the recordings, then draws. The number of candidates has no limit (it is every unit the
+  vector form `los_radar.GetVisibleEnemiesInRadius` appends, `interfaces/los_radar.h`), and the draws use the
+  full count. ABI section 7.3 says a caller that gets
   a count above its capacity calls again with a larger buffer; holding the whole list, and the capacity and
   place of the buffer, are the build's choice. No search in the recordings lists more than 52 candidates.
   The build's constraints on that memory: the module allocates no heap and uses no scratch (ABI sections 2.1
   and 2.2), and the buffer, and any list the module derives from it, is on its stack or in its statics,
   which must be as found at the end of each tick (ABI section 12).
-  The recordings show the import as one line, `i ai.GetVisibleEnemiesInRadius`, whose arguments are the
-  player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
-  as in `i ai.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and no
-  capacity. The line `o out [...]` follows it and holds the whole list; its length is the import's count
+  The recordings show the import as one line, `i los_radar.GetVisibleEnemiesInRadius`, whose arguments are
+  the player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
+  as in `i los_radar.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and
+  no capacity. The line `o out [...]` follows it and holds the whole list; its length is the import's count
   (the line has no `= n`). After that line come `o Unit#N.*`
   lines (for example `o Unit#2.flags 0x90240321`) and `o UnitDef#N.flags1` lines (10 in the recordings,
   for example `o UnitDef#208.flags1 0x0084008a` in `skirmish4-long` at tick 25768), giving the fields of
@@ -298,8 +299,8 @@ again by `FindBestTargetIfFireAtWill`.
 
 The radius *r* is the result of the import `weapons.GetWeaponRange(u, w)` when `useRange` ≠ 0, or
 `u.def.range` when it is 0 (with no import). Then the import
-`ai.GetVisibleEnemiesInRadiusList(u.playerIndex, u.pos, r, 0, buffer, capacity)` fills the candidate list,
-whose length is the count the import returns, the whole list even when it is above the capacity.
+`los_radar.GetVisibleEnemiesInRadiusList(u.playerIndex, u.pos, r, 0, buffer, capacity)` fills the candidate
+list, whose length is the count the import returns, the whole list even when it is above the capacity.
 
 The search makes at most 50 *picks* (13 recorded searches have more than 50 candidates), and ends sooner
 when no candidate is left. Pick *k* (from 1) draws *i* = `services.RandomInt(n)`, with *n* the list's
@@ -537,5 +538,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v17` and `reference-traces-v29`, the versions the gate judges against. Interface
+Kit `interfaces-v18` and `reference-traces-v29`, the versions the gate judges against. Interface
 `targeting` 2.0.
