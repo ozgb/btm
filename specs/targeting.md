@@ -45,7 +45,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `FindBestTargetIfFireAtWill`, `ChooseWeapon`.
 - `data`: `g_game`, `g_blockBase` (ABI 8.2).
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
-  `targeting` 2, and for its import groups `units` 1, `weapons` 1, `los_radar` 3, `services` 1.
+  `targeting` 2, and for its import groups `units` 2, `scripts` 1, `weapons` 1, `los_radar` 3, `services` 1.
 - Slot kinds:
 
 | Slot | Kinds |
@@ -62,7 +62,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
 | Import | Kinds | Used for |
 | --- | --- | --- |
 | `units.GetGroundHeight` | `[linear] -> int` | the height of a ground target |
-| `units.GetSweetSpot` | `[block, linear] -> void` | the point to aim at on a target unit |
+| `scripts.GetSweetSpot` | `[block, linear] -> void` | the point to aim at on a target unit |
 | `weapons.GetWeaponRange` | `[block, int] -> int` | the search radius |
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
 | `los_radar.GetVisibleEnemiesInRadiusList` | `[int, linear, int, int, linear, int] -> int` | the candidates of a search |
@@ -115,10 +115,10 @@ build, set from the build's own gate runs). This section gives the rest of the e
   recordings nor the traces show it (ABI section 9.3).
 - **`pos`** (`GetWeaponTargetPos`) is a `Vec3` in the caller's memory, written only when the slot returns 1.
   When it returns 0, `pos` is left as it was.
-- **The positions given to imports** (`units.GetGroundHeight`, `units.GetSweetSpot`,
+- **The positions given to imports** (`units.GetGroundHeight`, `scripts.GetSweetSpot`,
   `los_radar.GetVisibleEnemiesInRadiusList`) are `Vec3`s in the module's own memory, in the block, or (for
   `GetWeaponTargetPos`) the caller's `pos`. `units.GetGroundHeight` reads only `x` and `z`;
-  `units.GetSweetSpot` writes all three.
+  `scripts.GetSweetSpot` writes all three.
   What `units.GetGroundHeight` is given for *y* is not compared: the replay compares only *x* and *z* of that
   argument (a `pos=(x,z)` form in the recordings, `docs/replay-format.md`, the `vec3` mode with `"axes":
   "xz"`), as in `i units.GetGroundHeight pos=(42467328,17301504) = 1`. The *y* the game itself passes is the
@@ -274,7 +274,7 @@ its offset, ABI section 7.1), which the recordings show as `Unit#N`. No imports,
 | no target | none | 0 |
 | a ground target at (*x*, *z*) = (TargetX × 65536, TargetZ × 65536) | `units.GetGroundHeight` of (*x*, *z*), giving *h*₁. If *h*₁ > `Game.seaLevel`: `units.GetGroundHeight` of (*x*, *z*) again, giving *h* (Q2); otherwise *h* = `Game.seaLevel` | 1; `pos` = (*x*, *h* × 65536, *z*) |
 | a unit target *t* with `t.unitDefIndex` = 0 | publishing CLEARED for *u* and *w* | 0; TargetX = 0, TargetZ = −32768 |
-| a unit target *t* | `units.GetSweetSpot(t, s)` | 1; `pos` = *s*, led when the weapon leads (below) |
+| a unit target *t* | `scripts.GetSweetSpot(t, s)` | 1; `pos` = *s*, led when the weapon leads (below) |
 
 The weapon *leads* when all of these hold: the slot has a weapon (value 2 of its flags), the slot's
 `WeaponDef` has `cruise` clear in `flags` and a `speed` ≠ 0, `t.motion` is not null,
@@ -288,7 +288,7 @@ The factor is 0xcccc / 65536, about 0.8.
 
 When `t.motion` is null there is no lead and `pos` = *s*, result 1: in `edges-economy-targeting`, from tick
 126 on, `Unit#1` aims weapon 0 at `Unit#502`, whose `motion` is null, and the call returns the sweet spot
-`units.GetSweetSpot` gave (`o pos.x 45605925`, `o result 1`), recorded 66 times.
+`scripts.GetSweetSpot` gave (`o pos.x 45605925`, `o result 1`), recorded 66 times.
 
 Section 5 gives the widths.
 
@@ -403,7 +403,7 @@ imports, no writes.
 3. **`tests/replay/targeting/skirmish4-long.txt`, the call at tick 25755 of
    `GetWeaponTargetPos(Unit#37, pos, 0)`: a lead.** The slot holds the unit target `Unit#775`.
    `weapon0Flags` is 18 (value 2 set), the weapon `weapondef#16` has `flags` 0x00080a01 and `speed`
-   655360, `Unit#775.motion` is `UnitMotion#36`, and `Unit#37.killCount` is 7. `units.GetSweetSpot`
+   655360, `Unit#775.motion` is `UnitMotion#36`, and `Unit#37.killCount` is 7. `scripts.GetSweetSpot`
    gives *s* = (180226455, 17441044, 103711884), and `Unit#37.pos` is (172578459, 851968, 97802795):
    - *d* = (−7647996, −16589076, −5909089), *D* = 19199130;
    - *T* = 19199130 × 65536 / 655360 = 1919913, *T*′ = 1919913 × 0xcccc >> 16 = 1535906;
@@ -528,6 +528,9 @@ Gaps in the kit, which this spec does not fill:
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
 - The CLEARED record: the recordings carry only the outbox and the size of `services.SchedPublish`, not the
   record's fields, so no recording checks `kind`, `unit`, `weapon` or the zero fields of section 2.
+- The manifest's `signatures` for `scripts.GetSweetSpot`: `wasm/modules.json` has no `scripts` group and
+  still lists `GetSweetSpot` under `units`, which `interfaces/units.h` 2.0 no longer has. The import is
+  `scripts.GetSweetSpot`, as `interfaces/scripts.h` and the recordings name it, with the kinds of section 2.
 
 No rule of the candidate tests names a kamikaze unit: the one that `docs/replay-format.md` mentions among
 the recorded candidates is judged like any other candidate.
@@ -538,5 +541,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v19` and `reference-traces-v30`, the versions the gate judges against. Interface
+Kit `interfaces-v20` and `reference-traces-v30`, the versions the gate judges against. Interface
 `targeting` 2.0.
