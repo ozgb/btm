@@ -48,7 +48,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `FindBestTargetIfFireAtWill`, `ChooseWeapon`.
 - `data`: `g_game`, `g_blockBase` (ABI 8.2).
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
-  `targeting` 3, and for its import groups `map` 6, `scripts` 1, `weapons` 3, `los_radar` 4, `services` 2.
+  `targeting` 3, and for its import groups `map` 7, `scripts` 1, `weapons` 3, `los_radar` 4, `services` 2.
 - Slot kinds:
 
 | Slot | Kinds |
@@ -64,7 +64,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
 
 | Import | Kinds | Used for |
 | --- | --- | --- |
-| `map.GetGroundHeight` | `[linear] -> int` | the height of a ground target (`interfaces/map.h`, version 6.0) |
+| `map.GetGroundHeight` | `[linear] -> int` | the height of a ground target (`interfaces/map.h`, version 7.0) |
 | `scripts.GetSweetSpot` | `[block, linear] -> void` | the point to aim at on a target unit |
 | `weapons.GetWeaponRange` | `[block, int] -> int` | the search radius |
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
@@ -585,5 +585,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v25` and `reference-traces-v31`, the versions the gate judges against. Interface
+Kit `interfaces-v26` and `reference-traces-v31`, the versions the gate judges against. Interface
 `targeting` 3.0.
