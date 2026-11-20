@@ -81,9 +81,8 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `docs/module-abi.md`, section 11.3 (the game manifest's budget is ten times the most fuel any tick of the
   conformity gate's scenarios burns).
 - Hooks: the header names the hook `FilterTargets` for `FindWeaponTarget` and
-  `FindBestTargetIfFireAtWill`; this module raises no hook. The kit defines no hook interface for modules
-  (`docs/module-abi.md` has none), so the gate's treatment of a hook is not defined (see "Gaps in the kit",
-  section 7).
+  `FindBestTargetIfFireAtWill`; this module raises no hook, and the gate judges both slots as it does
+  any other (section 7).
 
 ### Arguments outside the block
 
@@ -566,13 +565,16 @@ Gaps in the kit, which this spec does not fill:
   them, and so whether a module's result or trap there can be judged.
 - The candidate list's maximum: the kit gives none that a module must hold, against the 4096-byte stack
   of ABI section 2.2 (section 2).
-- The `FilterTargets` hook: the header names it, the kit defines no hook interface, and what the gate does
-  with a module that raises none is not stated (section 2).
 - The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
   result and the stream words advance as the game's do, and ABI section 9.3 gives the range-below-2 case,
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
 - The CLEARED record: the recordings carry only the outbox and the size of `services.SchedPublish`, not the
   record's fields, so no recording checks its `kind`, `unit` or `weapon`.
+
+The `FilterTargets` hook is not a gate rule: no recording, schema, glue or import of the kit names it, and
+`docs/module-abi.md` defines no hook interface. It is a mod hook of Milestone 3 (this repository's issue #1),
+so a module raises none and the gate judges `FindWeaponTarget` and `FindBestTargetIfFireAtWill` as it does
+any other slot.
 
 No rule of the candidate tests names a kamikaze unit: the one that `docs/replay-format.md` mentions among
 the recorded candidates is judged like any other candidate.
