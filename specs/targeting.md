@@ -137,19 +137,24 @@ build, set from the build's own gate runs). This section gives the rest of the e
   the module gives it (ABI section 7.3): its arguments are the player, a position, a radius, flags (0), the
   buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
-  recordings' `o out` line lists them. The replay (`docs/replay-format.md`, "Not recorded", the entry for
-  this import) answers a call from the next recorded vector line with the same player, position, radius and
-  flags: it writes the first `capacity` units of the recorded list, in order, and returns the recorded count.
-  A repeat with the same arguments and a larger capacity, after a count above the capacity, is answered from
-  the same line and takes no further import; any other extra call is a divergence. A search makes the
-  import once in the recordings, then draws. The number of candidates has no limit (it is every unit the
-  vector form `los_radar.GetVisibleEnemiesInRadius` appends, `interfaces/los_radar.h`), and the draws use the
-  full count. ABI section 7.3 says a caller that gets
-  a count above its capacity calls again with a larger buffer; holding the whole list, and the capacity and
-  place of the buffer, are the build's choice. No search in the recordings lists more than 52 candidates.
-  The build's constraints on that memory: the module allocates no heap and uses no scratch (ABI sections 2.1
-  and 2.2), and the buffer, and any list the module derives from it, is on its stack or in its statics,
-  which must be as found at the end of each tick (ABI section 12).
+  recordings' `o out` line lists them. How the replay answers the import is informative here, not part of
+  the module's behaviour (`docs/replay-format.md`, "Not recorded", the entry for this import): it answers a
+  call from the next recorded vector line with the same player, position, radius and flags, writes the
+  first `capacity` units of the recorded list, in order, and returns the recorded count. What binds the
+  module: after a count above the capacity it may repeat the call with the same arguments and a larger
+  capacity, which the replay answers from the same line as no further import, and any other extra call of
+  the import is a divergence. A search makes the import once in the recordings, then draws. The number of
+  candidates has no limit (it is every unit the vector form `los_radar.GetVisibleEnemiesInRadius` appends,
+  `interfaces/los_radar.h`), and the draws use the full count. ABI section 7.3 says a caller that gets a
+  count above its capacity calls again with a larger buffer; holding the whole list, and the capacity and
+  place of the buffer, are the build's choice. No search in the recordings lists more than 52 candidates,
+  and the kit gives no maximum (section 7, gaps).
+  The constraints the ABI sets on that memory: the module allocates no heap and uses no scratch (ABI
+  sections 2.1 and 2.2), and the buffer, and any list the module derives from it, is on its stack or in its
+  statics. The stack is 4096 bytes with no guard below it (ABI section 2.2), room for at most 1024 offsets
+  less the slot's own use of it. Statics are hashed after every tick of a test-mode run, and a hash that
+  differs from the first is fatal (ABI section 12): a buffer in statics must hold the same bytes at the end
+  of every tick as at the end of the first. The window is all zero at instantiation (ABI section 2.2).
   The recordings show the import as one line, `i los_radar.GetVisibleEnemiesInRadius`, whose arguments are
   the player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i los_radar.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and
@@ -184,9 +189,10 @@ A slot holds:
 
 - *no target* when TargetX = 0 and TargetZ = −32768;
 - a *unit target* when TargetZ = −32768 and TargetX ≠ 0: the unit at index
-  TargetX (read as signed 16-bit) of `Game.units`: its address is the base `Game.units` plus the index
-  times 280, the size of `Unit` in `layout.json` (the unit stride 0x118 of `docs/replay-format.md`). A unit's
-  `id` equals its index, and the unit that a SET_UNIT stored by `id` is the one read back;
+  TargetX (read as signed 16-bit) of `Game.units`: its address is `g_blockBase` plus the block offset
+  `Game.units` (below) plus the index times 280, the size of `Unit` in `layout.json` (the unit stride
+  0x118 of `docs/replay-format.md`). A unit's `id` equals its index, and the unit that a SET_UNIT stored
+  by `id` is the one read back;
 - a *ground target* when TargetZ ≠ −32768, at (TargetX × 65536, TargetZ × 65536) in position units. A slot
   whose TargetX and TargetZ are both 0 is a ground target at (0, 0), not *no target*.
 
@@ -194,6 +200,14 @@ A slot holds:
 and `short` (bits 3 to 15)): every SET_UNIT and SET_POS applied clears bits 10 to 14 of it, which are bits 7
 to 11 of `short` (it becomes `netDirtyFlags` AND 0x83ff). Bits 0 to 9 (`unknown_ba`, `dirty` and bits 0 to 6
 of `short`) and bit 15 (bit 12 of `short`) are kept. A LOAD leaves it as it was.
+
+**Pointers in the block.** Every pointer field the module reads from the block is a `Ref` in `layout.json`,
+and so a block offset (ABI section 7.1: 32 bits, 0 for null): `Game.units`, `Unit.def`, `Unit.motion`,
+`Unit.player`, the slot's `weapon` (`weapon{w}Def`), `UnitDef.categories` and `UnitDef.weaponCategories`
+(three offsets). The record it names is at `g_blockBase` plus the offset, and a *null* field in this spec
+(a null `motion`, a null `weapon{w}Def`) is one whose offset is 0. The recordings write these fields as
+object names (`r Unit#1.motion UnitMotion#1`, `null` for 0), as they do the event's. The module writes
+no pointer field.
 
 ### Read
 
@@ -241,11 +255,15 @@ Within one call, only the order of import calls is observable. The block writes 
 end of the call, so the order they are listed in here carries no meaning.
 
 In each slot, *u* is the unit, *w* the weapon (0, 1 or 2) and "the slot" is *u*'s weapon slot *w*. The
-engine never calls `GetWeaponTargetUnit`, `GetWeaponTargetPos` or `FindWeaponTarget` with a *w* above 2;
-this spec defines nothing for a larger *w* there. *Publishing CLEARED* for *u* and *w* is the import
-`services.HarnessTargetingEvent(effect, 12, 1)` and then the import `services.SchedPublish(9, effect, 12)`,
-both with the CLEARED effect of *u* and *w* (section 2); neither returns anything, and the recordings show
-only the second.
+engine never calls `GetWeaponTargetUnit`, `GetWeaponTargetPos` or `FindWeaponTarget` with a *w* (for
+`FindWeaponTarget`, its low 8 bits) above 2. An input *outside the contract* is one this spec sets no
+result for: such a *w*, and the inputs section 7 lists as outside the contract. A trap fails a scenario
+that reaches it (ABI section 13); the kit does not say whether the gate can reach any of these inputs
+(section 7, gaps).
+
+*Publishing CLEARED* for *u* and *w* is the import `services.HarnessTargetingEvent(effect, 12, 1)` and then
+the import `services.SchedPublish(9, effect, 12)`, both with the CLEARED effect of *u* and *w* (section 2);
+neither returns anything, and the recordings show only the second.
 
 ### `Apply(event, size)`
 
@@ -363,8 +381,10 @@ imports, no writes.
   value is drawn as that negative bound, so its distance is 0 and the generator is left alone.
 - **Target fields:** TargetX and TargetZ are signed 16-bit. A SET_POS shifts the 32-bit `pos[0]` and
   `pos[2]` right by 16 with the sign kept, then keeps the low 16 bits. A LOAD keeps the low 16 bits of
-  the 32-bit `xOrUnit` and `zOrSentinel`, with no shift. A ground target's position is the signed 16-bit
-  field times 65536, in 32 bits.
+  the 32-bit `xOrUnit` and `zOrSentinel`, with no shift. The header gives each as a 16-bit value, and
+  `zOrSentinel` sign-extended to 32 bits (−32768 as 0xffff8000), so the low 16 bits are that value; a
+  field outside the 16-bit range keeps its low 16 bits all the same. A ground target's position is the
+  signed 16-bit field times 65536, in 32 bits.
 - **The event's size:** `size` is compared as an unsigned 32-bit value with 12 and with the kind's
   payload size; a larger `size` than the payload's is accepted, and the bytes past the payload are not
   read.
@@ -382,7 +402,8 @@ imports, no writes.
   square root of *d*.x² + *d*.y² + *d*.z², in double precision (64-bit IEEE): each square is rounded to
   double, the sum is rounded as (x² + y²) + z² in that order, and the root is truncated toward zero to a
   signed 32-bit integer. A root of 2^31 or more gives *D* = −2^31; nothing in the engine bounds it, and no
-  recording reaches it (they stay below 2^25).
+  recording reaches it (they stay below 2^25). The order of the rounding is part of the result: the replay
+  compares `pos` exactly.
 - **The time of a lead:** *T* is signed. It is the quotient of *D* × 65536 by `speed` (both signed, the
   product exact in 64 bits) truncated toward zero, then reduced to its low 32 bits as a signed value, so a
   quotient beyond 32 bits wraps. A negative `speed` is not rejected: it gives *T* the opposite sign to
@@ -503,15 +524,14 @@ Not recorded, and the kit gives no reason and does not say whether a scenario re
 - A *q* that wraps below 0 (section 5 gives the result).
 - Two eligible fallback picks with the same distance. Preferred picks that tie are recorded, at distance 0
   (`RandomInt 0 = 0`): the earlier pick wins, as at tick 73 of `console-units`.
-- A null `weapon{w}Def` when the lead or the paralyzer test reads it: it is outside the
-  contract and the module may trap.
-- A unit target with a negative TargetX.
-- A weapon index above 2 in `GetWeaponTargetUnit` or `GetWeaponTargetPos`, and the weapon index of
-  `FindWeaponTarget` above 255.
+- A null `weapon{w}Def` when the lead or the paralyzer test reads it: outside the contract.
+- A unit target with a negative TargetX, or with a TargetX outside the unit pool: outside the contract.
+- A weapon index above 2 in `GetWeaponTargetUnit` or `GetWeaponTargetPos`, and in `FindWeaponTarget` a
+  weapon index whose low 8 bits (section 5) are above 2: outside the contract.
+- A nonzero `event.unit` or `event.target` that is not the offset of a unit: outside the contract.
 - A ground target with a negative coordinate (section 5 gives the shift).
 - A `unitDefIndex` of 512 or more (a `UnitTypeSet` holds 512 bits) given to a set test, and a null
-  `categories`, `weaponCategories` or `u.def`: the spec defines nothing for them.
-- A TargetX that is outside the unit pool.
+  `categories`, `weaponCategories` or `u.def`: outside the contract.
 - `netDirtyFlags` bits 0, 1, 3 to 9, 11 and 15 before a SET_UNIT or SET_POS: the recordings set only bits 2,
   10, 12, 13 and 14, so the kept and cleared rule for the others is checked by no recording.
 - `GetWeaponTargetUnit` on a dead or recycled target.
@@ -542,6 +562,10 @@ Recorded once, so a single recorded call or search checks it:
 
 Gaps in the kit, which this spec does not fill:
 
+- The inputs outside the contract (section 4): the kit does not say whether the gate can reach any of
+  them, and so whether a module's result or trap there can be judged.
+- The candidate list's maximum: the kit gives none that a module must hold, against the 4096-byte stack
+  of ABI section 2.2 (section 2).
 - The `FilterTargets` hook: the header names it, the kit defines no hook interface, and what the gate does
   with a module that raises none is not stated (section 2).
 - The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
