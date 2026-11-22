@@ -586,6 +586,10 @@ Gaps in the kit, which this spec does not fill:
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
 - The CLEARED record: the recordings carry only the outbox and the size of `services.SchedPublish`, not the
   record's fields, so no recording checks its `kind`, `unit` or `weapon`.
+- What the gate judges of `SavedTargetPair`: the kit gives no format for a saved game, so it does not say
+  which target pairs the stored save of `save-midgame` holds, nor whether any of them is a unit or a ground
+  target. If none is, the gate judges only the no-target word 0x80000000, and nothing judges the packing of
+  a unit or a ground target (section 4).
 
 The `FilterTargets` hook is not a gate rule: no recording, schema, glue or import of the kit names it, and
 `docs/module-abi.md` defines no hook interface. It is a mod hook of Milestone 3 (this repository's issue #1),
