@@ -10,7 +10,7 @@ weapon a unit fires first, and searches the enemies los_radar lists for a unit, 
 
 ## 2. Interface
 
-### Slots (`interfaces/targeting.h`, version 3.0)
+### Slots (`interfaces/targeting.h`, version 3.1)
 
 | Slot | When the engine calls it |
 | --- | --- |
@@ -20,6 +20,7 @@ weapon a unit fires first, and searches the enemies los_radar lists for a unit, 
 | `FindWeaponTarget` | when a weapon with no target looks for one |
 | `FindBestTargetIfFireAtWill` | when an idle unit looks for something to attack |
 | `ChooseWeapon` | when a unit attacks, to pick the weapon that fires first |
+| `SavedTargetPair` | when a game is saved, to read a weapon's target pair; outside the tick |
 
 The events are those of `TargetingEventKind` in the header: `TARGETING_SET_UNIT` (96), `TARGETING_SET_POS`
 (97), `TARGETING_CLEAR` (98), `TARGETING_RESET` (99) and `TARGETING_LOAD` (100), called SET_UNIT, SET_POS,
@@ -45,10 +46,10 @@ build, set from the build's own gate runs). This section gives the rest of the e
 
 - `name` and `interface`: `targeting`.
 - `exports`, in this order: `Apply`, `GetWeaponTargetUnit`, `GetWeaponTargetPos`, `FindWeaponTarget`,
-  `FindBestTargetIfFireAtWill`, `ChooseWeapon`.
+  `FindBestTargetIfFireAtWill`, `ChooseWeapon`, `SavedTargetPair`.
 - `data`: `g_game`, `g_blockBase` (ABI 8.2).
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
-  `targeting` 3, and for its import groups `map` 7, `scripts` 2, `weapons` 3, `los_radar` 4, `services` 2.
+  `targeting` 3, and for its import groups `map` 8, `scripts` 2, `weapons` 3, `los_radar` 4, `services` 2.
 - Slot kinds:
 
 | Slot | Kinds |
@@ -59,12 +60,13 @@ build, set from the build's own gate runs). This section gives the rest of the e
 | `FindWeaponTarget` | `[block, int, int] -> block` |
 | `FindBestTargetIfFireAtWill` | `[block] -> block` |
 | `ChooseWeapon` | `[block] -> int` |
+| `SavedTargetPair` | `[block, int] -> int` |
 
 - Imports, every one listed and nothing else:
 
 | Import | Kinds | Used for |
 | --- | --- | --- |
-| `map.GetGroundHeight` | `[linear] -> int` | the height of a ground target (`interfaces/map.h`, version 7.1) |
+| `map.GetGroundHeight` | `[linear] -> int` | the height of a ground target (`interfaces/map.h`, version 8.0) |
 | `scripts.GetSweetSpot` | `[block, linear] -> void` | the point to aim at on a target unit |
 | `weapons.GetWeaponRange` | `[block, int] -> int` | the search radius |
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
@@ -369,6 +371,16 @@ when value 2 of its `flags` is set, and nothing else of the slot is read: the ki
 "a weapon of ID 0" (`docs/replay-format.md`, "Not recorded") are the data that leaves that bit clear. No
 imports, no writes.
 
+### `SavedTargetPair(u, w)`
+
+The slot's target as a saved game keeps it, one 32-bit word: TargetX's 16 bits in bits 0 to 15 and
+TargetZ's 16 bits in bits 16 to 31. A LOAD with `xOrUnit` = TargetX and `zOrSentinel` = TargetZ stores the
+same pair back. A slot with no target gives 0x80000000 (−2147483648 as a signed 32-bit result). No
+imports, no writes. The engine calls it outside the tick, while a game is saved; the recordings hold no
+call (section 7), and the gate judges it through the saved game (`docs/reference-traces.md`: the save
+`save-midgame` makes is compared with the reference's by decoded contents, and `load-midgame` plays on
+from it).
+
 ## 5. Exactness
 
 - **Random draws:** every draw is `services.RandomInt`, on the `rng.seed` generator of ABI section 9.3, in
@@ -524,8 +536,8 @@ Not recorded, and the kit gives no reason and does not say whether a scenario re
   (`RandomInt 0 = 0`): the earlier pick wins, as at tick 73 of `console-units`.
 - A null `weapon{w}Def` when the lead or the paralyzer test reads it: outside the contract.
 - A unit target with a negative TargetX, or with a TargetX outside the unit pool: outside the contract.
-- A weapon index above 2 in `GetWeaponTargetUnit` or `GetWeaponTargetPos`, and in `FindWeaponTarget` a
-  weapon index whose low 8 bits (section 5) are above 2: outside the contract.
+- A weapon index above 2 in `GetWeaponTargetUnit`, `GetWeaponTargetPos` or `SavedTargetPair`, and in
+  `FindWeaponTarget` a weapon index whose low 8 bits (section 5) are above 2: outside the contract.
 - A nonzero `event.unit` or `event.target` that is not the offset of a unit: outside the contract.
 - A ground target with a negative coordinate (section 5 gives the shift).
 - A `unitDefIndex` of 512 or more (a `UnitTypeSet` holds 512 bits) given to a set test, and a null
@@ -552,6 +564,11 @@ Recorded, in `orders-immediate` and `edges-targeting-lead` (the kit's `docs/repl
   `UnitMotion#8`) and 78 with 7 (62 in `edges-targeting-lead`, and the 16 of `skirmish4-long`, among them
   example 3). In the others the velocity adds nothing. The kit says the target moves in the calls with 4
   and 5 kills (`docs/replay-format.md`, the list of `edges-targeting-lead`).
+
+Not recorded, and reached by the gate: `SavedTargetPair`. The kit leaves the slot out of the recordings
+(`data/replay_schema.json`, its `unrecorded` entry, with the reason "a query of a saved game, outside the
+tick"), so no call of it is replayed; the saved game of `save-midgame`, compared by decoded contents, and
+the play of `load-midgame` from it are what judge it (section 4).
 
 Recorded once, so a single recorded call or search checks it:
 
@@ -584,5 +601,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v30` and `reference-traces-v32`, the versions the gate judges against. Interface
-`targeting` 3.0.
+Kit `interfaces-v31` and `reference-traces-v32`, the versions the gate judges against. Interface
+`targeting` 3.1.
