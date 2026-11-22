@@ -130,8 +130,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `scripts.GetSweetSpot` writes all three.
   What `map.GetGroundHeight` is given for *y* is not compared: the replay compares only *x* and *z* of that
   argument (a `pos=(x,z)` form in the recordings, `docs/replay-format.md`, the `vec3` mode with `"axes":
-  "xz"`), as in `i map.GetGroundHeight pos=(42467328,17301504) = 1`. The *y* the game itself passes is the
-  *y* the caller's `pos` held on entry, which the module may pass unchanged, or any other value.
+  "xz"`), as in `i map.GetGroundHeight pos=(42467328,17301504) = 1`. The module may pass any *y*.
 - **The candidate list** of a search is what `los_radar.GetVisibleEnemiesInRadiusList` writes to the buffer
   the module gives it (ABI section 7.3): its arguments are the player, a position, a radius, flags (0), the
   buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
