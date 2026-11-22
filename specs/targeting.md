@@ -541,7 +541,7 @@ Not recorded, and the kit gives no reason and does not say whether a scenario re
 - A nonzero `event.unit` or `event.target` that is not the offset of a unit: outside the contract.
 - A ground target with a negative coordinate (section 5 gives the shift).
 - A `unitDefIndex` of 512 or more (a `UnitTypeSet` holds 512 bits) given to a set test, and a null
-  `categories`, `weaponCategories` or `u.def`: outside the contract.
+  `categories`, `weaponCategories`, `u.def`, `t.def` or `u.player`: outside the contract.
 - `netDirtyFlags` bits 0, 1, 3 to 9, 11 and 15 before a SET_UNIT or SET_POS: the recordings set only bits 2,
   10, 12, 13 and 14, so the kept and cleared rule for the others is checked by no recording.
 - `GetWeaponTargetUnit` on a dead or recycled target.
