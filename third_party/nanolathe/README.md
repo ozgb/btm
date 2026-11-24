@@ -44,4 +44,7 @@ overlay of loose files, TDF and FBI, COB, GAF and 3DO.
 Nanolathe's research comes from its authors' static analysis of the retail executable, whose MD5 it records as
 `8e74a1dffa1f5988624c52048f5b20cd` (3.1c). `NOTICE.md` says repository inspection cannot certify that every
 line is independently authored, and `docs/PUBLICATION.md` lists community-format and "OpenTA" attributions as
-unresolved. Whether an implementer may read this directory under the sign-off of #2 is decided there.
+unresolved.
+
+Implementers may read this directory (the human, 2026-11-24). It is the one exception to the rule of #2 that an
+implementer has read no analysis of the retail executable.
