@@ -40,17 +40,21 @@ changes are all made in its `Apply`.
 The kit's manifest (`wasm/modules.json`) carries this module's interface major, 4 (`majors.targeting`), and
 the majors of its import groups. It has no build entry for it, and its `signatures` list only the names the
 manifest's modules use (ABI section 10.1), so they hold none of this module's slots and, of its imports, only
-`services.RandomInt`: the kinds below, in the terms of ABI section 7, are the ones to build against. A
-module's build sets its `data_base` and `table_base` (within the windows and table ranges of ABI sections 2.2
-and 2.3), its `slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget belongs to its
-build, set from the build's own gate runs). This section gives the rest of the entry the module must have.
+`services.RandomInt` and `services.Emit`: the kinds below, in the terms of ABI section 7, are the ones to
+build against. A module's build sets its `data_base` and `table_base` (within the windows and table ranges of
+ABI sections 2.2 and 2.3), its `slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget
+belongs to its build, set from the build's own gate runs). This section gives the rest of the entry the module
+must have.
 
 - `name` and `interface`: `targeting`.
 - `exports`, in this order: `Apply`, `GetWeaponTargetUnit`, `GetWeaponTargetPos`, `FindWeaponTarget`,
   `FindBestTargetIfFireAtWill`, `ChooseWeapon`, `SavedTargetPair`.
 - `data`: `g_game`, `g_blockBase` (ABI 8.2).
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
-  `targeting` 4, and for its import groups `map` 9, `scripts` 3, `weapons` 4, `los_radar` 5, `services` 3.
+  `targeting` 4, and for its import groups `map` 9, `scripts` 3, `weapons` 4, `los_radar` 5, `services` 4.
+- `publishes`: `{"112": 12}` (ABI section 4.2): the one kind the module publishes through `services.Emit`,
+  CLEARED (`TARGETING_EFFECT_CLEARED`, 112), with its payload size, 12 bytes, the size of
+  `TargetingEventHeader` in `interfaces/targeting.h` (an `int`, an `unsigned int` and an `int`).
 - Slot kinds:
 
 | Slot | Kinds |
@@ -73,10 +77,9 @@ build, set from the build's own gate runs). This section gives the rest of the e
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
 | `los_radar.GetVisibleEnemiesInRadius` | `[int, linear, int, int, linear, int] -> int` | the candidates of a search |
 | `services.RandomInt` | `[int] -> int` | the order of a search and its distances |
+| `services.Emit` | `[linear, int] -> void` | publishing the effect `TARGETING_EFFECT_CLEARED` |
 
-  The kinds of the services imports are those of ABI section 9.3. Publishing the effect
-  `TARGETING_EFFECT_CLEARED` needs a publishing service that the kit does not declare (below, and section 7,
-  gaps), so the list has no import for it.
+  The kinds of the services imports are those of ABI section 9.3.
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. Its fuel budget and `size_budget` are its build's
   (ABI sections 11.1 and 11.3), not the kit's. Its stack is the manifest's `stack_size`,
@@ -114,23 +117,19 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `docs/replay-format.md`). The unit is at `g_blockBase` plus the offset. The module reads no byte of the
   event at or past `size`.
 - **The effect** the module publishes is a `TargetingEventHeader` alone, 12 bytes, in the module's own
-  memory (its stack or its statics), published to targeting's outbox with its size, 12 (ABI section 6.1).
-  The CLEARED effect of a unit *u* and a weapon *w* has `kind` 112 (`TARGETING_EFFECT_CLEARED`), `unit` the
-  block offset of *u* (its address less `g_blockBase`) and `weapon` *w*. The recordings show each
-  publication as one line of the native module's publishing service, `SchedPublish` (an entry of the
-  `services` annotation of `data/replay_schema.json`), with the outbox 9 and the size 12 (ABI section 9.3:
-  targeting's recordings still carry the native module's publishing lines);
-  the outbox and the size are compared, and the record is not recorded (the `skip` mode of
-  `docs/replay-format.md`, "Services"). The header says what the subscribers do with it: the unit's script
-  runs its TargetCleared function with the weapon's number.
-- **The publishing service**: ABI section 9.3 ("Who records the dump's events") says an effect is recorded
-  by the service that publishes it, in the same call, for the dump's events (`docs/trace-format.md`, section
-  8.26 for targeting's), and that a module that takes over a subsystem gets a publishing service of its own,
-  as wind_meteors has `WindMeteorsEmit`, added to `interfaces/services.h` and to its manifest's imports
-  together. The kit's `interfaces/services.h` declares no such service for targeting, so this spec names no
-  import that publishes CLEARED, and a module built to the kit cannot yet publish it (section 7, gaps). The
-  engine records the events it delivers to `Apply`, so the module records nothing for them, and no trace
-  row hashes the dump's events.
+  memory (its stack or its statics), published as `services.Emit(effect, 12)` (ABI section 6.1: the
+  publisher passes the payload's size). The CLEARED effect of a unit *u* and a weapon *w* has `kind` 112
+  (`TARGETING_EFFECT_CLEARED`), `unit` the block offset of *u* (its address less `g_blockBase`) and `weapon`
+  *w*. The host puts it in targeting's outbox, the one of the manifest entry's `interface`, and refuses, as
+  an import error, a kind outside the entry's `publishes` table or a size other than 12 (ABI section 9.3).
+  The recordings show each publication as `i services.Emit (112,Unit#3,0) 12`: the effect's value (`kind`,
+  `unit` as a `Unit#N` ref, `weapon`) and its size, both compared (`docs/replay-format.md`, the `Emit`
+  service). The header says what the subscribers do with it: the unit's script runs its TargetCleared
+  function with the weapon's number.
+- **Recording the effect**: `services.Emit` also records the effect for the dump's events, in the same call
+  (ABI section 9.3, "Who records the dump's events"; `docs/trace-format.md`, section 8.26 for targeting's),
+  so the module calls nothing else to publish CLEARED. The engine records the events it delivers to
+  `Apply`, so the module records nothing for them, and no trace row hashes the dump's events.
 - **`pos`** (`GetWeaponTargetPos`) is a `Vec3` in the caller's memory, written only when the slot returns 1.
   When it returns 0, `pos` is left as it was.
 - **The positions given to imports** (`map.GetGroundHeight`, `scripts.GetSweetSpot`,
@@ -268,10 +267,9 @@ result for: such a *w*, and the inputs section 7 lists as outside the contract. 
 that reaches it (ABI section 13); the kit does not say whether the gate can reach any of these inputs
 (section 7, gaps).
 
-*Publishing CLEARED* for *u* and *w* is one publication of the CLEARED effect of *u* and *w* to targeting's
-outbox, with the size 12 (section 2), which the recordings show as one `SchedPublish` line with the outbox 9
-and the size 12, in its place among the slot's imports. The kit declares no service for it yet (section 7,
-gaps).
+*Publishing CLEARED* for *u* and *w* is the import `services.Emit(effect, 12)` with the CLEARED effect of *u*
+and *w* (section 2). It returns nothing, and the recordings show it as `i services.Emit (112,Unit#N,w) 12`,
+with *u* as `Unit#N`, in its place among the slot's imports.
 
 ### `Apply(event, size)`
 
@@ -484,11 +482,11 @@ saves `save-midgame` and `save-targets` make in the same run).
    Each pick's reach import returns 1. The result is `Unit#3`, and the SET_UNIT that follows at the same
    tick stores 3 in `Unit#251.weapon0TargetX`.
 5. **`tests/replay/targeting/orders-tier2-spider.txt`, the four `Apply` calls of tick 120 for `Unit#3`: CLEAR.**
-   The first clears weapon 0, which holds a target: the recorded publishing line, `SchedPublish` with 9
-   and 12 (publishing CLEARED for `Unit#3` and weapon 0), TargetX becomes 0 and TargetZ −32768,
-   `o result 1`. The second clears weapon 0 again, which now holds no target: no import, no write,
-   `o result 0`. The third clears weapon 1, which holds a target: the same publishing line, TargetX 0,
-   TargetZ −32768, `o result 1`. The fourth clears weapon 2, which holds no target: no import, no write,
+   The first clears weapon 0, which holds a target: the recorded import `i services.Emit (112,Unit#3,0) 12`
+   (publishing CLEARED for `Unit#3` and weapon 0), TargetX becomes 0 and TargetZ −32768, `o result 1`. The
+   second clears weapon 0 again, which now holds no target: no import, no write, `o result 0`. The third
+   clears weapon 1, which holds a target: `i services.Emit (112,Unit#3,1) 12`, TargetX 0, TargetZ −32768,
+   `o result 1`. The fourth clears weapon 2, which holds no target: no import, no write,
    `o result 0`.
 6. **`tests/replay/targeting/orders-tier2-spider.txt`, the first `Apply` at tick 0: a RESET of a new unit.**
    `Unit#1.weapon0TargetX` and `weapon0TargetZ` are both 0, a ground target at (0, 0), so the slot holds a
@@ -496,7 +494,7 @@ saves `save-midgame` and `save-targets` make in the same run).
    no target has outcome 0, as at tick 160 of `console-units` (`Unit#251`, weapon 0).
 7. **`tests/replay/targeting/console-units.txt`, the call at tick 140 of
    `GetWeaponTargetPos(Unit#252, pos, 0)`.** The slot holds the unit target `Unit#2`, whose `unitDefIndex`
-   is 0: the recorded publishing line, `SchedPublish` with 9 and 12 (publishing CLEARED for `Unit#252` and
+   is 0: the recorded import `i services.Emit (112,Unit#252,0) 12` (publishing CLEARED for `Unit#252` and
    weapon 0), TargetX becomes 0 (TargetZ is already −32768), `o result 0`, and `pos` is not written.
 8. **`tests/replay/targeting/save-targets.txt` and `load-targets.txt`, tick 150: a saved and a loaded
    target pair.** In `save-targets`, `Unit#3`'s weapon 0 holds the ground target TargetX = 3140, TargetZ =
@@ -511,7 +509,7 @@ saves `save-midgame` and `save-targets` make in the same run).
 Recorded, with counts over the nine recordings:
 
 - `Apply`: 792 SET_UNIT, all with outcome 1; 16 SET_POS, all with outcome 1; 1712 CLEAR, 419 of them of a
-  slot with a target (one publishing line each, outcome 1) and 1293 of a slot with none (outcome 0);
+  slot with a target (one `services.Emit` each, outcome 1) and 1293 of a slot with none (outcome 0);
   351 RESET, 348 with outcome 1 and 3 with outcome 0; 12 LOAD, all in `load-targets`, all with outcome 1
   (one of a unit target, two of a ground target and nine of no target). Each has its kind's payload size:
   16, 24, 12, 12 and 20.
@@ -600,13 +598,6 @@ Gaps in the kit, which this spec does not fill:
 - The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
   result and the stream words advance as the game's do, and ABI section 9.3 gives the range-below-2 case,
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
-- The CLEARED record: the recordings carry only the outbox and the size of each publishing line, not the
-  record's fields, so no recording checks its `kind`, `unit` or `weapon`.
-- The service that publishes CLEARED: the kit's `interfaces/services.h` declares no publishing service for
-  targeting, and ABI section 9.3 says one is added to that header and to the module's manifest imports
-  together, so the kit gives neither its name nor its kinds, nor how its call is matched against the
-  recordings' `SchedPublish` lines (section 2). Until the kit has it, a module cannot make the publications
-  that 419 CLEAR events and 7 `GetWeaponTargetPos` calls of the recordings hold.
 
 The `FilterTargets` and `VeterancyLevel` hooks are not gate rules: no recording, schema, glue or import of
 the kit names them, and `docs/module-abi.md` (section 6, "Hook points") fixes only where a hook runs, leaving
@@ -622,5 +613,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v32` and `reference-traces-v33`, the versions the gate judges against. Interface
+Kit `interfaces-v33` and `reference-traces-v33`, the versions the gate judges against. Interface
 `targeting` 4.0.
