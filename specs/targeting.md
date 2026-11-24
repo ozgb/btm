@@ -117,8 +117,9 @@ build, set from the build's own gate runs). This section gives the rest of the e
   memory (its stack or its statics), published to targeting's outbox with its size, 12 (ABI section 6.1).
   The CLEARED effect of a unit *u* and a weapon *w* has `kind` 112 (`TARGETING_EFFECT_CLEARED`), `unit` the
   block offset of *u* (its address less `g_blockBase`) and `weapon` *w*. The recordings show each
-  publication as one line of the native module's publishing service, `SchedPublish`, with the outbox 9 and
-  the size 12 (ABI section 9.3: targeting's recordings still carry the native module's publishing lines);
+  publication as one line of the native module's publishing service, `SchedPublish` (an entry of the
+  `services` annotation of `data/replay_schema.json`), with the outbox 9 and the size 12 (ABI section 9.3:
+  targeting's recordings still carry the native module's publishing lines);
   the outbox and the size are compared, and the record is not recorded (the `skip` mode of
   `docs/replay-format.md`, "Services"). The header says what the subscribers do with it: the unit's script
   runs its TargetCleared function with the weapon's number.
@@ -386,8 +387,8 @@ same pair back. A slot with no target gives 0x80000000 (−2147483648 as a signe
 imports, no writes. The engine calls it outside the tick, while a game is saved; `save-targets` records
 12 calls, weapons 0 to 2 of four units (example 8). The gate also judges the saved game
 (`docs/reference-traces.md`: the reference's saves of `save-midgame` and `save-targets` are stored, a save
-is compared with the reference's by decoded contents, and `load-midgame` and `load-targets` play on from
-them).
+is compared with the reference's by decoded contents, and `load-midgame` and `load-targets` play on from the
+saves `save-midgame` and `save-targets` make in the same run).
 
 ## 5. Exactness
 
