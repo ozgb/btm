@@ -10,7 +10,7 @@ weapon a unit fires first, and searches the enemies los_radar lists for a unit, 
 
 ## 2. Interface
 
-### Slots (`interfaces/targeting.h`, version 3.1)
+### Slots (`interfaces/targeting.h`, version 4.0)
 
 | Slot | When the engine calls it |
 | --- | --- |
@@ -36,7 +36,7 @@ event may also be delivered as soon as it is published, inside its publisher's c
 
 ### The manifest entry
 
-The kit's manifest (`wasm/modules.json`) carries this module's interface major, 3 (`majors.targeting`), and
+The kit's manifest (`wasm/modules.json`) carries this module's interface major, 4 (`majors.targeting`), and
 the majors of its import groups. It has no build entry for it, and its `signatures` list only the names the
 manifest's modules use (ABI section 10.1), so they hold none of this module's slots and, of its imports, only
 `services.RandomInt`: the kinds below, in the terms of ABI section 7, are the ones to build against. A
@@ -49,7 +49,7 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `FindBestTargetIfFireAtWill`, `ChooseWeapon`, `SavedTargetPair`.
 - `data`: `g_game`, `g_blockBase` (ABI 8.2).
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
-  `targeting` 3, and for its import groups `map` 8, `scripts` 2, `weapons` 3, `los_radar` 4, `services` 2.
+  `targeting` 4, and for its import groups `map` 9, `scripts` 3, `weapons` 4, `los_radar` 5, `services` 3.
 - Slot kinds:
 
 | Slot | Kinds |
@@ -66,11 +66,11 @@ build, set from the build's own gate runs). This section gives the rest of the e
 
 | Import | Kinds | Used for |
 | --- | --- | --- |
-| `map.GetGroundHeight` | `[linear] -> int` | the height of a ground target (`interfaces/map.h`, version 8.0) |
+| `map.GetGroundHeight` | `[linear] -> int` | the height of a ground target (`interfaces/map.h`, version 9.0) |
 | `scripts.GetSweetSpot` | `[block, linear] -> void` | the point to aim at on a target unit |
 | `weapons.GetWeaponRange` | `[block, int] -> int` | the search radius |
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
-| `los_radar.GetVisibleEnemiesInRadiusList` | `[int, linear, int, int, linear, int] -> int` | the candidates of a search |
+| `los_radar.GetVisibleEnemiesInRadius` | `[int, linear, int, int, linear, int] -> int` | the candidates of a search |
 | `services.RandomInt` | `[int] -> int` | the order of a search and its distances |
 | `services.HarnessTargetingEvent` | `[linear, int, int] -> void` | recording the effect for the dump's targeting events |
 | `services.SchedPublish` | `[int, linear, int] -> void` | publishing the effect `TARGETING_EFFECT_CLEARED` |
@@ -83,8 +83,10 @@ build, set from the build's own gate runs). This section gives the rest of the e
   `docs/module-abi.md`, section 11.3 (the game manifest's budget is ten times the most fuel any tick of the
   conformity gate's scenarios burns).
 - Hooks: the header names the hook `FilterTargets` for `FindWeaponTarget` and
-  `FindBestTargetIfFireAtWill`; this module raises no hook, and the gate judges both slots as it does
-  any other (section 7).
+  `FindBestTargetIfFireAtWill`, and `VeterancyLevel` for `GetWeaponTargetPos`; every other slot has
+  `Hooks: none`. ABI section 6 ("Hook points") says such a line fixes only where a hook runs, and that
+  Milestone 3 decides how a module calls one; this module raises no hook, and the gate judges these slots
+  as it does any other (section 7).
 
 ### Arguments outside the block
 
@@ -101,8 +103,8 @@ build, set from the build's own gate runs). This section gives the rest of the e
 | 8 to 11 | `weapon` | all | signed 32-bit | `a event.weapon 1` |
 | 12 to 15 | `target` | SET_UNIT (`TargetingSetUnit`) | unsigned 32-bit: a block offset, 0 for null | `a event.target Unit#251` |
 | 12 to 23 | `pos` | SET_POS (`TargetingSetPos`) | three signed 32-bit words, *x*, *y*, *z* | `a event.pos0 42467328` (and `pos1`, `pos2`) |
-| 12 to 15 | `xOrUnit` | LOAD (`TargetingLoad`) | signed 32-bit | none recorded |
-| 16 to 19 | `zOrSentinel` | LOAD (`TargetingLoad`) | signed 32-bit | none recorded |
+| 12 to 15 | `xOrUnit` | LOAD (`TargetingLoad`) | signed 32-bit | `a event.xOrUnit 3140` |
+| 16 to 19 | `zOrSentinel` | LOAD (`TargetingLoad`) | signed 32-bit | `a event.zOrSentinel 1180` |
 
   A kind's *payload size* is 16 for SET_UNIT, 24 for SET_POS and 20 for LOAD; CLEAR and RESET are the
   header alone, 12. The recordings write `size` after the fields, as `a size 16`, and every recorded event
@@ -127,28 +129,28 @@ build, set from the build's own gate runs). This section gives the rest of the e
 - **`pos`** (`GetWeaponTargetPos`) is a `Vec3` in the caller's memory, written only when the slot returns 1.
   When it returns 0, `pos` is left as it was.
 - **The positions given to imports** (`map.GetGroundHeight`, `scripts.GetSweetSpot`,
-  `los_radar.GetVisibleEnemiesInRadiusList`) are `Vec3`s in the module's own memory, in the block, or (for
+  `los_radar.GetVisibleEnemiesInRadius`) are `Vec3`s in the module's own memory, in the block, or (for
   `GetWeaponTargetPos`) the caller's `pos`. `map.GetGroundHeight` reads only `x` and `z`;
   `scripts.GetSweetSpot` writes all three.
   What `map.GetGroundHeight` is given for *y* is not compared: the replay compares only *x* and *z* of that
   argument (a `pos=(x,z)` form in the recordings, `docs/replay-format.md`, the `vec3` mode with `"axes":
   "xz"`), as in `i map.GetGroundHeight pos=(42467328,17301504) = 1`. The module may pass any *y*.
-- **The candidate list** of a search is what `los_radar.GetVisibleEnemiesInRadiusList` writes to the buffer
+- **The candidate list** of a search is what `los_radar.GetVisibleEnemiesInRadius` writes to the buffer
   the module gives it (ABI section 7.3): its arguments are the player, a position, a radius, flags (0), the
   buffer and the buffer's capacity in units. It returns the number of candidates, which may be above the
   capacity, and writes the first of them, up to the capacity, each as a block offset, in the order the
-  recordings' `o out` line lists them. How the replay answers the import is informative here, not part of
-  the module's behaviour (`docs/replay-format.md`, "Not recorded", the entry for this import): it answers a
-  call from the next recorded vector line with the same player, position, radius and flags, writes the
-  first `capacity` units of the recorded list, in order, and returns the recorded count. What binds the
+  recordings' `o out` line lists them. The list holds each unit once, and ABI section 7.3 says a caller
+  sizes the buffer for the most the list can hold: a buffer of one entry per slot of the unit pool never
+  gets a count above its capacity. How the replay answers the import is informative here, not part of the
+  module's behaviour (`docs/replay-format.md`, "Not recorded", the entry for this import): it answers a
+  call from the next recorded line with the same player, position, radius and flags, writes the first
+  `capacity` units of the recorded list, in order, and returns the recorded count. What binds the
   module: after a count above the capacity it may repeat the call with the same arguments and a larger
   capacity, which the replay answers from the same line as no further import, and any other extra call of
-  the import is a divergence. A search makes the import once in the recordings, then draws. The number of
-  candidates has no limit (it is every unit the vector form `los_radar.GetVisibleEnemiesInRadius` appends,
-  `interfaces/los_radar.h`), and the draws use the full count. ABI section 7.3 says a caller that gets a
-  count above its capacity calls again with a larger buffer; holding the whole list, and the capacity and
-  place of the buffer, are the build's choice. No search in the recordings lists more than 52 candidates,
-  and the kit gives no maximum (section 7, gaps).
+  the import is a divergence. A search makes the import once in the recordings, then draws, and the draws
+  use the full count. Holding the whole list, and the capacity and place of the buffer, are the build's
+  choice. No search in the recordings lists more than 52 candidates, and the kit bounds the list only by
+  the unit pool (section 7, gaps).
   The constraints the ABI sets on that memory: the module allocates no heap and uses no scratch (ABI
   sections 2.1 and 2.2), and the buffer, and any list the module derives from it, is on its stack or in its
   statics. The stack is 4096 bytes with no guard below it (ABI section 2.2), room for at most 1024 offsets
@@ -158,10 +160,10 @@ build, set from the build's own gate runs). This section gives the rest of the e
   The recordings show the import as one line, `i los_radar.GetVisibleEnemiesInRadius`, whose arguments are
   the player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i los_radar.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and
-  no capacity. The line `o out [...]` follows it and holds the whole list; its length is the import's count
-  (the line has no `= n`). After that line come `o Unit#N.*`
-  lines (for example `o Unit#2.flags 0x90240321`) and `o UnitDef#N.flags1` lines (10 in the recordings,
-  for example `o UnitDef#208.flags1 0x0084008a` in `skirmish4-long` at tick 25768), giving the fields of
+  no capacity (the `units-buffer` mode of `docs/replay-format.md`). The line `o out [...]` follows it and
+  holds the whole list; its length is the import's count (the line has no `= n`). After that line come
+  `o Unit#N.*` lines (for example `o Unit#2.flags 0x90240321`) and `o UnitDef#N.flags1` lines (10 in the
+  recordings, for example `o UnitDef#208.flags1 0x0084008a` in `skirmish4-long` at tick 25768), giving the fields of
   the listed units, and of their defs, that changed since they were last written: `flags`, `posX`,
   `posZ`, `def`, `unitDefIndex` and `activateFlags` of a unit. Each search in the recordings has one such
   import.
@@ -242,7 +244,7 @@ Nothing outside the fields above. The module keeps no event between calls: the i
 each `Apply` has applied its event when it returns. The recordings show `r rng.main`, `r rng.load` and
 `w rng.seed` around the search slots: `docs/replay-format.md` says `rng.main`, `rng.load` and `rng.seed` are
 the generator words of the block (in the kit's words, "the two generator streams of the block head and
-`g_randomSeed`") and are in the sets of the slots that draw; the seven recordings hold 408 `r rng.seed`
+`g_randomSeed`") and are in the sets of the slots that draw; the nine recordings hold 409 `r rng.seed`
 lines. `rng.seed` is the generator of `services.RandomInt` (ABI section 9.3, not `rng.main`), which that
 import, answered by the host, advances: a draw returns the recorded result and the stream words advance as
 the game's do, and `rng.*` is checked like any field (`docs/replay-format.md`), so `w rng.seed` is compared.
@@ -332,7 +334,7 @@ again by `FindBestTargetIfFireAtWill`.
 
 The radius *r* is the result of the import `weapons.GetWeaponRange(u, w)` when `useRange` ≠ 0, or
 `u.def.range` when it is 0 (with no import). Then the import
-`los_radar.GetVisibleEnemiesInRadiusList(u.playerIndex, u.pos, r, 0, buffer, capacity)` fills the candidate
+`los_radar.GetVisibleEnemiesInRadius(u.playerIndex, u.pos, r, 0, buffer, capacity)` fills the candidate
 list, whose length is the count the import returns, the whole list even when it is above the capacity.
 
 The search makes at most 50 *picks* (13 recorded searches have more than 50 candidates), and ends sooner
@@ -376,10 +378,11 @@ imports, no writes.
 The slot's target as a saved game keeps it, one 32-bit word: TargetX's 16 bits in bits 0 to 15 and
 TargetZ's 16 bits in bits 16 to 31. A LOAD with `xOrUnit` = TargetX and `zOrSentinel` = TargetZ stores the
 same pair back. A slot with no target gives 0x80000000 (−2147483648 as a signed 32-bit result). No
-imports, no writes. The engine calls it outside the tick, while a game is saved; the recordings hold no
-call (section 7), and the gate judges it through the saved game (`docs/reference-traces.md`: the save
-`save-midgame` makes is compared with the reference's by decoded contents, and `load-midgame` plays on
-from it).
+imports, no writes. The engine calls it outside the tick, while a game is saved; `save-targets` records
+12 calls, weapons 0 to 2 of four units (example 8). The gate also judges the saved game
+(`docs/reference-traces.md`: the reference's saves of `save-midgame` and `save-targets` are stored, a save
+is compared with the reference's by decoded contents, and `load-midgame` and `load-targets` play on from
+them).
 
 ## 5. Exactness
 
@@ -490,12 +493,25 @@ from it).
    is 0: the recorded import `i services.SchedPublish 9 12` (publishing CLEARED for `Unit#252` and weapon 0,
    after the unrecorded `HarnessTargetingEvent`), TargetX becomes 0 (TargetZ is already −32768), `o result 0`,
    and `pos` is not written.
+8. **`tests/replay/targeting/save-targets.txt` and `load-targets.txt`, tick 150: a saved and a loaded
+   target pair.** In `save-targets`, `Unit#3`'s weapon 0 holds the ground target TargetX = 3140, TargetZ =
+   1180, so `SavedTargetPair(Unit#3, 0)` is 1180 × 65536 + 3140 = 0x049c0c44, `o result 77335620`; weapon 1
+   holds the same pair and gives the same word. `Unit#2`'s weapon 0 holds the unit target `Unit#251`
+   (TargetX = 251, TargetZ = −32768): 0x8000 × 65536 + 251 = 0x800000fb, `o result -2147483397`. Every
+   other weapon of the four units has no target and gives `o result -2147483648`. In `load-targets`, the
+   LOAD of `Unit#3`, weapon 0, with `xOrUnit` 3140, `zOrSentinel` 1180 and `size` 20 writes TargetX = 3140
+   and TargetZ = 1180 over the RESET slot (TargetX 0, TargetZ −32768), keeps `Unit#3.netDirtyFlags` 8192,
+   and has `o result 1`.
 
-Recorded, with counts over the seven recordings:
+Recorded, with counts over the nine recordings:
 
-- `Apply`: 792 SET_UNIT, all with outcome 1; 16 SET_POS, all with outcome 1; 1711 CLEAR, 419 of them of a
-  slot with a target (one `services.SchedPublish` each, outcome 1) and 1292 of a slot with none (outcome 0);
-  339 RESET, 336 with outcome 1 and 3 with outcome 0. Each has its kind's payload size: 16, 24, 12 and 12.
+- `Apply`: 792 SET_UNIT, all with outcome 1; 16 SET_POS, all with outcome 1; 1712 CLEAR, 419 of them of a
+  slot with a target (one `services.SchedPublish` each, outcome 1) and 1293 of a slot with none (outcome 0);
+  351 RESET, 348 with outcome 1 and 3 with outcome 0; 12 LOAD, all in `load-targets`, all with outcome 1
+  (one of a unit target, two of a ground target and nine of no target). Each has its kind's payload size:
+  16, 24, 12, 12 and 20.
+- `SavedTargetPair`: 12 calls, all in `save-targets` at tick 150, one for each weapon of four units: one of
+  a unit target, two of a ground target and nine of no target.
 - `GetWeaponTargetPos` of a unit target whose `unitDefIndex` is 0: 7 calls (3 in `console-units`, 4 in
   `edges-targeting-lead`), each publishing CLEARED.
 
@@ -528,7 +544,6 @@ each with the kit's reason:
 Not recorded, and the kit gives no reason and does not say whether a scenario reaches them:
 
 - An `Apply` of a kind other than the five (outcome 0, no change).
-- An `Apply` of a LOAD: no recording holds one. Section 4 gives its writes, from the header.
 - An `Apply` with `size` below 12, or below its kind's payload size (outcome 0, no change).
 - Negative `speed` in a lead (section 5 gives the result).
 - A *q* that wraps below 0 (section 5 gives the result).
@@ -558,17 +573,12 @@ Recorded, in `orders-immediate` and `edges-targeting-lead` (the kit's `docs/repl
   computer-controlled, picks `Unit#502`, whose def has `flags1` bit 15 clear, first in the
   `FindWeaponTarget` call at tick 83 (`o out [Unit#502]`, `o result Unit#502`).
 - The lead's kill count. The unit-target calls of `GetWeaponTargetPos` with every other lead condition met
-  have a `killCount` of 0 (12054 calls), 1 (279), 2 (267), 3 (133), 4 (140), 5 (133), 6 (129), 7 (121) or
+  have a `killCount` of 0 (12058 calls), 1 (279), 2 (267), 3 (133), 4 (140), 5 (133), 6 (129), 7 (121) or
   8 (69). With 5 or fewer, `pos` is the sweet spot; with 6 or more the lead applies, and it moves `pos` in
   79 calls: one with 6 kills (`Unit#2` at tick 1072 of `edges-targeting-lead`, with the velocity of
   `UnitMotion#8`) and 78 with 7 (62 in `edges-targeting-lead`, and the 16 of `skirmish4-long`, among them
   example 3). In the others the velocity adds nothing. The kit says the target moves in the calls with 4
   and 5 kills (`docs/replay-format.md`, the list of `edges-targeting-lead`).
-
-Not recorded, and reached by the gate: `SavedTargetPair`. The kit leaves the slot out of the recordings
-(`data/replay_schema.json`, its `unrecorded` entry, with the reason "a query of a saved game, outside the
-tick"), so no call of it is replayed; the saved game of `save-midgame`, compared by decoded contents, and
-the play of `load-midgame` from it are what judge it (section 4).
 
 Recorded once, so a single recorded call or search checks it:
 
@@ -579,23 +589,19 @@ Gaps in the kit, which this spec does not fill:
 
 - The inputs outside the contract (section 4): the kit does not say whether the gate can reach any of
   them, and so whether a module's result or trap there can be judged.
-- The candidate list's maximum: the kit gives none that a module must hold, against the 4096-byte stack
-  of ABI section 2.2 (section 2).
+- The candidate list's maximum: ABI section 7.3 bounds it by the slots of the unit pool, but the kit gives
+  no fixed number of them that a module must hold, against the 4096-byte stack of ABI section 2.2
+  (section 2).
 - The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
   result and the stream words advance as the game's do, and ABI section 9.3 gives the range-below-2 case,
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
 - The CLEARED record: the recordings carry only the outbox and the size of `services.SchedPublish`, not the
   record's fields, so no recording checks its `kind`, `unit` or `weapon`.
-- What the gate judges of `SavedTargetPair`: the kit gives no format for a saved game
-  (`docs/scenario-format.md`, section 5: "the format of the file is not specified by the kit"), so it does
-  not say which target pairs the stored save of `save-midgame` holds, nor whether any of them is a unit or a
-  ground target. If none is, the gate judges only the no-target word 0x80000000, and nothing judges the
-  packing of a unit or a ground target (section 4).
 
-The `FilterTargets` hook is not a gate rule: no recording, schema, glue or import of the kit names it, and
-`docs/module-abi.md` defines no hook interface. It is a mod hook of Milestone 3 (this repository's issue #1),
-so a module raises none and the gate judges `FindWeaponTarget` and `FindBestTargetIfFireAtWill` as it does
-any other slot.
+The `FilterTargets` and `VeterancyLevel` hooks are not gate rules: no recording, schema, glue or import of
+the kit names them, and `docs/module-abi.md` (section 6, "Hook points") fixes only where a hook runs, leaving
+how a module calls one to Milestone 3 (this repository's issue #1). So a module raises none, and the gate
+judges `FindWeaponTarget`, `FindBestTargetIfFireAtWill` and `GetWeaponTargetPos` as it does any other slot.
 
 No rule of the candidate tests names a kamikaze unit: the one that `docs/replay-format.md` mentions among
 the recorded candidates is judged like any other candidate.
@@ -606,5 +612,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v31` and `reference-traces-v32`, the versions the gate judges against. Interface
-`targeting` 3.1.
+Kit `interfaces-v32` and `reference-traces-v33`, the versions the gate judges against. Interface
+`targeting` 4.0.
