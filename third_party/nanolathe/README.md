@@ -18,13 +18,15 @@ overlay of loose files, TDF and FBI, COB, GAF and 3DO.
 | `formats/*.go` | the `formats` package: TDF and FBI, GAF, 3DO, and the other formats it holds (TNT, OTA, PCX, PAL, FNT, GUI, WAV), with its tests |
 | `internal/cob/load.go`, `load_test.go` | the COB file loader |
 | `research/formats/` | byte layouts: `hpi`, `tdf`, `fbi`, `cob`, `gaf`, `3do`, and the index |
-| `research/retail-executable-spec/02-content-vfs-formats-and-data-loading.md`, `README.md` | Nanolathe's description of how the retail game mounts, lists and loads content |
 | `LICENSE`, `NOTICE.md`, `docs/PUBLICATION.md` | the licence and Nanolathe's own statement of provenance |
 
 ## What was left out
 
 - The rest of `internal/cob/` (the script VM), and every other package: game logic in btm is written from
   `specs/` and the kit, never from another engine.
+- `research/retail-executable-spec/`, Nanolathe's description of the retail game's behaviour. It covers far more
+  than loading (the unit, weapon and feature catalogs, map loading), which btm takes from `specs/`. The code
+  comments cite it as `[02 ...]`, `[04 ...]` and the like.
 - `formats/zrb/` (video) and the other research documents.
 - `internal/sim/numeric`, which `formats/tdf_typed.go` imports for number parsing. A port takes its number
   parsing from the spec and the vectors.
@@ -36,8 +38,7 @@ overlay of loose files, TDF and FBI, COB, GAF and 3DO.
 - A ported file keeps the MIT notice of `LICENSE` at its head and names the file it came from.
 - Nanolathe's claims about the retail game are its own and are not btm's contract. Where a port and the kit's
   vectors disagree, the vectors win, and the difference is a `spec-question`.
-- The documents cross-reference files that were not imported (`[04 §4.1]` and the like). Those are not part of
-  btm and are not to be fetched.
+- Files the code and documents cite that were not imported are not part of btm and are not to be fetched.
 
 ## Provenance, as Nanolathe states it
 
