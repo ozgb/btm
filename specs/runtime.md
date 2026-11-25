@@ -710,7 +710,7 @@ and `"%02x%c"` of 512118646 and 0 gives the 9 bytes `1e864f76` and a zero byte, 
 ## 6a. Calls outside the runtime
 
 The other C runtime calls that game logic makes have no result that this spec defines. Each goes through
-the host interface (`interfaces/host.h`), or has no entry there yet, or has no observable result.
+the host interface (`interfaces/host.h`, version 3.1), or has no observable result.
 
 **Files.**
 
@@ -724,7 +724,7 @@ the host interface (`interfaces/host.h`), or has no entry there yet, or has no o
 | `_filelength` | `host_file_size` |
 | `_chsize` | `host_file_truncate` |
 | `_findfirst`, `_findnext`, `_findclose` | `host_dir_first`, `host_dir_next`, `host_dir_close` |
-| `_mkdir` | no host entry yet: byte-tactics-moddable#1065 adds one |
+| `_mkdir` | `host_dir_create`: creates the directory at the path (relative to the game directory or absolute), and gives 0 when the directory exists afterwards and −1 when it does not |
 | `printf` | the text as part 2's `sprintf` makes it, then `host_log` |
 
 **Memory.**
@@ -740,12 +740,11 @@ the host interface (`interfaces/host.h`), or has no entry there yet, or has no o
 
 | Call | Where | Goes through |
 | --- | --- | --- |
-| `time` | `LoadMatch`: the seed of `RAND_STREAM_LOAD`, in wall-clock seconds | no host entry yet: byte-tactics-moddable#1065 routes it (`host_time_ms` is not the wall clock) |
+| `time` | `LoadMatch`: the seed of `RAND_STREAM_LOAD`, in wall-clock seconds | `host_wall_seconds`: the wall clock in whole seconds since 1970-01-01 00:00 UTC, truncated to 32 bits (`host_time_ms` is not the wall clock) |
 | `time`, `localtime`, `gmtime`, `asctime`, `getenv` | the crash report's text, and the search for the debug help library it uses | `host_crash_report` |
 | `exit` | `FatalError` | `host_fatal` |
 | `exit` | the debug-break console command | none needed: the command ends with a division fault before the call |
-| `_exit` | the out-of-memory handler (exit code 3) | `host_exit` |
-| `raise` | the out-of-memory handler (the abort signal, before its exit) | no host entry yet: byte-tactics-moddable#1065 routes it |
+| `raise`, `_exit` | the out-of-memory handler (the abort signal, then exit code 3) | `host_exit` with the code 3, which ends the program at once with that exit code and runs no cleanup |
 
 **64-bit integer operations.** All are two's complement on 64 bits.
 
@@ -982,5 +981,5 @@ spec:
 
 ## 8. Kit version
 
-Kit `interfaces-v33` and `reference-traces-v34`, with the `runtime/` directory (vectors format 1) that
-byte-tactics-moddable#1060 adds; the first kit tag that carries it replaces this line.
+Kit `interfaces-v34` and `reference-traces-v34`. `interfaces-v34` is the first kit tag with the
+`runtime/` directory (vectors format 1), and the host interface 3.1 that section 6a names.
