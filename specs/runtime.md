@@ -91,7 +91,7 @@ vector entry is an entry of this spec:
 | `isspace`, `isdigit` | the same names (sections 4.22 and 4.23) |
 | `strchr`, `strstr`, `strncpy`, `strtok` | the same names (sections 4.24 to 4.27) |
 | `sscanf`, `sprintf` | the same names (sections 4.28 and 4.29) |
-| `isalnum`, `memmove`, `strcspn`, `strrchr` | calls the audit leaves out (section 4.30) |
+| `isalnum`, `memmove`, `strcspn`, `strrchr` | the same names (section 4.30) |
 
 The vectors' manifest leaves out `qsort` (section 4.6).
 
@@ -164,9 +164,9 @@ Each r64 and r53 applies to the exact value of its argument. *h* is +∞ when r5
   double-double that `bx_dd_atan2_nonneg` gives, rounded to a 64-bit significand (to nearest, ties to
   even) and that result rounded to 53 bits (to nearest, ties to even).
 - **Near a midpoint.** When the 64-bit significand of that first rounding ends in the 11 bits 0x3FF,
-  0x400 or 0x401, the result is instead the one the kit's vectors record for *x*: 3.1c's angle there
-  is the CPU's own 64-bit arctangent rounded to 53 bits, which can be one unit of the last place away
-  from *A* (section 5, "Not exact").
+  0x400 or 0x401, 3.1c's result is not fixed: it can be one unit of the last place away from *A*, and
+  differs between processors. *A* is the result this spec gives there, and the kit's vectors leave out
+  the arguments at which the recorded result differs from *A* (section 5, "Not exact").
 
 Examples of *A*: `acos(0.5)` is 1.0471975511965976 (0x3FF0C152382D7365), `acos(−0.5)` is
 2.0943951023931957 (0x4000C152382D7366), `acos(±0)` is 0x3FF921FB54442D18, `acos(1)` is +0 and
@@ -321,8 +321,8 @@ exact in 64 bits. Examples: `sine(0x4000)` is 8192, `sine(0xFFFF)` is −101 and
   double 10430.37835047 (bits 0x40C45F306DC9C78A, `bx_rad_to_angle16_bits`), exactly
   2867080569611205 / 2^38 (Q11).
 - For *x* ≠ 0, the result for (−*x*, *z*) is minus the result for (*x*, *z*).
-- When θ × *K* lies within 2^−36 of a half-integer, the result is the one the kit's vectors record
-  (section 5, "Not exact").
+- When θ × *K* lies within 2^−36 of a half-integer, the result is not specified; the kit's vectors
+  hold no such argument (section 5, "Not exact").
 
 Examples: (0, 1) gives 0, (1, 0) gives 16384, (−1, 0) gives −16384, (1, 1) gives 8192, (0, −1) gives
 32768 (π × *K* is 32767.9999999986), (−5, −100000) gives −32767.
@@ -389,19 +389,17 @@ When the vector and the output are the same three ints, *o*₁ is therefore comp
 ### 4.12 `explosion_draw_count`
 
 `InitExplosions` (`interfaces/weapons.h`) makes one draw of the load stream per pixel of each frame of
-three explosions, and none for the lens. An explosion with duration *t* that shrinks from size *a* to
-size *b* has *f* = ⌊*t* / 2⌋ frames; with *h* = (*b* − *a*) / *f* truncated toward zero, frame *k*
-(*k* = 0 to *f* − 1) has size *z* = *a* + *k* × *h* and makes *z*² draws (none when *z* ≤ 0).
+three explosions. A frame of size *z* is *z* × *z* pixels and makes *z*² draws.
 
-| Explosion | *t* | *a* to *b* | Frames | Sizes | Draws |
-| --- | --- | --- | --- | --- | --- |
-| 1 | 24 | 64 to 8 | 12 | 64, 60, ..., 20 | 23456 |
-| 2 | 30 | 128 to 16 | 15 | 128, 121, ..., 30 | 107335 |
-| 3 | 30 | 200 to 32 | 15 | 200, 189, ..., 46 | 260815 |
+| Explosion | Frames | Sizes | Draws |
+| --- | --- | --- | --- |
+| 1 | 12 | 64, 60, ..., 20 (each 4 below the last) | 23456 |
+| 2 | 15 | 128, 121, ..., 30 (each 7 below the last) | 107335 |
+| 3 | 15 | 200, 189, ..., 46 (each 11 below the last) | 260815 |
 
-`explosion_draw_count` is the total, **391606**. Between the seed of the load stream in `LoadMatch` and
-the shuffle of the start positions, the load stream advances by exactly these 391606
-draws and no others.
+`explosion_draw_count` is the total, **391606**. With three or more start positions, the load stream
+advances by exactly these 391606 draws, and no others, between its seed in `LoadMatch` and the shuffle
+of the start positions. The kit's `load_sequence` vectors hold three to ten start positions.
 
 ### 4.13 `sqrt`, `rand`, `srand`
 
@@ -609,50 +607,15 @@ Examples: `"%3d"` of −1 gives ` -1` (3), `"%+d"` of 35126 gives `+35126`, `"%0
 `ffffd1a3`, `"%1.1f"` of 0.25 gives `0.3`, `"%.1f"` of −2.5e−7 gives `-0.0`, and `"%02x%c"` of 512118646
 and 0 gives the 9 bytes `1e864f76` and a zero byte, and 9.
 
-### 4.30 Calls the audit leaves out
+### 4.30 `isalnum`, `memmove`, `strcspn`, `strrchr`
 
-The runtime calls below need no more than the C standard's behaviour, because only inputs on which a C
-runtime and a straightforward Rust implementation agree reach them, or their result reaches nothing
-the gate compares. The counts are of the game-logic functions that make the call.
-
-- `_itoa`: 2: one formats a map tile's metal value (0 to 255) for a debug overlay, and one a progress
-  bar's value, which is never below 0.
-- `_strcmpi`: 13: 9 compare only with fixed ASCII literals (console commands, the feature and texture
-  loading, the mission schema, the unit info panel's debug text, the console command registration and
-  the data file sub-record lookup), 3 compare only names the program makes from ASCII (the saved-game
-  bank's accounts, items and boxes), and 1 looks a name up in the console command table, where only
-  equality counts.
-- `_strnicmp`: 1, comparing a screen's name with fixed ASCII literals.
-- `atoi`: 1, reading the number in existing screenshot file names, which only picks the next
-  screenshot's name.
-- `isalnum`: 1, testing a typed key, where only the bytes 0x20 to 0x7F reach it.
-- `memmove`: 7, 6 that copy exception message text and 1 that moves crash report text within its
-  buffer.
-- `sprintf`: 16: 6 make the text of a fatal error (a missing feature record, an unknown map version, a
-  bad player number, a missing start position, an archive decompression error, a data file parse
-  error), 3 make text that is never used (the download menus' check and the network packet
-  condenser's messages), 3 make the crash report's text, 2 make screenshot directory and file names, 1
-  the dump file of the AI dump console command, and 1 the command text for playing a CD audio track.
-- `sscanf`: 1, reading a debug fill pattern from the command line (the `"%d"` and `"%x"` of section
-  4.28).
-- `strchr`: 3, each searching for a fixed ASCII byte: the backslash of archive paths (2), and `]`, `=` and
-  `;` in data files (1).
-- `strcspn`: 1, with a fixed non-empty set, in the mission's initial unit orders.
-- `strncmp`: 12: 10 compare GUI gadget names, all short fixed ASCII names within the count, and 2
-  compare 4-byte sound file tags with fixed ASCII literals.
-- `strncpy`: 8: 3 copy a text whose length equals the count (a token of the mission's initial unit
-  orders, and a segment of an archive path, twice), 1 copies only a fixed 8-byte literal (the
-  saved-game bank's header), 1 copies a key that is always empty, and 3 reach nothing compared (the
-  game information sent over the network, an archive open error and the crash report).
-- `strrchr`: 3, reaching only the out-of-memory error text, the crash report's text and the debug symbol
-  search paths.
-- `strstr`: 2, each with fixed non-empty ASCII needles: a build order's name, and a gadget name search.
-
-The kit's vectors hold `isalnum` (4 for `0` to `9`, 1 for `A` to `Z`, 2 for `a` to `z`, 0 for every other
-argument from −1 to 255, and not specified for −128 to −2, as in Q21), `memmove` (a copy of *n* bytes that
-gives the destination, with overlapping ranges copied as though through a separate buffer), `strcspn`
-(the length of the longest start of the text with no byte of the set, the whole length for an empty set)
-and `strrchr` (as `strchr`, but the last such byte).
+- `isalnum(c)`: 4 for `0` to `9`, 1 for `A` to `Z`, 2 for `a` to `z`, and 0 for every other argument from
+  −1 to 255. The result for −128 to −2 is not specified, as in Q21.
+- `memmove(d, s, n)`: copies *n* bytes from *s* to *d*, with overlapping ranges copied as though through a
+  separate buffer, and gives *d*.
+- `strcspn(t, set)`: the length of the longest start of *t* that holds no byte of *set*; the whole length
+  of *t* for an empty *set*.
+- `strrchr(t, c)`: as `strchr`, but the last such byte.
 
 ## 5. Exactness
 
@@ -662,8 +625,6 @@ and `strrchr` (as `strchr`, but the last such byte).
   nearest, ties to even, with no exponent limit. ⌊ ⌋ is the floor. "Truncated" rounds toward zero.
 - **Integers.** Arguments and results are 32-bit two's complement unless an entry says otherwise.
   Products named "exact in 64 bits" never overflow, since both factors are 32-bit.
-- **The FPU mode.** 3.1c runs all game logic in one mode: 53-bit precision, round to nearest even, all
-  exceptions masked. Every rounding this spec states follows from it.
 - **Random draws.** Only `rand`, `shuffle` (one `rand` per draw) and the explosion frames (section 4.12)
   draw, each from the stream it is given.
 - **NaNs.** Where a result is stated as a NaN with given bits, those are 3.1c's bits. The kit's ABI
@@ -681,13 +642,14 @@ and `strrchr` (as `strchr`, but the last such byte).
   which both bytes are 0. With no such *i* the result is 0; otherwise it is −1 when *f*(*a*[*i*]) <
   *f*(*b*[*i*]) and 1 when it is greater.
 - **Not exact.**
-  - `acos` near a 53-bit midpoint and `angle_of_vector` near a half-integer (sections 4.3 and 4.8): the
-    result there is the CPU's own arctangent's, which this spec can't define as arithmetic. The kit's
-    vectors record it for the arguments they hold. Elsewhere the definitions are exact.
+  - `acos` near a 53-bit midpoint (section 4.3): this spec gives *A*, which 3.1c's result can differ
+    from by one unit of the last place. `angle_of_vector` near a half-integer (section 4.8) is not
+    specified. Elsewhere the definitions are exact.
   - A `%f` field of more than 300 characters.
   - `_hypot` when *h* overflows: this spec gives +∞.
-  - `sprintf`'s `%f` when |*v*| lies exactly halfway between two 17-digit decimals: no record of the
-    vectors holds such a value, and this spec does not say which way *R* goes.
+  - `sprintf`'s `%f` when |*v*| lies exactly halfway between two 17-digit decimals: this spec does not
+    say which way *R* goes. One record holds such a value (`sprintf` record 195, `"%.1f"` of
+    0xC2D325A739176DD4), and its text is the same either way.
   - `isspace` and `isdigit` for −128 to −2 (Q21).
 
 ## 6. Quirks
@@ -739,8 +701,7 @@ and `strrchr` (as `strchr`, but the last such byte).
   `"%.1f"` of −7.495023430834638e35 (0xC7620B2A3193B6B1) gives
   `-749502343083463820000000000000000000.0`, where the exact value's digits go on `...3818...`.
 - **Q21.** The results of `isspace` and `isdigit` for the arguments −128 to −2 (the bytes 0x80
-  to 0xFE passed as signed characters) are not specified here: 3.1c's result there depends on unrelated
-  program memory, and byte-tactics-moddable's modern build does not reproduce 3.1c there either.
+  to 0xFE passed as signed characters) are not specified.
 
 ## 6a. Calls outside the runtime
 
@@ -749,27 +710,27 @@ the host interface (`interfaces/host.h`), or has no entry there yet, or has no o
 
 **Files.**
 
-| Call | Where | Goes through |
-| --- | --- | --- |
-| `fopen` | the saved-game bank, the archive file reader, the screenshot writer, the print-weights console command | `host_file_open_read` (read), `host_file_create` (write, with `HOST_FILE_TEXT` for a text mode), `host_file_open_append` (append) |
-| `fread`, `fwrite`, `fclose` | the same | `host_file_read`, `host_file_write`, `host_file_close` |
-| `fseek` | the same | `host_file_seek` |
-| `ftell` | the same | `host_file_seek` by 0 from `HOST_SEEK_CUR`, whose result is the position |
-| `fprintf` | the saved-game bank's audit file, `DumpPlayerAI` | the text as part 2's `sprintf` makes it, then `host_file_write` |
-| `_filelength` | the archive file reader | `host_file_size` |
-| `_chsize` | the saved-game bank | `host_file_truncate` |
-| `_findfirst`, `_findnext`, `_findclose` | the archive file reader and the directory listings | `host_dir_first`, `host_dir_next`, `host_dir_close` |
-| `_mkdir` | `MakeDirectoryPath` | no host entry yet: byte-tactics-moddable#1065 adds one |
-| `printf` | `LzssCompress`, `LzssExpand` (their error messages) | the text as part 2's `sprintf` makes it, then `host_log` |
+| Call | Goes through |
+| --- | --- |
+| `fopen` | `host_file_open_read` (read), `host_file_create` (write, with `HOST_FILE_TEXT` for a text mode), `host_file_open_append` (append) |
+| `fread`, `fwrite`, `fclose` | `host_file_read`, `host_file_write`, `host_file_close` |
+| `fseek` | `host_file_seek` |
+| `ftell` | `host_file_seek` by 0 from `HOST_SEEK_CUR`, whose result is the position |
+| `fprintf` | the text as part 2's `sprintf` makes it, then `host_file_write` |
+| `_filelength` | `host_file_size` |
+| `_chsize` | `host_file_truncate` |
+| `_findfirst`, `_findnext`, `_findclose` | `host_dir_first`, `host_dir_next`, `host_dir_close` |
+| `_mkdir` | no host entry yet: byte-tactics-moddable#1065 adds one |
+| `printf` | the text as part 2's `sprintf` makes it, then `host_log` |
 
 **Memory.**
 
-| Call | Where | Goes through |
-| --- | --- | --- |
-| `malloc`, `free` | the game's allocator, `StringRef` | `host_mem_alloc`, `host_mem_free` |
-| `calloc` | `LzssCompress`, `LzssExpand` | `host_mem_alloc`, the block then set to zero |
-| `realloc` | the game's allocator | `host_mem_alloc` for the new size, the old block's bytes copied (as many as both sizes hold), then `host_mem_free` of the old block; no game logic reads a block's address |
-| `_msize` | the game's allocator (the size of a block) | the size the block was allocated with, which the runtime keeps beside each block of `host_mem_alloc` |
+| Call | Goes through |
+| --- | --- |
+| `malloc`, `free` | `host_mem_alloc`, `host_mem_free` |
+| `calloc` | `host_mem_alloc`, the block then set to zero |
+| `realloc` | a block of the new size from `host_mem_alloc` that starts with the old block's bytes (as many as both sizes hold), and the old block given to `host_mem_free`; no game logic reads a block's address |
+| `_msize` | the size the block was allocated with |
 
 **Process, clock and environment.**
 
@@ -781,17 +742,16 @@ the host interface (`interfaces/host.h`), or has no entry there yet, or has no o
 | `exit` | the debug-break console command | none needed: the command ends with a division fault before the call |
 | `_exit` | the out-of-memory handler (exit code 3) | `host_exit` |
 | `raise` | the out-of-memory handler (the abort signal, before its exit) | no host entry yet: byte-tactics-moddable#1065 routes it |
-| `atexit` | eight functions that make a function-local static object on first use (the debug allocator's command-line switches, the debug help library) | no host entry; no result game logic sees |
 
-**64-bit integer helpers.** All are two's complement on 64 bits.
+**64-bit integer operations.** All are two's complement on 64 bits.
 
-- `_allmul`: the product modulo 2^64.
-- `_alldiv`: the signed quotient truncated toward zero; −2^63 / −1 gives −2^63. A zero divisor is outside
-  this spec (3.1c ends with a fault).
-- `_allshl`: the count is the low 8 bits of the shift argument, *c* = 0 to 255. *c* ≥ 64 gives 0; otherwise
-  the value × 2^*c* modulo 2^64.
-- `_allshr`: the same count. *c* ≥ 64 gives 0 for a value ≥ 0 and −1 for a negative one; otherwise
-  ⌊value / 2^*c*⌋.
+- A product: the product modulo 2^64.
+- A signed quotient: truncated toward zero; −2^63 / −1 gives −2^63. A zero divisor is outside this spec
+  (3.1c ends with a fault).
+- A shift left by a count: only the low 8 bits of the count are used, *c* = 0 to 255. *c* ≥ 64 gives 0;
+  otherwise the value × 2^*c* modulo 2^64.
+- An arithmetic shift right by a count: the same *c*. *c* ≥ 64 gives 0 for a value ≥ 0 and −1 for a
+  negative one; otherwise ⌊value / 2^*c*⌋.
 
 **Compression.** The archive packer's method 2 and its unpacking counterpart use zlib 1.0.4: `compress` at the
 default level (6) with the deflate method, a 15-bit window, memory level 8 and the default strategy, and
@@ -800,16 +760,7 @@ not use it: they are packed with the game's own method 1, `LzssCompress` (`inter
 reached only from console commands that write archives. For a valid stream, `uncompress`'s output is
 fixed by the format.
 
-**No observable result.**
-
-- C++ library internals: the exception objects (made, asked for their text, destroyed), the deleting
-  destructors of the exception and type information objects, the string storage routines, the library
-  lock, and the range error a string operation raises on a bad position. Their only effect is on the
-  strings' contents, which the subsystem specs state.
-- `_chkstk`: the stack probe of a large stack frame.
-- `_purecall`: fills the slots of abstract classes' tables; game logic never calls it.
-- `_controlfp`: changes only the exception mask, and restores it, around a sound load. The FPU mode
-  is stated once, in section 5.
+Calls with no result that game state, saves or compared output can see are not listed.
 
 ## 7. Examples
 
@@ -1009,7 +960,7 @@ spec:
 - `isspace`, `isdigit` and `isalnum` for −128 to −2 (Q21).
 - `acos` near a 53-bit midpoint and `angle_of_vector` near a half-integer (section 5).
 - `sprintf`: `%+d` of 0, a negative int under the `0` flag, `%f` of an infinity or a NaN, and a `%f` value
-  halfway between two 17-digit decimals.
+  halfway between two 17-digit decimals whose text depends on which way it rounds.
 - `sscanf`'s `%f`: its field at the end of the text (section 4.28), and `%f` inside a format with other
   conversions.
 - `_itoa` in a radix other than 2, 8, 10 and 16.
