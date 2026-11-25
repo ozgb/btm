@@ -87,6 +87,7 @@ vector entry is an entry of this spec:
 | `atoi` | `atoi` (section 4.14) |
 | `itoa` | `_itoa` (section 4.15) |
 | `strcmpi`, `strnicmp`, `strncmp` | `_strcmpi`, `_strnicmp`, `strncmp` (sections 4.16 to 4.18) |
+| `compare_bytes` | `_strcmpi`, and `_strnicmp` and `strncmp` with the counts 1 and 2, on texts of at most one byte (sections 4.16 to 4.18) |
 | `strlwr`, `tolower`, `toupper` | `_strlwr`, `tolower`, `toupper` (sections 4.19 to 4.21) |
 | `isspace`, `isdigit` | the same names (sections 4.22 and 4.23) |
 | `strchr`, `strstr`, `strncpy`, `strtok` | the same names (sections 4.24 to 4.27) |
@@ -596,16 +597,19 @@ digit `0` after the sign under the `0` flag, otherwise with spaces before it. A 
   17th significant one is 0 (Q20).
 - *R* is rounded to *p* decimals: when the decimal digit at place *p* + 1 after the point is 5 or more,
   *R* is cut after place *p* and one unit of place *p* is added; otherwise it is cut (Q19).
-- The text is `-` when *v*'s sign bit is set (also for −0 and for a *v* that rounds to zero), then the
+- The text is `-` when *v* is below zero (also for a *v* that rounds to zero; −0 has no `-`), then the
   integer part's digits (at least one, `0` for a value below 1), then, when *p* > 0, `.` and the *p*
   decimals.
 
+**The text of an infinity or a NaN** is `-` when its sign bit is set, then `1` for *p* = 0 and `1.$` for
+*p* = 1. A greater *p* is outside this spec.
+
 `%e`, `%g`, the `-`, space and `#` flags, `%u`, `%o` and a precision on another conversion occur in no
-format of game logic, and are outside this spec, as are an infinite or NaN `%f` argument.
+format of game logic, and are outside this spec.
 
 Examples: `"%3d"` of −1 gives ` -1` (3), `"%+d"` of 35126 gives `+35126`, `"%02x"` of −11869 gives
-`ffffd1a3`, `"%1.1f"` of 0.25 gives `0.3`, `"%.1f"` of −2.5e−7 gives `-0.0`, and `"%02x%c"` of 512118646
-and 0 gives the 9 bytes `1e864f76` and a zero byte, and 9.
+`ffffd1a3`, `"%1.1f"` of 0.25 gives `0.3`, `"%.1f"` of −2.5e−7 gives `-0.0`, `"%.1f"` of −0 gives `0.0`,
+and `"%02x%c"` of 512118646 and 0 gives the 9 bytes `1e864f76` and a zero byte, and 9.
 
 ### 4.30 `isalnum`, `memmove`, `strcspn`, `strrchr`
 
@@ -648,7 +652,7 @@ and 0 gives the 9 bytes `1e864f76` and a zero byte, and 9.
   - A `%f` field of more than 300 characters.
   - `_hypot` when *h* overflows: this spec gives +∞.
   - `sprintf`'s `%f` when |*v*| lies exactly halfway between two 17-digit decimals: this spec does not
-    say which way *R* goes. One record holds such a value (`sprintf` record 195, `"%.1f"` of
+    say which way *R* goes. One record holds such a value (`sprintf` record 5752, `"%.1f"` of
     0xC2D325A739176DD4), and its text is the same either way.
   - `isspace` and `isdigit` for −128 to −2 (Q21).
 
@@ -869,8 +873,7 @@ shuffle of 0, 1, 2 gives 1, 2, 0, and the next four draws are 15442, 19688, 2825
 - record 701: −1 in radix 16 gives `ffffffff`.
 - record 724: −305419896 in radix 8 gives `35562724610`.
 
-**`_strcmpi`** (`runtime/vectors/strcmpi.bin`), whose two outputs (sign and raw result) are equal in
-every record:
+**`_strcmpi`** (`runtime/vectors/strcmpi.bin`):
 
 - record 618: `_` against `A` gives −1.
 - record 970: `ab` against `AB` gives 0.
@@ -879,14 +882,22 @@ every record:
 
 **`_strnicmp`** (`runtime/vectors/strnicmp.bin`):
 
-- record 2649: `ab` against `aZ` with *n* = 0 gives 0.
-- record 2655: `AB` against `az` with *n* = 1 gives 0.
-- record 2748: 0xE0 against backquote with *n* = 1 gives 1.
+- record 4814: `ab` against `aZ` with *n* = 0 gives 0.
+- record 5118: `AB` against `az` with *n* = 1 gives 0.
+- record 10102: 0xE0 against backquote with *n* = 1 gives 1.
 
 **`strncmp`** (`runtime/vectors/strncmp.bin`):
 
 - record 282: `a` against `A` with *n* = 1 gives 1.
-- record 2748: 0xE0 against backquote with *n* = 1 gives 1.
+- record 10102: 0xE0 against backquote with *n* = 1 gives 1.
+
+**`_strcmpi`, `_strnicmp`, `strncmp` on texts of at most one byte** (`runtime/vectors/compare_bytes.bin`):
+record *a* holds, for each second text from the empty one to the byte 255, one signed byte per
+comparison of the text of the byte *a* (record 0: the empty text) against it.
+
+- record 95 (`_`): against `A`, `_strcmpi` and `_strnicmp` give −1 and `strncmp` gives 1.
+- record 65 (`A`): against `a`, `_strcmpi` and `_strnicmp` give 0 and `strncmp` gives −1.
+- record 0 (the empty text): against `A`, every comparison gives −1.
 
 **`_strlwr`** (`runtime/vectors/strlwr.bin`):
 
@@ -922,10 +933,10 @@ every record:
 
 **`strtok`** (`runtime/vectors/strtok.bin`):
 
-- record 272: `,a,,b,` with `,` gives the tokens `a` at offset 1 and `b` at offset 4, then null, and a
+- record 288: `,a,,b,` with `,` gives the tokens `a` at offset 1 and `b` at offset 4, then null, and a
   further call gives null.
-- record 241: `  a  b  ` with a space gives `a` at offset 2 and `b` at offset 5, then null.
-- record 326: `abc` with the empty set gives `abc` at offset 0, then null.
+- record 243: `  a  b  ` with a space gives `a` at offset 2 and `b` at offset 5, then null.
+- record 363: `abc` with the empty set gives `abc` at offset 0, then null.
 
 **`sscanf`** (`runtime/vectors/sscanf.bin`):
 
@@ -937,21 +948,23 @@ every record:
 - record 435: `"%d"` on `"-"` gives −1 (Q17); record 466: on `"-ff"` it gives 0.
 - record 459: `"%d"` on `"4294967296"` gives 1 and stores 0 (Q16).
 - record 494: `"%x"` on `"-1"` stores −1; record 518: on `"-2147483649"` it stores −1195914825 (Q16).
-- record 528: `"%x"` on `"0x"` gives −1 (Q17); record 529: on `"0xg"` it gives 0; record 1247: on `"-m"`
-  it gives 0.
+- record 528: `"%x"` on `"0x"` gives −1 (Q17); record 529: on `"0xg"` it gives 0; record 1241: on a text
+  starting with `-` and the byte 0x0B it gives 0.
 
 **`sprintf`** (`runtime/vectors/sprintf.bin`):
 
 - record 2: `"%3d"` of −1 gives ` -1` and 3.
-- record 191: `"%+d"` of 35126 gives `+35126` and 6.
-- record 116: `"%02x"` of −11869 gives `ffffd1a3` and 8.
-- record 141: `"%1.1f"` of 0.25 gives `0.3` and 3 (Q19).
-- record 110: `"%.1f"` of −2.5e−7 gives `-0.0` and 4.
-- record 247: `"+%.1f"` of −12699056436352884 gives `+-12699056436352884.0` and 21.
-- record 282: `"Send - %1.1f K/s"` of 0xC7620B2A3193B6B1 gives
-  `Send - -749502343083463820000000000000000000.0 K/s` and 50 (Q20).
-- record 189: `"%s"` of a text with bytes 0x80 to 0xFF copies them unchanged.
-- record 227: `"%02x%c"` of 512118646 and 0 gives `1e864f76`, a zero byte, and 9.
+- record 320: `"%+d"` of 44859 gives `+44859` and 6; record 172: of 0 it gives `+0` and 2.
+- record 1996: `"%04i"` of −1 gives `-001` and 4.
+- record 1436: `"%02x"` of −11869 gives `ffffd1a3` and 8.
+- record 2845: `"%1.1f"` of 0.25 gives `0.3` and 3 (Q19).
+- record 1086: `"%.1f"` of −2.5e−7 gives `-0.0` and 4; record 644: of −0 it gives `0.0` and 3.
+- record 6195: `"+%.1f"` of −1711014522793811 gives `+-1711014522793811.0` and 20.
+- record 6493: `"Send - %1.1f K/s"` of 0x44B2CC217ED0D762 gives
+  `Send - 88768146078764160000000.0 K/s` and 36 (Q20).
+- record 674: `"%.1f"` of +∞ gives `1.$` and 3; record 2182: `"%.0f"` of +∞ gives `1` and 1.
+- record 163: `"%s"` of the bytes E9 FF 80, `abc` and A0 copies them unchanged, and gives 7.
+- record 1581: `"%c"` of 0 gives a zero byte and 1.
 
 **What the vectors don't cover.** These cases are left to the definitions above, or are outside this
 spec:
@@ -959,8 +972,8 @@ spec:
 - `qsort` (section 4.6), and the order in which it leaves equal elements.
 - `isspace`, `isdigit` and `isalnum` for −128 to −2 (Q21).
 - `acos` near a 53-bit midpoint and `angle_of_vector` near a half-integer (section 5).
-- `sprintf`: `%+d` of 0, a negative int under the `0` flag, `%f` of an infinity or a NaN, and a `%f` value
-  halfway between two 17-digit decimals whose text depends on which way it rounds.
+- `sprintf`: a `%f` value halfway between two 17-digit decimals whose text depends on which way it
+  rounds, and an infinity or a NaN with a precision above 1.
 - `sscanf`'s `%f`: its field at the end of the text (section 4.28), and `%f` inside a format with other
   conversions.
 - `_itoa` in a radix other than 2, 8, 10 and 16.
