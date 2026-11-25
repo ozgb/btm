@@ -123,9 +123,11 @@ closing `o` lines with the recording. The core gate's `host` group judges this o
   result is extended by the side that produces it (`docs/module-abi.md`, section 7).
 - **Pointers.** A `block` or `linear` argument is an address in the shared memory, 0 for null; a stored pointer
   in the block is an offset from `block_base`, 0 for null (`docs/module-abi.md`, sections 7 and 7.1).
-- **Fuel.** Rule v1 of `docs/module-abi.md`, section 11.1: the counter drops by 1 at each function entry and at
-  the top of each loop body of the module's own code, and the module traps when it goes below zero. The core sets
-  it once per tick, before the module's first outermost slot call of the tick, and never in between.
+- **Fuel.** Rule v1 of `docs/module-abi.md`, section 11.1, says what a call burns: one unit at each function entry
+  and at the top of each loop body of the module's own code, and the call traps when the counter goes below
+  zero. That metering is in the module's own code; the core adds none, and the engine it runs modules on has its
+  own fuel off (`docs/module-abi.md`, section 11). The core sets the budget through `__fuel_set` once per tick, before the module's
+  first outermost slot call of the tick, and never in between, and reads what is left through `__fuel_get`.
 - **Handles.** An opaque u32, index plus 1 into a table of 32 that the core clears when the outermost call
   returns (`docs/module-abi.md`, section 8.1).
 

@@ -132,7 +132,8 @@ A test-mode run (`docs/scenario-format.md`, section 2) seeds, with the values of
 | when the match loads | the load stream | `crt_seed` |
 
 The main stream is not seeded again when the match loads: only the generator of `RandomInt` and the load
-stream are. Seeding is section 5, "The random streams". The draws the match load makes from these, and every
+stream are (`docs/scenario-format.md`, "Seeds", reads as if `rand` were seeded again too: it is the load stream
+that is). Seeding is section 5, "The random streams". The draws the match load makes from these, and every
 other effect of the load, are the match's behaviour (the modules' specs), not the core's. The tick counter is 0
 while the match loads, so the sim events the load records carry tick 0 and are judged as the line of tick 0
 (section 2, "Outputs"). Every allocation of state is zero filled (section 3).
@@ -162,7 +163,7 @@ whichever is first (`docs/scenario-format.md`, section 2); that tick is played a
 - A command is delivered between two ticks: after the counter of the tick it precedes is incremented, before
   the logic of that tick runs. The tick a scenario line names is the tick the command precedes.
 - Within one tick: every `spawn` line, then every `order` line, then every `console` line, each kind in the
-  order of the scenario file.
+  order of its scenario line numbers (the order of the file).
 - A command reads the state as every earlier command of the tick left it, and its events reach the modules that
   handle their kinds at once, in the order published; nothing a command publishes waits for a phase.
 - Only the events a command publishes itself are its own (the `count` of `commands.txt`); an event that a
@@ -223,7 +224,8 @@ of its own choosing, as long as no record is lost and none is drained twice.
 block beside the queue, the radar arena of 2 MiB (`docs/sim-events.md`, "Radar events"). The snapshot's bytes
 are part of the record as the event log writes it, so they are judged with it. Every drain empties the arena
 once it has handed over the records, and so does the start of a match: a snapshot lives from its recording to
-the next drain, and the arena is empty between ticks.
+the next drain, and the arena is empty between ticks. (The sentence of "Radar events" that names a drain that
+finds the queue empty reads as a condition; it is not one, and every drain empties the arena.)
 
 ### 4.6 Capture
 
@@ -265,7 +267,9 @@ The run ends with an error, the same way on every machine, when:
 | fuel run out | a module burns more than its budget in one tick (`docs/module-abi.md`, section 11) | a fatal error naming the module, the tick and the budget; in the core gate, `out_of_fuel` |
 | a start-up refusal | the loader refuses the manifest or a module (`docs/module-abi.md`, section 5.2) | a fatal error before the match; in the core gate, the refusal's class |
 
-A fatal error of a test-mode run ends it with exit status 2 and the message on the error stream. The error
+A fatal error of a test-mode run ends it with exit status 2 and the message on the error stream. The core gate is
+the exception: there the core writes the line of the call that ended the run, with the value the group states,
+answers no further call and exits with status 0 (`docs/core-gate.md`, "An error that ends the run"). The error
 happens at the same tick and the same call on every machine, so the trace up to it is the same; a core that
 recovers from one of these and plays on does not conform. A run that is playing (not in test mode) counts an
 event that does not fit instead of ending (section 5), and drops a snapshot that does not fit with its event.
@@ -397,7 +401,8 @@ All from the kit's `reference/core/`.
    next four values of rand, 26500, 19169, 15724 and 11478, are the record's last field. With size 2 the result
    is 4, 1 (Q3).
 
-**Not covered by a vector:**  a shuffle draw of a range of 0 or of a negative range (the logic asks for
+**Not covered by a vector:** the hash of a tick other than the one the `hash` group dumps (the scenario mode
+judges every tick), a shuffle draw of a range of 0 or of a negative range (the logic asks for
 neither), and a `kind` or `flags` above 0xffff. The seeding of section 4.1, the tick of section 4.2, the end of
 a run and capture are judged only by the scenario mode.
 
@@ -406,3 +411,7 @@ a run and capture are judged only by the scenario mode.
 Kit `interfaces-v36` and `reference-traces-v37` (both on the same commit). Interfaces `services` 4.0,
 `rand_stream` 1.0, `state_writer` 1.0, `sim_events` 1.0, `files` 3.0, `players` 5.1, `wind_meteors` 3.1, `map`
 9.1, `units` 7.1 and `features` 5.1.
+
+The majors of `services`, `rand_stream`, `state_writer`, `sim_events` and `files`, and what those headers mean (the
+order of sim events and of random draws, what `WriteState` hashes, how `Emit` picks an outbox), are frozen until a
+clean-room core passes the core gate; their minors may still add to them (ozgb/byte-tactics-moddable#1042).
