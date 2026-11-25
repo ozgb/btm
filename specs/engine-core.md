@@ -187,8 +187,8 @@ is its payload as the interface header of its kind lays it out (`interfaces/play
   info and its index. The core gate's `console` group states that setup and nothing else, runs lines of those
   commands one after another, and delivers their events to no module, so no state but bit 0x2 of
   `uiOptionFlags` changes between two lines (`docs/core-gate.md`, "console").
-- The other commands need the cursor, the units, or the unit and feature types, and only the scenario mode
-  judges them.
+- The other commands need the cursor, the units, or the unit and feature types, or are not events
+  (`docs/commands.md`, section 4.3), and only the scenario mode judges them.
 
 ### 4.4 The random streams
 
@@ -238,9 +238,10 @@ Saving and loading a game are not part of the contract (section 4.9).
 
 ### 4.7 The runtime
 
-The logic calls a C runtime: the fixed-point sine and cosine, the products, quotients and roots, the rotations,
-the conversions between text and numbers (`atoi`, `atof`, `%f`, `sprintf`, `sscanf`, `_itoa`, `_ftol`), `rand` and
-the shuffle, and the string and character functions. The kit's `runtime/vectors/` holds one entry for each:
+The logic calls a C runtime, among it the fixed-point sine and cosine, the products, quotients and roots, the
+rotations and angles, `acos` and `hypot`, the conversions between text and numbers (`atoi`, `atof`, `%f`,
+`sprintf`, `sscanf`, `_itoa`, `_ftol`), `rand` and the shuffle of a range, and the string, memory and character
+functions. The kit's `runtime/vectors/` holds one entry for each function the logic calls:
 `README.md` states what each entry computes and the format of its records, and `layouts.txt` the type of each
 field. Each record is the inputs of one call and the results the original program gave for them, and a core
 gives exactly those results: every bit of a double or of a float, the bytes it writes, the bytes of a buffer
@@ -248,9 +249,9 @@ after the call, the value it returns for an input out of range or NaN, and its t
 0xff. The core gate's `runtime` group runs each entry as one vector and each record as one call, as
 `docs/core-gate.md`, "runtime", states.
 
-The entries `rand` and `shuffle` are the main stream and the shuffle draw of section 5 (Q1 included), and
-`load_sequence` is a seeded generator stepped through the draws of the match load's explosion setup and then a
-shuffle.
+The entry `rand` is the step of the main stream (section 5). The entries `shuffle` and `load_sequence` are the
+shuffle of a range (section 5, "The shuffle of a range"), drawing from a generator stepped as the main stream
+is: `shuffle` from a freshly seeded one, and `load_sequence` after the draws of the match load's explosion setup.
 
 ### 4.8 Failure
 
@@ -312,6 +313,9 @@ Every value is an unsigned 32-bit word, and every sum and product wraps modulo 2
   widens: with *m* = 0x7fff, while *m* < *d* and *m* is not 0xffffffff, *m* becomes (*m* << 15) OR 0x7fff and
   *r* becomes (*r* << 15) OR 0x7fff, each modulo 2^32. The value is *r* mod *d*, unsigned. It is one draw from
   the stream whatever *d* is (Q1).
+- **The shuffle of a range** of *n* elements *a*[0] to *a*[*n* − 1] does, for *i* from 1 to *n* − 1 in that
+  order, one shuffle draw with *d* = *i*, giving *j*, and swaps *a*[*i*] and *a*[*j*]. It makes *n* − 1 draws
+  (none for *n* of 0 or 1), and the first draw, with *d* = 1, is always 0 (Q3).
 
 ### The runtime
 
@@ -340,6 +344,8 @@ The entries the README marks dropped (some `acos` inputs, and the character clas
   modulo: for *d* = 32768 the value is always 32767.
 - **Q2.** Seeding the generator of `RandomInt` always sets the lowest bit of the word, so two seeds that differ
   only in their lowest bit give the same generator.
+- **Q3.** The shuffle of a range draws each *j* from 0 to *i* − 1, never *i* itself, so at its step an element
+  always moves: a range of two elements always comes out swapped, and not every order of the range can come out.
 
 ## 7. Examples
 
@@ -384,6 +390,12 @@ All from the kit's `reference/core/`.
 8. **A runtime record.** The runtime entry `atoi`: the record whose input is the text ` -12` (`202d3132`) gives
    `[-12]`. In the `console` group the same reading makes `give 4294967297 5 metal` a gift to player 1
    (vector `give-numbers`).
+
+9. **The shuffle of a range.** The runtime entry `shuffle`, seed 1, size 4: the range is 1, 4, 7, 10 and the
+   main word starts at 1. Step 1 draws 41 with *d* = 1, so *j* = 0: 4, 1, 7, 10. Step 2 draws 18467 with *d* =
+   2, so *j* = 1: 4, 7, 1, 10. Step 3 draws 6334 with *d* = 3, so *j* = 1: 4, 10, 1, 7, the record's result. The
+   next four values of rand, 26500, 19169, 15724 and 11478, are the record's last field. With size 2 the result
+   is 4, 1 (Q3).
 
 **Not covered by a vector:**  a shuffle draw of a range of 0 or of a negative range (the logic asks for
 neither), and a `kind` or `flags` above 0xffff. The seeding of section 4.1, the tick of section 4.2, the end of
