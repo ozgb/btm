@@ -42,10 +42,58 @@ tables) wherever a definition needs them.
 | `apply_rotation` | a fixed-point matrix applied to a vector | specified (section 4.10) |
 | `mul_div` | integer product and quotient through 64 bits | specified (section 4.11) |
 | `explosion_draw_count` | the load-stream draws of the explosion frames at match load | specified (section 4.12) |
-| C string and number functions (`atoi`, `sprintf`, `sscanf` other than its float read, `_itoa`, `_strcmpi`, `_strnicmp`, `_strlwr`, `tolower`, `toupper`, `isspace`, `isdigit`, `isalnum`, `strtok`, `strncpy`, `strncmp`, `strstr`, `strchr`, `strrchr`, `strcspn`, `memmove`) | | part 2 writes these |
+| `sqrt_float` | correctly rounded float square root | specified (section 4.13) |
+| `atoi` | decimal text to int | specified (section 4.14) |
+| `_itoa` | int to text | specified (section 4.15) |
+| `_strcmpi` | comparison of two texts, ignoring case | specified (section 4.16) |
+| `_strnicmp` | comparison of two texts' first *n* bytes, ignoring case | specified (section 4.17) |
+| `strncmp` | comparison of two texts' first *n* bytes | specified (section 4.18) |
+| `_strlwr` | a text to lower case, in place | specified (section 4.19) |
+| `tolower`, `toupper` | one character to lower or upper case | specified (sections 4.20 and 4.21) |
+| `isspace`, `isdigit` | character classes | specified (sections 4.22 and 4.23) |
+| `strchr` | the first occurrence of a byte | specified (section 4.24) |
+| `strstr` | the first occurrence of a text | specified (section 4.25) |
+| `strncpy` | a copy of at most *n* bytes, with zero fill | specified (section 4.26) |
+| `strtok` | the next token of a text | specified (section 4.27) |
+| `sscanf` | values read from a text by a format; its `%f` is `strtof` | specified (section 4.28) |
+| `sprintf` | values written as text by a format | specified (section 4.29) |
 
 The names in the first column are this spec's: `shuffle` and the fixed-point helpers have no C name,
 and the runtime crate may name its functions as it likes.
+
+### The kit's vectors
+
+`runtime/vectors/vectors.json` lists the vector entries, and for each its file and its input and
+output fields with their types; `runtime/vectors/README.md` gives the record format. A runtime is
+judged by giving every record's inputs to the entry and comparing its outputs with the record's. Each
+vector entry is an entry of this spec:
+
+| Vector entry | Spec entry |
+| --- | --- |
+| `sine`, `cosine`, `mul_hi`, `scaled_sine`, `scaled_cosine` | the same names (section 4.7) |
+| `angle_of_vector` | `angle_of_vector` (section 4.8) |
+| `rotate_point` | `rotate_point` (section 4.9) |
+| `rotation_matrix`, `apply_rotation` | the same names (section 4.10) |
+| `mul_div` | `mul_div` (section 4.11) |
+| `sqrt`, `sqrt_float` | `sqrt` and `sqrt_float` (section 4.13) |
+| `hypot` | `_hypot` (section 4.2) |
+| `acos` | `acos` (section 4.3) |
+| `double_text` | `atof` (section 4.4) |
+| `float_text` | `strtof` (section 4.4) |
+| `rand` | `rand` and `srand` (section 4.13) |
+| `shuffle` | `shuffle` (section 4.5) on `rand` |
+| `load_sequence` | `srand`, the draws of `explosion_draw_count` (section 4.12), then `shuffle` |
+| `ftol` | `_ftol` (section 4.1) |
+| `atoi` | `atoi` (section 4.14) |
+| `itoa` | `_itoa` (section 4.15) |
+| `strcmpi`, `strnicmp`, `strncmp` | `_strcmpi`, `_strnicmp`, `strncmp` (sections 4.16 to 4.18) |
+| `strlwr`, `tolower`, `toupper` | `_strlwr`, `tolower`, `toupper` (sections 4.19 to 4.21) |
+| `isspace`, `isdigit` | the same names (sections 4.22 and 4.23) |
+| `strchr`, `strstr`, `strncpy`, `strtok` | the same names (sections 4.24 to 4.27) |
+| `sscanf`, `sprintf` | the same names (sections 4.28 and 4.29) |
+| `isalnum`, `memmove`, `strcspn`, `strrchr` | calls the audit leaves out (section 4.30) |
+
+The vectors' manifest leaves out `qsort` (section 4.6).
 
 ### The manifest entry
 
@@ -62,7 +110,9 @@ None.
   `RAND_STREAM_LOAD` (`interfaces/rand_stream.h`), whose words the recordings name `rng.main` and
   `rng.load`; the streams live in the state block, and `GameRand` (`interfaces/services.h`) draws from
   the one it is given.
-- **Hidden state.** None in this part. `strtok`'s position is specified in part 2.
+- **Hidden state.** `strtok`'s position (section 4.27): one place in a text, which every `strtok` call
+  with a text sets and every call with a null first argument continues from. It is not in the state
+  block: game logic starts each run of `strtok` calls with a text, and no run spans two ticks.
 - Every other entry is a pure function of its arguments.
 
 ## 4. Behaviour
@@ -74,9 +124,9 @@ Each entry is stated as its arguments and result. The notation is in section 5.
 `_ftol(v)` takes a double *v* and gives the 32-bit int whose bits are the low 32 bits of trunc(*v*) as a
 64-bit two's complement integer, where trunc rounds toward zero. A *v* in the int range gives its
 truncation. A *v* with |*v*| < 2^63 outside the int range gives trunc(*v*) reduced modulo 2^32 into the
-int range (Q1). A NaN, an infinity, or |*v*| ≥ 2^63 gives 0.
-
-Part 2 checks this against the ftol vectors.
+int range (Q1). A NaN, an infinity, or |*v*| ≥ 2^63 gives 0. The kit's `ftol` vectors hold these
+results for every record. `specs/wind_meteors.md` and `specs/economy.md` state −2147483648 for an
+out-of-range conversion, and byte-tactics-moddable#1066 settles them.
 
 ### 4.2 `_hypot`
 
@@ -106,7 +156,7 @@ Each r64 and r53 applies to the exact value of its argument. *h* is +∞ when r5
 | Argument | Result |
 | --- | --- |
 | *x* a NaN | *x* |
-| |*x*| > 1, including ±∞ | the NaN with bits 0xFFF8000000000000 |
+| *x* > 1 or *x* < −1, including ±∞ | the NaN with bits 0xFFF8000000000000 |
 | −1 ≤ *x* ≤ 1 | *A* below |
 
 - *s* = `bx_sqrt`(r53(r53(1 + *x*) × r53(1 − *x*))).
@@ -125,7 +175,7 @@ Examples of *A*: `acos(0.5)` is 1.0471975511965976 (0x3FF0C152382D7365), `acos(�
 ### 4.4 The decimal parser: `atof` and `strtof`
 
 Game logic reads decimal numbers in two ways: `atof`, and the float conversion of `sscanf`. Only a
-plain `%f` (no width, no flag, no size modifier) occurs in game logic, in `RunInitialMission`. `strtof`
+plain `%f` (no width, no flag, no size modifier) occurs in game logic, in the mission's initial unit orders. `strtof`
 in this spec is the value that `%f` stores.
 
 **The text `atof` reads.**
@@ -350,7 +400,7 @@ size *b* has *f* = ⌊*t* / 2⌋ frames; with *h* = (*b* − *a*) / *f* truncate
 | 3 | 30 | 200 to 32 | 15 | 200, 189, ..., 46 | 260815 |
 
 `explosion_draw_count` is the total, **391606**. Between the seed of the load stream in `LoadMatch` and
-the start-position shuffle of `AssignStartPositions`, the load stream advances by exactly these 391606
+the shuffle of the start positions, the load stream advances by exactly these 391606
 draws and no others.
 
 ### 4.13 `sqrt`, `rand`, `srand`
@@ -361,6 +411,248 @@ draws and no others.
   the stream's word to the seed, and each `rand` sets it to word × 214013 + 2531011 mod 2^32 and gives
   bits 16 to 30 of the new word (0 to 32767). Which stream each game draw uses is in the subsystem specs
   and `interfaces/rand_stream.h`.
+- `sqrt_float(f)`: for a float *f* ≥ 0, the float nearest to the exact √*f* (ties to even; none occurs),
+  which is also `bx_sqrt` of *f* as a double, rounded to a float. +0 gives +0.
+
+The C functions of sections 4.14 to 4.30 use the terms of section 5, "Bytes and texts".
+
+### 4.14 `atoi`
+
+`atoi(s)` takes a text and gives an int.
+
+- White space at the start of the text is skipped.
+- Then an optional `+` or `-`, then the longest run of decimal digits that follows. The first byte after
+  that run ends the number, whatever it is.
+- The result is the run's value *N*, negated after a `-`, reduced modulo 2^32 into the int range (Q15).
+  No digit (an empty text, a sign alone, a second sign, white space between the sign and the digits)
+  gives 0.
+
+Examples: `" \t\n\v\f\r 12"` and `"12abc"` give 12, `"+-7"` and `"- 5"` give 0, `"0x10"` gives 0,
+`"2147483648"` gives −2147483648, `"4294967297"` gives 1, `"-2147483649"` gives 2147483647 and
+`"99999999999999999999"` gives 1661992959. A byte 0xA0 is neither white space nor a digit: `"\xA0 5"`
+gives 0.
+
+### 4.15 `_itoa`
+
+`_itoa(value, text, radix)` writes the text of an int *value* in a radix to `text`, followed by a zero
+byte, and gives `text`. Game logic passes radix 10.
+
+| Radix | The text |
+| --- | --- |
+| 10 | `-` for a negative *value*, then the decimal digits of its magnitude: −2147483648 gives `-2147483648` |
+| 2, 8, 16 | the digits of *value* mod 2^32 (the value as unsigned 32 bits), with `a` to `f` for the hexadecimal digits 10 to 15 and no sign: −1 in radix 16 gives `ffffffff` |
+
+There are no leading zeros: 0 gives `0`. Other radixes are outside this spec.
+
+### 4.16 `_strcmpi`
+
+`_strcmpi(a, b)` is cmp(*a*, *b*, ∞, lower) (section 5): −1, 0 or 1, never a difference of bytes.
+
+Folding to lower case puts the six bytes `[`, `\`, `]`, `^`, `_` and backquote (0x5B to 0x60) below
+every letter: `_` against `A` gives −1. Bytes 0x80 to 0xFF are not folded and order above every ASCII
+byte: 0xE9 against 0xC9 gives 1. A text that is a prefix of the other orders first: `a` against
+`a\xA0` gives −1.
+
+### 4.17 `_strnicmp`
+
+`_strnicmp(a, b, n)` is cmp(*a*, *b*, *n*, lower) for a count *n* ≥ 0: −1, 0 or 1. *n* = 0 gives 0, and
+`AB` against `az` with *n* = 1 gives 0.
+
+### 4.18 `strncmp`
+
+`strncmp(a, b, n)` is cmp(*a*, *b*, *n*, the byte itself) for a count *n* ≥ 0: −1, 0 or 1, with no case
+folding. `a` against `A` gives 1, and 0xE0 against backquote gives 1.
+
+### 4.19 `_strlwr`
+
+`_strlwr(s)` replaces every byte *c* of the text with lower(*c*), in place, and gives `s`. The length
+and the terminating zero are unchanged, and bytes 0x80 to 0xFF are left as they are.
+
+### 4.20 `tolower`
+
+`tolower(c)` takes an int *c* from −128 to 255. It gives *c* + 32 for *c* from 65 to 90 (`A` to `Z`), and
+*c* for every other argument, −128 to −1 and 128 to 255 included.
+
+### 4.21 `toupper`
+
+`toupper(c)` takes an int *c* from −128 to 255. It gives *c* − 32 for *c* from 97 to 122 (`a` to `z`), and
+*c* for every other argument.
+
+### 4.22 `isspace`
+
+`isspace(c)` gives 8 for *c* = 9 to 13 and 32 (the white space of section 5), and 0 for every other *c*
+from −1 to 255. Game logic passes a text's byte as a signed character: the bytes 0x00 to 0x7F arrive as
+0 to 127, the byte 0xFF as −1 (result 0), and the bytes 0x80 to 0xFE as −128 to −2, where the result is
+not specified (Q21).
+
+### 4.23 `isdigit`
+
+`isdigit(c)` gives 4 for *c* = 48 to 57 (`0` to `9`), and 0 for every other *c* from −1 to 255. Game logic
+passes a byte as `isspace`'s callers do, and the result for −128 to −2 is not specified (Q21).
+
+### 4.24 `strchr`
+
+`strchr(s, c)` searches the text for the byte *c* mod 256 (the low 8 bits of the int *c*), with the
+terminating zero counted as the text's last byte. The result is the first such byte, or null when there
+is none. *c* = 0 (or 256) gives the terminating zero, at offset equal to the length; 0x161 searches for
+`a` and −23 for 0xE9.
+
+### 4.25 `strstr`
+
+`strstr(h, n)` gives the first position of the text *h* at which the bytes of the text *n* occur, or
+null when they don't. An empty *n* gives *h*'s first byte, also when *h* is empty. Bytes 0x80 to 0xFF
+match only themselves.
+
+### 4.26 `strncpy`
+
+`strncpy(d, s, n)` writes exactly *n* bytes to `d` and gives `d`: byte *k* (*k* = 0 to *n* − 1) is byte *k*
+of the text `s` while *k* is below its length *L*, and 0 from *k* = *L* on. When *L* ≥ *n* no zero byte is
+written, so `d` holds no terminator from this call. Bytes from `d` + *n* on are not changed.
+
+### 4.27 `strtok`
+
+`strtok(s, delims)` takes a text `s`, or null to continue the text of the previous calls, and a set of
+delimiter bytes, the bytes of the text `delims` (the set may change from call to call, and may be
+empty). The scan starts at `s`'s first byte, or at the position (section 3) for a null `s`.
+
+| From the scan's start | Result | Position afterwards |
+| --- | --- | --- |
+| only delimiters, then the terminating zero | null | that terminating zero |
+| delimiters (maybe none), then a token ended by a delimiter | the token's first byte; the delimiter just after it becomes 0 | the byte after that delimiter |
+| delimiters (maybe none), then a token ended by the terminating zero | the token's first byte | the terminating zero |
+
+A token is a run of one or more bytes that are not delimiters. A run of delimiters yields no empty
+token, and once a call gives null every later null-argument call gives null too. With an empty set the
+whole rest of the text is one token. A null `s` before any call with a text is outside this spec.
+
+### 4.28 `sscanf`
+
+`sscanf(text, format, ...)` reads values from the text by the format and stores each into the next
+argument. The formats of game logic are made of white space, `,`, and the conversions `%d`, `%i`,
+`%f`, `%s`, `%n`, `%[a-zA-Z]`, `%[a-zA-Z0-9.]` and `%[a-zA-Z0-9_.]`; the vectors hold the formats
+`" %[a-zA-Z0-9.]"`, `" %[a-zA-Z0-9_.]"`, `" %d"`, `" %d %d"`, `" %s %n"`, `"%[a-zA-Z],%i"`,
+`"%[a-zA-Z],%i,%i,%i"`, `"%d"` and `"%x"`. A format is a sequence of directives: a run of white space, an ordinary byte, or a conversion
+(`%d`, `%i`, `%x`, `%f`, `%s`, `%[...]` or `%n`, none with a width, a `*` or a size letter). The
+directives are matched in order against the text from its first byte.
+
+| Directive | What it reads and stores |
+| --- | --- |
+| white space | every white space byte at the current place; it never fails |
+| an ordinary byte | that byte; any other byte is a matching failure |
+| `%d` | white space is skipped; then a field: an optional sign and the longest run of decimal digits after it |
+| `%i` | white space is skipped; then a field: an optional sign, then `0x` or `0X` and the longest run of hexadecimal digits after it; or else, when the field goes on with `0`, the longest run of octal digits (`0` to `7`), that `0` included; or else the longest run of decimal digits |
+| `%x` | white space is skipped; then a field: an optional sign, an optional `0x` or `0X`, and the longest run of hexadecimal digits after it |
+| `%f` | the field of section 4.4, stored as a float |
+| `%s` | white space is skipped; then the longest run of bytes that are not white space (0x80 to 0xFF included), stored followed by a zero byte |
+| `%[...]` | nothing is skipped; the longest run of bytes in the set, stored followed by a zero byte. The set is the bytes between the brackets, where *x*`-`*y* stands for every byte from *x* to *y* |
+| `%n` | nothing is read; the number of bytes of the text read so far is stored as an int, and it is not counted in the result |
+
+Hexadecimal digits are `0` to `9`, `a` to `f` and `A` to `F`. The value of a `%d`, `%i` or `%x` field is
+its digits' value *N*, negated after a `-`, reduced modulo 2^32 into the int range (Q16).
+
+- **Input failure.** The text ends where a directive needs a byte: an ordinary byte, the field of a
+  conversion after its white space, a sign with nothing after it, or `0x` with nothing after it (Q17).
+- **Matching failure.** A field with no digit after its sign or its `0x`, a `%s` or `%[` field of no
+  byte, or an ordinary byte that differs.
+- Either failure ends the scan; what was stored before it stays stored.
+- **A field that runs to the end of the text** ends the scan once it is stored: the directives after it
+  have no effect, a `%n` included (Q18).
+- **The result** is the number of conversions stored, `%n` left out, except −1 when the scan ended with an
+  input failure before any conversion was stored.
+
+How a `%f` field behaves at the end of the text (a sign with nothing after it, a field that runs to the
+end) is not covered by the vectors (section 7).
+
+Examples: `" %s %n"` on `"abc def"` gives 1 and stores `abc` and 4; on `"abc"` it gives 1 and stores only
+`abc`. `"%d"` on `"-"` gives −1, on `"-ff"` 0 and on `"4294967296"` 1, storing 0.
+`"%[a-zA-Z],%i,%i,%i"` on `"q,0x10,010,-5"` gives 4 and stores `q`, 16, 8 and −5; on `""` it gives −1
+and on `" "` 0. `"%x"` on `"0x"` gives −1 and on `"0xg"` 0.
+
+### 4.29 `sprintf`
+
+`sprintf(d, format, ...)` writes the format's text to `d`, each conversion replaced by its argument's
+text, then a zero byte, and gives the number of bytes written before that zero byte. A `%c` of 0
+writes a zero byte inside the text, which is counted. The conversions in the formats that reach game
+state, saves or compared output are `%d`, `%i`, `%3d`, `%4d`, `%02d`, `%+d`, `%04x`, `%c`, `%s`, `%.0f`,
+`%.1f`, `%1.1f` and `%%`; the vectors also hold `%02x`, `%08x`, `%04i`, `%ld`, `%04lX`, `%08lX` and
+`%08lx`, which follow the same rules. Some formats come from the translation table, and they are read by the
+same rules. A conversion is `%`, then flags, an optional width (decimal digits), an optional
+`.` and precision, an optional size letter `l` or `h` (which changes nothing here) and the conversion
+letter.
+
+| Conversion | Its text |
+| --- | --- |
+| `%d`, `%i` | the decimal digits of the int's magnitude, after a `-` for a negative int; with the `+` flag, after a `+` for any other int |
+| `%x`, `%X` | the hexadecimal digits of the int mod 2^32, `a` to `f` for `%x` and `A` to `F` for `%X`; no sign |
+| `%c` | one byte, the int's low 8 bits |
+| `%s` | the argument text's bytes, unchanged (0x80 to 0xFF included) |
+| `%f` with precision *p* | the double's fixed-point text with *p* decimals (below) |
+| `%%` | one `%` |
+
+**Width.** A text (sign included) shorter than the width is padded on the left to the width: with the
+digit `0` after the sign under the `0` flag, otherwise with spaces before it. A longer text is not cut.
+
+**The fixed-point text of a finite double *v*.**
+
+- *R* is |*v*| rounded to 17 significant decimal digits, to nearest; every decimal digit of *R* after its
+  17th significant one is 0 (Q20).
+- *R* is rounded to *p* decimals: when the decimal digit at place *p* + 1 after the point is 5 or more,
+  *R* is cut after place *p* and one unit of place *p* is added; otherwise it is cut (Q19).
+- The text is `-` when *v*'s sign bit is set (also for −0 and for a *v* that rounds to zero), then the
+  integer part's digits (at least one, `0` for a value below 1), then, when *p* > 0, `.` and the *p*
+  decimals.
+
+`%e`, `%g`, the `-`, space and `#` flags, `%u`, `%o` and a precision on another conversion occur in no
+format of game logic, and are outside this spec, as are an infinite or NaN `%f` argument.
+
+Examples: `"%3d"` of −1 gives ` -1` (3), `"%+d"` of 35126 gives `+35126`, `"%02x"` of −11869 gives
+`ffffd1a3`, `"%1.1f"` of 0.25 gives `0.3`, `"%.1f"` of −2.5e−7 gives `-0.0`, and `"%02x%c"` of 512118646
+and 0 gives the 9 bytes `1e864f76` and a zero byte, and 9.
+
+### 4.30 Calls the audit leaves out
+
+The runtime calls below need no more than the C standard's behaviour, because only inputs on which a C
+runtime and a straightforward Rust implementation agree reach them, or their result reaches nothing
+the gate compares. The counts are of the game-logic functions that make the call.
+
+- `_itoa`: 2: one formats a map tile's metal value (0 to 255) for a debug overlay, and one a progress
+  bar's value, which is never below 0.
+- `_strcmpi`: 13: 9 compare only with fixed ASCII literals (console commands, the feature and texture
+  loading, the mission schema, the unit info panel's debug text, the console command registration and
+  the data file sub-record lookup), 3 compare only names the program makes from ASCII (the saved-game
+  bank's accounts, items and boxes), and 1 looks a name up in the console command table, where only
+  equality counts.
+- `_strnicmp`: 1, comparing a screen's name with fixed ASCII literals.
+- `atoi`: 1, reading the number in existing screenshot file names, which only picks the next
+  screenshot's name.
+- `isalnum`: 1, testing a typed key, where only the bytes 0x20 to 0x7F reach it.
+- `memmove`: 7, 6 that copy exception message text and 1 that moves crash report text within its
+  buffer.
+- `sprintf`: 16: 6 make the text of a fatal error (a missing feature record, an unknown map version, a
+  bad player number, a missing start position, an archive decompression error, a data file parse
+  error), 3 make text that is never used (the download menus' check and the network packet
+  condenser's messages), 3 make the crash report's text, 2 make screenshot directory and file names, 1
+  the dump file of the AI dump console command, and 1 the command text for playing a CD audio track.
+- `sscanf`: 1, reading a debug fill pattern from the command line (the `"%d"` and `"%x"` of section
+  4.28).
+- `strchr`: 3, each searching for a fixed ASCII byte: the backslash of archive paths (2), and `]`, `=` and
+  `;` in data files (1).
+- `strcspn`: 1, with a fixed non-empty set, in the mission's initial unit orders.
+- `strncmp`: 12: 10 compare GUI gadget names, all short fixed ASCII names within the count, and 2
+  compare 4-byte sound file tags with fixed ASCII literals.
+- `strncpy`: 8: 3 copy a text whose length equals the count (a token of the mission's initial unit
+  orders, and a segment of an archive path, twice), 1 copies only a fixed 8-byte literal (the
+  saved-game bank's header), 1 copies a key that is always empty, and 3 reach nothing compared (the
+  game information sent over the network, an archive open error and the crash report).
+- `strrchr`: 3, reaching only the out-of-memory error text, the crash report's text and the debug symbol
+  search paths.
+- `strstr`: 2, each with fixed non-empty ASCII needles: a build order's name, and a gadget name search.
+
+The kit's vectors hold `isalnum` (4 for `0` to `9`, 1 for `A` to `Z`, 2 for `a` to `z`, 0 for every other
+argument from −1 to 255, and not specified for −128 to −2, as in Q21), `memmove` (a copy of *n* bytes that
+gives the destination, with overlapping ranges copied as though through a separate buffer), `strcspn`
+(the length of the longest start of the text with no byte of the set, the whole length for an empty set)
+and `strrchr` (as `strchr`, but the last such byte).
 
 ## 5. Exactness
 
@@ -376,12 +668,27 @@ draws and no others.
   draw, each from the stream it is given.
 - **NaNs.** Where a result is stated as a NaN with given bits, those are 3.1c's bits. The kit's ABI
   lets the engine canonicalise NaNs, so a module must not let a result depend on them.
+- **Bytes and texts.** A text is a run of bytes ended by its terminating zero byte, which is not part of
+  it; its length is its number of bytes. Bytes are compared as unsigned values, 0 to 255, so 0x80 to
+  0xFF order above every ASCII byte and the terminating zero below every byte. White space is the six
+  bytes 0x20 and 0x09 to 0x0D; no other byte (0xA0 included) is white space. lower(*c*) is *c* + 0x20 for
+  *c* from 0x41 to 0x5A (`A` to `Z`) and *c* otherwise; no byte from 0x80 to 0xFF has a case. A result
+  stated as a byte of a text is that byte's address; the vectors record it as its offset from the
+  text's first byte, and null as −1.
+- **The comparison cmp(*a*, *b*, *n*, *f*)** of two texts *a* and *b*, over at most *n* positions (∞ for no
+  limit), with a map *f* of bytes. Each text is read with its terminating zero. Let *i* be the first
+  position below *n* at which *f*(*a*[*i*]) ≠ *f*(*b*[*i*]), looking no further than the first position at
+  which both bytes are 0. With no such *i* the result is 0; otherwise it is −1 when *f*(*a*[*i*]) <
+  *f*(*b*[*i*]) and 1 when it is greater.
 - **Not exact.**
   - `acos` near a 53-bit midpoint and `angle_of_vector` near a half-integer (sections 4.3 and 4.8): the
     result there is the CPU's own arctangent's, which this spec can't define as arithmetic. The kit's
     vectors record it for the arguments they hold. Elsewhere the definitions are exact.
   - A `%f` field of more than 300 characters.
   - `_hypot` when *h* overflows: this spec gives +∞.
+  - `sprintf`'s `%f` when |*v*| lies exactly halfway between two 17-digit decimals: no record of the
+    vectors holds such a value, and this spec does not say which way *R* goes.
+  - `isspace` and `isdigit` for −128 to −2 (Q21).
 
 ## 6. Quirks
 
@@ -416,6 +723,24 @@ draws and no others.
   already written.
 - **Q14.** `mul_div` of a quotient outside the int range: 3.1c ends with a division fault, and this spec
   gives −2147483648.
+- **Q15.** `atoi` of a number outside the int range keeps its value modulo 2^32: `"4294967297"` gives 1
+  and `"-2147483649"` gives 2147483647.
+- **Q16.** `sscanf`'s `%d`, `%i` and `%x` do the same: `"%d"` on `"4294967296"` stores 0, and `"%x"` on
+  `"-2147483649"` stores −1195914825.
+- **Q17.** `sscanf` counts a sign, or a `0x` of `%i` or `%x`, that ends the text as an input failure, not
+  a matching failure: `"%x"` on `"-"` gives −1, while on `"-m"` it gives 0; on `"0x"` it gives −1 and on
+  `"0xg"` 0.
+- **Q18.** A `sscanf` field that runs to the end of the text ends the scan, so a `%n` after it stores
+  nothing, even after a run of white space in the format: `" %s %n"` on `"abc"` leaves the `%n`
+  argument as it was, while on `"   abc   "` it stores 9.
+- **Q19.** `sprintf`'s `%f` rounds a decimal half away from zero, not to even: `"%1.1f"` of 0.25 gives
+  `0.3`.
+- **Q20.** `sprintf`'s `%f` writes at most 17 significant digits and 0 for every digit after them:
+  `"%.1f"` of −7.495023430834638e35 (0xC7620B2A3193B6B1) gives
+  `-749502343083463820000000000000000000.0`, where the exact value's digits go on `...3818...`.
+- **Q21.** The results of `isspace` and `isdigit` for the arguments −128 to −2 (the bytes 0x80
+  to 0xFE passed as signed characters) are not specified here: 3.1c's result there depends on unrelated
+  program memory, and byte-tactics-moddable's modern build does not reproduce 3.1c there either.
 
 ## 6a. Calls outside the runtime
 
@@ -426,16 +751,16 @@ the host interface (`interfaces/host.h`), or has no entry there yet, or has no o
 
 | Call | Where | Goes through |
 | --- | --- | --- |
-| `fopen` | `AccountBank`, the archive file reader, the screenshot writer, `CmdPrintWeights` | `host_file_open_read` (read), `host_file_create` (write, with `HOST_FILE_TEXT` for a text mode), `host_file_open_append` (append) |
+| `fopen` | the saved-game bank, the archive file reader, the screenshot writer, the print-weights console command | `host_file_open_read` (read), `host_file_create` (write, with `HOST_FILE_TEXT` for a text mode), `host_file_open_append` (append) |
 | `fread`, `fwrite`, `fclose` | the same | `host_file_read`, `host_file_write`, `host_file_close` |
 | `fseek` | the same | `host_file_seek` |
 | `ftell` | the same | `host_file_seek` by 0 from `HOST_SEEK_CUR`, whose result is the position |
-| `fprintf` | `AccountBank`'s audit file, `DumpPlayerAI` | the text as part 2's `sprintf` makes it, then `host_file_write` |
+| `fprintf` | the saved-game bank's audit file, `DumpPlayerAI` | the text as part 2's `sprintf` makes it, then `host_file_write` |
 | `_filelength` | the archive file reader | `host_file_size` |
-| `_chsize` | `AccountBank` | `host_file_truncate` |
+| `_chsize` | the saved-game bank | `host_file_truncate` |
 | `_findfirst`, `_findnext`, `_findclose` | the archive file reader and the directory listings | `host_dir_first`, `host_dir_next`, `host_dir_close` |
-| `_mkdir` | `MakeDirectoryPath` | no host entry |
-| `printf` | `LzssCompress`, `LzssExpand` (their error messages) | no host entry |
+| `_mkdir` | `MakeDirectoryPath` | no host entry yet: byte-tactics-moddable#1065 adds one |
+| `printf` | `LzssCompress`, `LzssExpand` (their error messages) | the text as part 2's `sprintf` makes it, then `host_log` |
 
 **Memory.**
 
@@ -443,19 +768,19 @@ the host interface (`interfaces/host.h`), or has no entry there yet, or has no o
 | --- | --- | --- |
 | `malloc`, `free` | the game's allocator, `StringRef` | `host_mem_alloc`, `host_mem_free` |
 | `calloc` | `LzssCompress`, `LzssExpand` | `host_mem_alloc`, the block then set to zero |
-| `realloc` | the game's allocator | no host entry |
-| `_msize` | the game's allocator (the size of a block) | no host entry |
+| `realloc` | the game's allocator | `host_mem_alloc` for the new size, the old block's bytes copied (as many as both sizes hold), then `host_mem_free` of the old block; no game logic reads a block's address |
+| `_msize` | the game's allocator (the size of a block) | the size the block was allocated with, which the runtime keeps beside each block of `host_mem_alloc` |
 
 **Process, clock and environment.**
 
 | Call | Where | Goes through |
 | --- | --- | --- |
-| `time` | `LoadMatch`: the seed of `RAND_STREAM_LOAD`, in wall-clock seconds | no host entry (`host_time_ms` is not the wall clock) |
+| `time` | `LoadMatch`: the seed of `RAND_STREAM_LOAD`, in wall-clock seconds | no host entry yet: byte-tactics-moddable#1065 routes it (`host_time_ms` is not the wall clock) |
 | `time`, `localtime`, `gmtime`, `asctime`, `getenv` | the crash report's text, and the search for the debug help library it uses | `host_crash_report` |
 | `exit` | `FatalError` | `host_fatal` |
-| `exit` | `CmdDebugBreak` | none needed: the command ends with a division fault before the call |
-| `_exit` | `OutOfMemoryHandler` (exit code 3) | `host_exit` |
-| `raise` | `OutOfMemoryHandler` (the abort signal, before its exit) | no host entry |
+| `exit` | the debug-break console command | none needed: the command ends with a division fault before the call |
+| `_exit` | the out-of-memory handler (exit code 3) | `host_exit` |
+| `raise` | the out-of-memory handler (the abort signal, before its exit) | no host entry yet: byte-tactics-moddable#1065 routes it |
 | `atexit` | eight functions that make a function-local static object on first use (the debug allocator's command-line switches, the debug help library) | no host entry; no result game logic sees |
 
 **64-bit integer helpers.** All are two's complement on 64 bits.
@@ -468,7 +793,7 @@ the host interface (`interfaces/host.h`), or has no entry there yet, or has no o
 - `_allshr`: the same count. *c* ≥ 64 gives 0 for a value ≥ 0 and −1 for a negative one; otherwise
   ⌊value / 2^*c*⌋.
 
-**Compression.** `SquashPack`'s method 2 and its unpacking counterpart use zlib 1.0.4: `compress` at the
+**Compression.** The archive packer's method 2 and its unpacking counterpart use zlib 1.0.4: `compress` at the
 default level (6) with the deflate method, a 15-bit window, memory level 8 and the default strategy, and
 `uncompress`. Output written by a method-2 pack equals zlib 1.0.4's for those settings. Saved games do
 not use it: they are packed with the game's own method 1, `LzssCompress` (`interfaces/files.h`). A method-2 pack is
@@ -488,8 +813,210 @@ fixed by the format.
 
 ## 7. Examples
 
-Part 2 adds the examples from the kit's runtime/vectors.
+Records are counted from 0 in file order, and each example below is its record's inputs and outputs.
+Doubles and floats are given by value where that is exact, and otherwise as their bits in hexadecimal.
+An offset of −1 is a null result.
+
+**`_ftol`** (`runtime/vectors/ftol.bin`):
+
+- record 36: 2147483648.0 gives −2147483648 (Q1).
+- record 116: 2147483649.0 gives −2147483647 (Q1).
+- record 62: 0x43DFFFFFFFFFFFFF (2^63 − 1024) gives −1024 (Q1).
+- record 60: 2^63 gives 0; record 73: +∞ gives 0; record 82: the NaN 0x7FF8000000000000 gives 0.
+
+**`_hypot`** (`runtime/vectors/hypot.bin`), record 39: (59, 52) gives 0x4053A943ED6F1581, one unit
+below the correctly rounded length 0x4053A943ED6F1582.
+
+**`acos`** (`runtime/vectors/acos.bin`):
+
+- record 0: 1 gives +0.
+- record 1: −1 gives 0x400921FB54442D18.
+- record 2: 0 gives 0x3FF921FB54442D18.
+- record 3: 0.5 gives 0x3FF0C152382D7365.
+- record 4: −0.5 gives 0x4000C152382D7366.
+
+**`atof`** (`runtime/vectors/double_text.bin`):
+
+- record 3: `-0` gives −0.
+- record 9: `+-1` gives +0 (Q7).
+- record 20: `1e` gives 1.
+- record 27: `1d5` gives 100000.
+- record 48: `0x10` gives +0.
+- record 94: `4.9406564584124654e-324` gives the double of bits 2, not 1 (Q9).
+- record 116: `9007199254740993.0000000001` gives 2^53 (0x4340000000000000), not 2^53 + 2 (Q3).
+- record 117: `0.1` gives 0x3FB999999999999A.
+
+**`strtof`** (`runtime/vectors/float_text.bin`):
+
+- record 0: `.8e16` gives 0x59E35FA9 (7999999895928832).
+- record 74: `-45625983` gives 0xCC2E0C9F (−45625980), not the nearest float −45625984 (Q2).
+
+**`sine`, `cosine`** (`runtime/vectors/sine.bin`, `runtime/vectors/cosine.bin`):
+
+- `sine` record 0: angle 0 gives 0.
+- `sine` record 16384: angle 16384 gives 8192.
+- `sine` record 32768: angle 32768 gives 0.
+- `cosine` record 0: angle 0 gives 8192.
+- `cosine` record 16384: angle 16384 gives 0.
+
+**`mul_hi`** (`runtime/vectors/mul_hi.bin`), record 255: (−1, 1) gives −1.
+
+**`scaled_sine`, `scaled_cosine`**:
+
+- `runtime/vectors/scaled_sine.bin`, record 0: angle 0 and scale 0 give 0.
+- `runtime/vectors/scaled_cosine.bin`, record 891: angle 65535 and scale −1 give −1.
+
+**`angle_of_vector`** (`runtime/vectors/angle_of_vector.bin`), record 2: *x* = 0, *z* = −1 gives 32768
+(Q11).
+
+**`rotate_point`** (`runtime/vectors/rotate_point.bin`):
+
+- record 4: angle 0 leaves (0, −2147483648) as it is.
+- record 180: angle 1 and (2147483647, 0) give (2147483637, 205887).
+- record 188: angle 1 and (2147483647, −1000000) give (−2147483648, −794113) (Q12).
+
+**`rotation_matrix`** (`runtime/vectors/rotation_matrix.bin`), record 0: the angles (0, 0, 0) give the
+matrix with 8192 on its diagonal and 0 elsewhere.
+
+**`apply_rotation`** (`runtime/vectors/apply_rotation.bin`), record 10: the matrix (−2903, 265, 8020,
+1006, −6968, −6042, −7008, 482, 7588), the vector (1000000, 65536, 1) and *aliased* = 1 give
+(−346324, −66948, −289676).
+
+**`mul_div`** (`runtime/vectors/mul_div.bin`), record 7: (0, 1, 0) gives 0.
+
+**`sqrt`, `sqrt_float`**:
+
+- `runtime/vectors/sqrt.bin`, record 0: 0x1CF353F81C391EAD gives 0x2E7195E017A4C91F.
+- `runtime/vectors/sqrt_float.bin`, record 0: 0x04393D99 gives 0x21D9C3D7.
+
+**`srand`, `rand`** (`runtime/vectors/rand.bin`):
+
+- record 0: seed 0 gives the draws 38, 7719, 21238, 2437, … .
+- record 1: seed 1 gives 41, 18467, 6334, 26500, … .
+
+**`shuffle`** (`runtime/vectors/shuffle.bin`):
+
+- record 40: seed 0 and the five elements 1, 4, 7, 10, 13 give the order 4, 13, 1, 7, 10, and the next
+  four draws are 8855, 11797, 8365, 32285.
+- record 0: seed 0 and no element leave the stream unchanged: the next four draws are 38, 7719, 21238,
+  2437.
+
+**`explosion_draw_count`** (`runtime/vectors/load_sequence.bin`), record 0: seed 0, 391606 draws, then the
+shuffle of 0, 1, 2 gives 1, 2, 0, and the next four draws are 15442, 19688, 28255, 19395.
+
+**`atoi`** (`runtime/vectors/atoi.bin`):
+
+- record 7: `2147483648` gives −2147483648 (Q15).
+- record 11: `4294967297` gives 1 (Q15).
+- record 62: `-2147483649` gives 2147483647 (Q15).
+- record 83: `+-7` gives 0.
+- record 815: the byte 0x0B then `-12ab` gives −12.
+
+**`_itoa`** (`runtime/vectors/itoa.bin`):
+
+- record 603: −2147483648 in radix 10 gives `-2147483648`.
+- record 701: −1 in radix 16 gives `ffffffff`.
+- record 724: −305419896 in radix 8 gives `35562724610`.
+
+**`_strcmpi`** (`runtime/vectors/strcmpi.bin`), whose two outputs (sign and raw result) are equal in
+every record:
+
+- record 618: `_` against `A` gives −1.
+- record 970: `ab` against `AB` gives 0.
+- record 2680: 0xE9 against 0xC9 gives 1.
+- record 88: `a` against `a` and 0xA0 gives −1.
+
+**`_strnicmp`** (`runtime/vectors/strnicmp.bin`):
+
+- record 2649: `ab` against `aZ` with *n* = 0 gives 0.
+- record 2655: `AB` against `az` with *n* = 1 gives 0.
+- record 2748: 0xE0 against backquote with *n* = 1 gives 1.
+
+**`strncmp`** (`runtime/vectors/strncmp.bin`):
+
+- record 282: `a` against `A` with *n* = 1 gives 1.
+- record 2748: 0xE0 against backquote with *n* = 1 gives 1.
+
+**`_strlwr`** (`runtime/vectors/strlwr.bin`):
+
+- record 256: ``ABCXYZ[\]^_`abcxyz@{`` gives ``abcxyz[\]^_`abcxyz@{``.
+- record 258: the bytes C0 C9 DE DF E0 FF 80 A0 are unchanged.
+
+**`tolower`, `toupper`**:
+
+- `runtime/vectors/tolower.bin`, record 193: 65 gives 97; record 65: −63 gives −63.
+- `runtime/vectors/toupper.bin`, record 250: 122 gives 90; record 361: 233 gives 233.
+
+**`isspace`, `isdigit`**:
+
+- `runtime/vectors/isspace.bin`, record 12: 11 gives 8; record 161: 160 gives 0; record 0: −1 gives 0.
+- `runtime/vectors/isdigit.bin`, record 56: 55 gives 4; record 0: −1 gives 0.
+
+**`strchr`** (`runtime/vectors/strchr.bin`):
+
+- record 156: `aaa` and 0 give offset 3.
+- record 18: `a` and 353 (0x161) give offset 0.
+- record 41: the byte 0xE9 and −23 give offset 0.
+
+**`strstr`** (`runtime/vectors/strstr.bin`):
+
+- record 160: `aa` and the empty needle give offset 0.
+- record 1363: the text `ab` followed by the byte 0xE9, with the needle 0xE9, gives offset 2.
+
+**`strncpy`** (`runtime/vectors/strncpy.bin`), into 24 bytes of 0xAA:
+
+- record 81: `ABC` with *n* = 6 leaves `ABC`, three zero bytes and eighteen 0xAA.
+- record 78: `ABC` with *n* = 3 leaves `ABC` and twenty-one 0xAA, with no terminator.
+- record 128: `ABCDE` with *n* = 3 leaves `ABC` and twenty-one 0xAA.
+
+**`strtok`** (`runtime/vectors/strtok.bin`):
+
+- record 272: `,a,,b,` with `,` gives the tokens `a` at offset 1 and `b` at offset 4, then null, and a
+  further call gives null.
+- record 241: `  a  b  ` with a space gives `a` at offset 2 and `b` at offset 5, then null.
+- record 326: `abc` with the empty set gives `abc` at offset 0, then null.
+
+**`sscanf`** (`runtime/vectors/sscanf.bin`):
+
+- record 293: `" %s %n"` on `"abc def"` gives 1 and stores `abc` and 4.
+- record 259: the same on `"abc"` gives 1 and stores `abc`; the `%n` stores nothing (Q18).
+- record 295: the same on `"   abc   "` gives 1 and stores `abc` and 9.
+- record 424: `"%[a-zA-Z],%i,%i,%i"` on `"q,0x10,010,-5"` gives 4 and stores `q`, 16, 8 and −5.
+- record 366: the same format on `""` gives −1; record 367: on `" "` it gives 0.
+- record 435: `"%d"` on `"-"` gives −1 (Q17); record 466: on `"-ff"` it gives 0.
+- record 459: `"%d"` on `"4294967296"` gives 1 and stores 0 (Q16).
+- record 494: `"%x"` on `"-1"` stores −1; record 518: on `"-2147483649"` it stores −1195914825 (Q16).
+- record 528: `"%x"` on `"0x"` gives −1 (Q17); record 529: on `"0xg"` it gives 0; record 1247: on `"-m"`
+  it gives 0.
+
+**`sprintf`** (`runtime/vectors/sprintf.bin`):
+
+- record 2: `"%3d"` of −1 gives ` -1` and 3.
+- record 191: `"%+d"` of 35126 gives `+35126` and 6.
+- record 116: `"%02x"` of −11869 gives `ffffd1a3` and 8.
+- record 141: `"%1.1f"` of 0.25 gives `0.3` and 3 (Q19).
+- record 110: `"%.1f"` of −2.5e−7 gives `-0.0` and 4.
+- record 247: `"+%.1f"` of −12699056436352884 gives `+-12699056436352884.0` and 21.
+- record 282: `"Send - %1.1f K/s"` of 0xC7620B2A3193B6B1 gives
+  `Send - -749502343083463820000000000000000000.0 K/s` and 50 (Q20).
+- record 189: `"%s"` of a text with bytes 0x80 to 0xFF copies them unchanged.
+- record 227: `"%02x%c"` of 512118646 and 0 gives `1e864f76`, a zero byte, and 9.
+
+**What the vectors don't cover.** These cases are left to the definitions above, or are outside this
+spec:
+
+- `qsort` (section 4.6), and the order in which it leaves equal elements.
+- `isspace`, `isdigit` and `isalnum` for −128 to −2 (Q21).
+- `acos` near a 53-bit midpoint and `angle_of_vector` near a half-integer (section 5).
+- `sprintf`: `%+d` of 0, a negative int under the `0` flag, `%f` of an infinity or a NaN, and a `%f` value
+  halfway between two 17-digit decimals.
+- `sscanf`'s `%f`: its field at the end of the text (section 4.28), and `%f` inside a format with other
+  conversions.
+- `_itoa` in a radix other than 2, 8, 10 and 16.
+- `strtok` with a null text before any call with a text.
+- `_hypot` of an infinite or NaN argument, and `sqrt` of a negative argument.
 
 ## 8. Kit version
 
-Part 2 fills this.
+Kit `interfaces-v33` and `reference-traces-v34`, with the `runtime/` directory (vectors format 1) that
+byte-tactics-moddable#1060 adds; the first kit tag that carries it replaces this line.
