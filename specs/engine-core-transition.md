@@ -157,6 +157,5 @@ and the scheduler's order. The scenario mode, and the module gate of each module
 
 ## 8. Kit version
 
-Kit `interfaces-vNN` and `reference-traces-vNN`, the first pair that holds `docs/core-gate.md` and
-`reference/core/`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer` 1.0, `sim_events` 1.0 and
-`files` 3.0.
+Kit `interfaces-v36` and `reference-traces-v37` (both on the same commit). Interfaces `services` 4.0,
+`rand_stream` 1.0, `state_writer` 1.0, `sim_events` 1.0 and `files` 3.0.

@@ -48,6 +48,10 @@ arguments are `interfaces/sim_events.h`, version 1.0. Module-private state enter
 `interfaces/state_writer.h`, version 1.0, as `docs/trace-format.md` says for each section that a module writes;
 how a core gives a module its `StateWriter` is scaffolding (`specs/engine-core-transition.md`, section 3).
 
+The payloads of the events a console line publishes (section 4.3) are laid out by `interfaces/players.h`,
+version 5.1, `interfaces/wind_meteors.h`, version 3.1, `interfaces/map.h`, version 9.1, `interfaces/units.h`,
+version 7.1, and `interfaces/features.h`, version 5.1.
+
 ### Events
 
 None. The core records no sim event kind of its own. It owns the queue the logic records into and hands each tick's
@@ -66,15 +70,14 @@ records over (section 4.5); the kinds, their arguments and the order that counts
   | `rand` | section 4.4 and section 5, "The random streams" |
   | `events` | section 4.5 and section 5, "The sim event queue" |
   | `commands` | section 4.3: the delivery only, its order and the tick each command precedes |
-  | `loader`, `fuel` | section 4.7 for how the run ends; the checks themselves are scaffolding (`specs/engine-core-transition.md`, section 2) |
+  | `console` | section 4.3, "Console lines" |
+  | `runtime` | section 4.7 |
+  | `loader`, `fuel` | section 4.8 for how the run ends; the checks themselves are scaffolding (`specs/engine-core-transition.md`, section 2) |
   | `host` | scaffolding (`specs/engine-core-transition.md`, section 4.4) |
   | `files` | the files service, `docs/files-gate.md` |
 
   The form of a core the gate runs (a static x86_64 Linux executable), the sandbox it runs in, the 120 s limit
   of each run and the result are `docs/core-gate.md`, "Running a core the gate doesn't trust" and "The verdict".
-- **Later groups:** console commands that a core reads alone (ozgb/byte-tactics-moddable#1076) and the runtime
-  (ozgb/byte-tactics-moddable#1061) are planned groups of the same gate. They are not part of this contract
-  until a kit holds them.
 - **Later, the scenario mode:** `CORE play SCENARIO --out DIR` (`docs/core-gate.md`, "The scenario mode") plays
   a scenario that `docs/commands.md`, section 7, marks `judged`, and is judged on the `tick` rows of the trace
   against the `state` column of `reference/traces/` and on the `tick` lines of the event digest against
@@ -165,8 +168,27 @@ whichever is first (`docs/scenario-format.md`, section 2); that tick is played a
 - Only the events a command publishes itself are its own (the `count` of `commands.txt`); an event that a
   handler publishes while it handles one is not.
 
-What events a line becomes needs the modules (the map and the orders, `docs/commands.md`, sections 3 to 6). The
-core gate's `commands` group judges the delivery only.
+What events a `spawn` or `order` line becomes needs the modules (the map and the orders, `docs/commands.md`,
+sections 5 and 6). The core gate's `commands` group judges the delivery only.
+
+**Console lines.** A console line is read as `docs/commands.md`, section 3, states: its words, its number
+arguments, which command it is, the classes it is run with, the cheat code, the local player and a player that
+exists. Its events are the ones section 4.2 of that page gives for its command, in publication order. Each event
+is its payload as the interface header of its kind lays it out (`interfaces/players.h` and the others of
+"The interfaces it names"), from the `kind` field on.
+
+- A number argument is what the runtime's `atoi` (section 4.7) gives for the word, so it wraps modulo 2^32
+  rather than stopping at the limits of an `int`: `give 4294967297 5 metal` gives to player 1.
+- A line with no word (empty, all blanks, or a `#` before its first word) publishes nothing, and does not change
+  the cheat code.
+- The commands `give`, `meteor`, `atm`, `nometal`, `noenergy`, `sealevel`, `iwin`, `ilose`, `ai`, `kill`,
+  `burnall` and `now` need nothing but the match setup: the game type, `localPlayer`, `playerIndex`, bit 0x2 of
+  `uiOptionFlags`, and for each of the ten slots whether its record is active, its type, the side of its player
+  info and its index. The core gate's `console` group states that setup and nothing else, runs lines of those
+  commands one after another, and delivers their events to no module, so no state but bit 0x2 of
+  `uiOptionFlags` changes between two lines (`docs/core-gate.md`, "console").
+- The other commands need the cursor, the units, or the unit and feature types, and only the scenario mode
+  judges them.
 
 ### 4.4 The random streams
 
@@ -212,9 +234,25 @@ replaces it with anything, restores the capture and plays on gives the same late
 it back after the step of a tick. How a core captures (a copy of one block, a serialisation) is its own; what
 is judged is that the later ticks are equal.
 
-Saving and loading a game are not part of the contract (section 4.8).
+Saving and loading a game are not part of the contract (section 4.9).
 
-### 4.7 Failure
+### 4.7 The runtime
+
+The logic calls a C runtime: the fixed-point sine and cosine, the products, quotients and roots, the rotations,
+the conversions between text and numbers (`atoi`, `atof`, `%f`, `sprintf`, `sscanf`, `_itoa`, `_ftol`), `rand` and
+the shuffle, and the string and character functions. The kit's `runtime/vectors/` holds one entry for each:
+`README.md` states what each entry computes and the format of its records, and `layouts.txt` the type of each
+field. Each record is the inputs of one call and the results the original program gave for them, and a core
+gives exactly those results: every bit of a double or of a float, the bytes it writes, the bytes of a buffer
+after the call, the value it returns for an input out of range or NaN, and its treatment of bytes from 0x80 to
+0xff. The core gate's `runtime` group runs each entry as one vector and each record as one call, as
+`docs/core-gate.md`, "runtime", states.
+
+The entries `rand` and `shuffle` are the main stream and the shuffle draw of section 5 (Q1 included), and
+`load_sequence` is a seeded generator stepped through the draws of the match load's explosion setup and then a
+shuffle.
+
+### 4.8 Failure
 
 The run ends with an error, the same way on every machine, when:
 
@@ -231,7 +269,7 @@ happens at the same tick and the same call on every machine, so the trace up to 
 recovers from one of these and plays on does not conform. A run that is playing (not in test mode) counts an
 event that does not fit instead of ending (section 5), and drops a snapshot that does not fit with its event.
 
-### 4.8 Not part of the contract
+### 4.9 Not part of the contract
 
 These are free once the port is done. While it lasts they are scaffolding, in
 `specs/engine-core-transition.md`, and no verdict of this contract rests on them:
@@ -275,6 +313,11 @@ Every value is an unsigned 32-bit word, and every sum and product wraps modulo 2
   *r* becomes (*r* << 15) OR 0x7fff, each modulo 2^32. The value is *r* mod *d*, unsigned. It is one draw from
   the stream whatever *d* is (Q1).
 
+### The runtime
+
+Bit for bit, as section 4.7 says: a result that is the correctly rounded value but not the original's is wrong.
+The entries the README marks dropped (some `acos` inputs, and the character classes of -128 to -2) are free.
+
 ### The sim event queue
 
 - **Records of an event.** An event of up to six arguments is one record; one of seven to twelve is two. The
@@ -283,7 +326,7 @@ Every value is an unsigned 32-bit word, and every sum and product wraps modulo 2
   doesn't carry is 0. `kind` and `flags` are the low 16 bits of what the logic gives.
 - **Recording.** The queue is full for an event when `tail` − `head` + its records is above 4096. When it is not,
   its records go to the ring at index `tail` mod 4096 and the one after, and `tail` grows by the number of
-  records. When it is full, nothing of the event is recorded: a test-mode run ends (section 4.7), and a run that
+  records. When it is full, nothing of the event is recorded: a test-mode run ends (section 4.8), and a run that
   is playing adds 1 to `dropped` and goes on.
 - **Draining** hands over the records from `head` up to `tail`, oldest first, then sets `head` to `tail`. It
   does not clear the ring and does not change `dropped`. `reserved` is always 0.
@@ -330,12 +373,24 @@ All from the kit's `reference/core/`.
    their scenario line numbers in the opposite order, and give the same order of delivery (`1 console 13 0`, then
    `30 console 12 2 ...`): the tick and the kind decide it before the line number.
 
-**Not covered by a vector:** a shuffle draw of a range of 0 or of a negative range (the logic asks for
+7. **The cheat code.** `console.json`, vector `now-code`: a skirmish (`game_type` 2) with the code clear, the
+   local and viewing player 0, and slot 0 active, of type 1, side 0 (Arm). The line
+   `now Film Chris Include Reload Assert` gives `{"events": [], "code": 1}`, and the next line, `iwin`, gives
+   `PLAYERS_KILL_UNITS` with payload `c10000000000000001000000` (kind 193, unit 0, player 1: the local player's
+   side is 0) and then `PLAYERS_END_GAME` with `c70000000000000001000000` (victory 1). The same code in lower
+   case, with five words or with seven clears the bit, and `iwin` then publishes nothing: it is of the class
+   `cheat`, and a skirmish runs only `always` and `skirmish`. Blanks before `now`, a `#` comment after the sixth
+   word and the command word `NOW` all still set it.
+8. **A runtime record.** The runtime entry `atoi`: the record whose input is the text ` -12` (`202d3132`) gives
+   `[-12]`. In the `console` group the same reading makes `give 4294967297 5 metal` a gift to player 1
+   (vector `give-numbers`).
+
+**Not covered by a vector:**  a shuffle draw of a range of 0 or of a negative range (the logic asks for
 neither), and a `kind` or `flags` above 0xffff. The seeding of section 4.1, the tick of section 4.2, the end of
 a run and capture are judged only by the scenario mode.
 
 ## 8. Kit version
 
-Kit `interfaces-vNN` and `reference-traces-vNN`, the first pair that holds `docs/core-gate.md` and
-`reference/core/`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer` 1.0, `sim_events` 1.0 and
-`files` 3.0.
+Kit `interfaces-v36` and `reference-traces-v37` (both on the same commit). Interfaces `services` 4.0,
+`rand_stream` 1.0, `state_writer` 1.0, `sim_events` 1.0, `files` 3.0, `players` 5.1, `wind_meteors` 3.1, `map`
+9.1, `units` 7.1 and `features` 5.1.
