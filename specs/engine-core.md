@@ -1,0 +1,341 @@
+# engine-core
+
+This is the contract of the engine core: what a core takes in, what it is judged on, and what it is free to do
+in between. It is meant to stay as it is once the port is done. What a core must also do while it runs the kit's
+modules beside its own (the module ABI, the services, the scheduler's order, the state block's layout and the
+replay of a recording) is in `specs/engine-core-transition.md`. That document is scaffolding, and nothing in it
+is part of this contract.
+
+## 1. Role
+
+The engine core plays a match. It is a deterministic function: given the match setup and seeds, the game data
+and the commands of each tick, it plays the ticks one after another, and after each tick it gives two things,
+the judged state of the tick and the tick's sim events. Two cores conform when, for the same inputs, they give
+the same judged state and the same sim events, up to the order the contract leaves free, at every tick. How a
+core gets there is its own: it may run the logic in any order inside a tick, in modules or not, and keep its
+state in any form, as long as both outputs come out the same.
+
+## 2. Interface
+
+### Inputs
+
+| Input | Where the kit states it |
+| --- | --- |
+| The match setup and the seeds | a scenario file, `docs/scenario-format.md`, sections 1 to 3; the seeds are `game_seed` and `crt_seed` (section 3.1); `view_seed` seeds presentation only and is not an input of the logic |
+| The game data | the files service, `interfaces/files.h`, version 3.0, whose behaviour `docs/files-gate.md` judges; the data is the install of `docs/reference-traces.md` |
+| The commands of each tick | the scripted `spawn`, `order` and `console` lines of a scenario (`docs/scenario-format.md`, section 4), as events of the interfaces (`docs/commands.md`) |
+
+A core reads nothing else. It reads no clock (the time of the logic is the tick counter), no host random
+source, and no input but the commands. `input` lines (the presentation's mouse and keys) are not an input of
+the core.
+
+### Outputs
+
+| Output | What it is | Where the kit states it |
+| --- | --- | --- |
+| The state of each tick | the `tick` row of `trace.txt`: one 64-bit hash of the judged state at the end of the tick (section 3) | `docs/trace-format.md`, sections 2, 3, 6 and 9 (the `state` column of a stored trace) |
+| The sim events of each tick | the records the logic recorded in the tick, judged by the `tick` line of the event digest; the records the match load makes carry tick 0 and are judged as the line of tick 0 | `docs/sim-events.md`, `docs/events-log.md` ("The line of a tick") |
+
+A core writes the other rows of `trace.txt` (the phase rows and `world`) and the lines of the runs of
+`events.txt` if it keeps 3.1c's phases. They are diagnostics: the contract judges only the `tick` rows and the
+`tick` lines.
+
+### The interfaces it names
+
+The random streams and the generator of section 4.4 are reached through `interfaces/rand_stream.h`, version
+1.0, and `interfaces/services.h`, version 4.0 (`GameRand`, `RandomInt`). The sim event kinds and their
+arguments are `interfaces/sim_events.h`, version 1.0. Module-private state enters the judged state through
+`interfaces/state_writer.h`, version 1.0, as `docs/trace-format.md` says for each section that a module writes;
+how a core gives a module its `StateWriter` is scaffolding (`specs/engine-core-transition.md`, section 3).
+
+### Events
+
+None. The core records no sim event kind of its own. It owns the queue the logic records into and hands each tick's
+records over (section 4.5); the kinds, their arguments and the order that counts are those of
+`docs/sim-events.md`.
+
+### How it is judged
+
+- **Now, the core gate:** `docs/core-gate.md`. A core is one program, run once for each vector of a group, as
+  that page states ("Running a core"), and the gate compares what it writes with the vectors of
+  `reference/core/` and `reference/files/`. The groups and what each covers:
+
+  | Group | This spec |
+  | --- | --- |
+  | `hash` | section 3 and section 5, "The hash" |
+  | `rand` | section 4.4 and section 5, "The random streams" |
+  | `events` | section 4.5 and section 5, "The sim event queue" |
+  | `commands` | section 4.3: the delivery only, its order and the tick each command precedes |
+  | `loader`, `fuel` | section 4.7 for how the run ends; the checks themselves are scaffolding (`specs/engine-core-transition.md`, section 2) |
+  | `host` | scaffolding (`specs/engine-core-transition.md`, section 4.4) |
+  | `files` | the files service, `docs/files-gate.md` |
+
+  The form of a core the gate runs (a static x86_64 Linux executable), the sandbox it runs in, the 120 s limit
+  of each run and the result are `docs/core-gate.md`, "Running a core the gate doesn't trust" and "The verdict".
+- **Later groups:** console commands that a core reads alone (ozgb/byte-tactics-moddable#1076) and the runtime
+  (ozgb/byte-tactics-moddable#1061) are planned groups of the same gate. They are not part of this contract
+  until a kit holds them.
+- **Later, the scenario mode:** `CORE play SCENARIO --out DIR` (`docs/core-gate.md`, "The scenario mode") plays
+  a scenario that `docs/commands.md`, section 7, marks `judged`, and is judged on the `tick` rows of the trace
+  against the `state` column of `reference/traces/` and on the `tick` lines of the event digest against
+  `reference/events/`. It is the verdict on the whole contract, and it is `not_judged` until a core has the
+  modules to play a scenario.
+
+## 3. State
+
+**The judged state** of a tick is what the `tick` row hashes (`docs/trace-format.md`, section 6): the tick
+counter, the state of the generator of `RandomInt` and the word of the main stream (section 4.4), then the
+sections of the phase rows and of the world row, read once at the end of the tick, and sections 29 to 31 at
+tick 1 only. The trace format, its schema (`data/trace_schema.json`) and the rules of its section 11 decide
+every hashed byte:
+
+- **Zero fill.** Every byte of the state is zero until the logic writes it, padding and unused tails included.
+  A field never written hashes as zero.
+- **Pointers are IDs.** A pointer is hashed as a tag and an index (section 5 of the trace format), never as an
+  address. So which element of a table an object takes (the unit slot, the projectile slot, the piece, the
+  spatial grid record, the pathfinder node, the moving class) is judged; where in memory it lives is not. An
+  order, an order effect and a link are numbered by the order of a walk of the units' chains, so their
+  addresses are not judged either. A pointer to anything that is no element of its target table hashes as
+  `heap`, whatever it points at.
+- **Skips and clamps** are part of the format: a field the format leaves out is free, and a state past a limit
+  of the format hashes as the format says.
+
+The core's own structures are free. The state may be kept in any layout and any number of blocks, as long as
+the hash is computed as if over the layout of `data/trace_schema.json` and the appendix of the trace format:
+"an engine that lays its memory out differently implements the same test on its own positions"
+(`docs/trace-format.md`, section 1).
+
+**What is not judged state:** the load stream's word (in no row; its draws are judged through what they
+change), the sim event queue and its radar arena (in no row; their records are the second output), the
+presentation's state and its random generator, and every dumped-only section and record of the trace format.
+
+**Between ticks** a core carries the judged state, the load stream's word, the sim event queue's counters and
+any state a module keeps of its own, and nothing else (section 4.6). The radar arena is empty between ticks
+(section 4.5).
+
+## 4. Behaviour
+
+Within a tick only the two outputs are observable. The order in which the logic makes its writes is free except
+where it changes a hashed byte, a draw of a random stream, or the order of two sim events whose order counts.
+
+### 4.1 The start of a run
+
+A test-mode run (`docs/scenario-format.md`, section 2) seeds, with the values of the scenario:
+
+| When | What is seeded | With |
+| --- | --- | --- |
+| when the run starts | the main stream | `crt_seed` |
+| when the match loads | the generator of `RandomInt` | `game_seed` |
+| when the match loads | the load stream | `crt_seed` |
+
+The main stream is not seeded again when the match loads: only the generator of `RandomInt` and the load
+stream are. Seeding is section 5, "The random streams". The draws the match load makes from these, and every
+other effect of the load, are the match's behaviour (the modules' specs), not the core's. The tick counter is 0
+while the match loads, so the sim events the load records carry tick 0 and are judged as the line of tick 0
+(section 2, "Outputs"). Every allocation of state is zero filled (section 3).
+
+### 4.2 The tick
+
+A tick is these, in this order:
+
+1. The tick counter is incremented by 1. Tick *n* of the trace is the tick whose counter is *n*.
+2. The scenario's settings that take effect before a step are applied: the `player<N>.metal_storage`,
+   `energy_storage` and `share_*` keys before the step of tick 1 (`docs/scenario-format.md`, section 3.2), and,
+   when the scenario's `game_type` is 3, every player's load progress set to 100 before every step (section 3.3).
+3. The commands of the tick are delivered (section 4.3), each to the end of its effects, before any logic of the
+   tick runs. Their effects carry the new counter: a sim event a command's effect records has tick *n*.
+4. The logic of the tick runs. Which logic runs is the modules' (their specs, and 3.1c's order in
+   `docs/schedule.md`); the core is judged only on what results.
+5. The judged state is projected: the `tick` row is the hash of section 3 over the state as it is now.
+6. The sim events of the tick are handed over: every record whose tick is *n* is in the tick's output.
+
+A test-mode run ends after the tick `ticks`, or at the end of the tick in which the match is declared over,
+whichever is first (`docs/scenario-format.md`, section 2); that tick is played and hashed in full.
+
+### 4.3 The commands of a tick
+
+`docs/commands.md`, sections 1 and 2, is the rule; in short:
+
+- A command is delivered between two ticks: after the counter of the tick it precedes is incremented, before
+  the logic of that tick runs. The tick a scenario line names is the tick the command precedes.
+- Within one tick: every `spawn` line, then every `order` line, then every `console` line, each kind in the
+  order of the scenario file.
+- A command reads the state as every earlier command of the tick left it, and its events reach the modules that
+  handle their kinds at once, in the order published; nothing a command publishes waits for a phase.
+- Only the events a command publishes itself are its own (the `count` of `commands.txt`); an event that a
+  handler publishes while it handles one is not.
+
+What events a line becomes needs the modules (the map and the orders, `docs/commands.md`, sections 3 to 6). The
+core gate's `commands` group judges the delivery only.
+
+### 4.4 The random streams
+
+The logic draws from three generators, and from nothing else:
+
+| Generator | Reached by | In the judged state |
+| --- | --- | --- |
+| the main stream | `GameRand(RAND_STREAM_MAIN)` | yes, as `rng.crtHoldrand` (the second random word of a row) |
+| the load stream | `GameRand(RAND_STREAM_LOAD)` | no |
+| the generator of `RandomInt` | `RandomInt(range)` | yes, as the first random word of a row |
+
+Each is one 32-bit word, and section 5 gives each step. The main word and the generator's word are hashed at
+the end of every tick, and every value drawn lands in state or in a sim event, so the number of draws a tick
+makes from each generator, and their order within one generator, are fixed in effect. The order of draws from
+two different generators against each other is free.
+
+### 4.5 The sim events of a tick
+
+The logic records sim events into a queue that the core owns, laid out and behaving as `docs/sim-events.md`,
+"The record" and "The queue", say. A record carries the tick counter at the moment it is recorded. The records
+of a tick are the ones that carry its counter, whichever part of the tick recorded them: the commands, the logic,
+or the end of the tick.
+
+What is judged of them is the `tick` line of `docs/events-log.md`: every field of every record but the phase,
+as a multiset, and the order of the records only between kinds whose `Order:` lines in `docs/sim-events.md` name
+each other. A core may record the events of unrelated kinds in any order.
+
+The queue's bookkeeping is in section 5, "The sim event queue". A core that drains the queue does so at points
+of its own choosing, as long as no record is lost and none is drained twice.
+
+**The radar arena.** The two radar kinds carry the offset of a snapshot that the logic writes into a second
+block beside the queue, the radar arena of 2 MiB (`docs/sim-events.md`, "Radar events"). The snapshot's bytes
+are part of the record as the event log writes it, so they are judged with it. Every drain empties the arena
+once it has handed over the records, and so does the start of a match: a snapshot lives from its recording to
+the next drain, and the arena is empty between ticks.
+
+### 4.6 Capture
+
+All the state that affects a later tick can be captured between two ticks: the judged state, the load stream's
+word, the sim event queue's counters and any state a module keeps of its own (section 3, "Between ticks"). A run that captures its state after a tick,
+replaces it with anything, restores the capture and plays on gives the same later ticks as a run that did not.
+`docs/scenario-format.md` states this as the `roundtrip` key, which copies the state block, fills it and copies
+it back after the step of a tick. How a core captures (a copy of one block, a serialisation) is its own; what
+is judged is that the later ticks are equal.
+
+Saving and loading a game are not part of the contract (section 4.8).
+
+### 4.7 Failure
+
+The run ends with an error, the same way on every machine, when:
+
+| Cause | When | How it ends |
+| --- | --- | --- |
+| a full sim event queue | an event of a test-mode run does not fit (section 5) | a fatal error that says the queue is full; in the core gate, the value `"full"` |
+| a full radar arena | a snapshot of a test-mode run does not fit (`docs/sim-events.md`, "Radar events") | a fatal error that says the arena is full; no core gate group calls the arena |
+| a trap | a module traps, or an import refuses a call (`docs/module-abi.md`, section 13) | a fatal error naming the module and the tick; in the core gate, an error of the classes of `docs/core-gate.md`, "loader and fuel" |
+| fuel run out | a module burns more than its budget in one tick (`docs/module-abi.md`, section 11) | a fatal error naming the module, the tick and the budget; in the core gate, `out_of_fuel` |
+| a start-up refusal | the loader refuses the manifest or a module (`docs/module-abi.md`, section 5.2) | a fatal error before the match; in the core gate, the refusal's class |
+
+A fatal error of a test-mode run ends it with exit status 2 and the message on the error stream. The error
+happens at the same tick and the same call on every machine, so the trace up to it is the same; a core that
+recovers from one of these and plays on does not conform. A run that is playing (not in test mode) counts an
+event that does not fit instead of ending (section 5), and drops a snapshot that does not fit with its event.
+
+### 4.8 Not part of the contract
+
+These are free once the port is done. While it lasts they are scaffolding, in
+`specs/engine-core-transition.md`, and no verdict of this contract rests on them:
+
+- **The phases:** the nine rows of a test-mode tick, the order of the logic inside a tick, and the drains of the
+  sim event queue between phases;
+- **the route table:** which module receives which effect, and which deliveries are synchronous;
+- **inboxes and `Apply`:** how an effect reaches a module;
+- **the module ABI:** the shared memory, the manifest, the loader, the data words, the imports and fuel;
+- **the layout of the state block:** `layout.json` and where in memory each record is;
+- **owner-only state:** what a module keeps that no other module reads, beyond what the trace hashes;
+- **the recordings:** `tests/replay/` and replaying them;
+- **saving and loading a game:** the save file, and the reseeding of the streams at a load.
+
+## 5. Exactness
+
+### The hash
+
+The hash, the pointer IDs, the walk of each section and the rules of the hashed bytes are
+`docs/trace-format.md`, sections 3 to 8 and 11; `tools/tracerehash.py` is a second implementation of every hash
+from a dump. The core gate's `hash` group recomputes the rows of a dump, so it judges the hash apart from the
+logic.
+
+### The random streams
+
+Every value is an unsigned 32-bit word, and every sum and product wraps modulo 2^32.
+
+- **A stream** (main or load) is one word *w*. Seeding it with *s* sets *w* = *s*. A draw sets
+  *w* = *w* × 214013 + 2531011 and returns bits 16 to 30 of the new *w*, that is (*w* >> 16) AND 0x7fff, a
+  value from 0 to 0x7fff. This is the kit's `runtime/rand.c`.
+- **The generator of `RandomInt`** is one word *g*. Seeding it with *s* sets *g* = (*s* XOR 0x66e29572) OR 1.
+  `RandomInt(range)` with *range* below 2 (0, 1 or negative) returns 0 and leaves *g* as it was. Otherwise:
+  let *q* = *g* div 127773 (unsigned), and *t* = *g* × 16807 − *q* × 2147483647, modulo 2^32. If *t*, read as a
+  signed 32-bit integer, is 0 or below, *t* becomes *t* + 2147483647, modulo 2^32. Then *g* = *t*, and the value
+  is *t* mod *range*, both unsigned.
+
+  For a word from 1 to 2147483646 this is the minimal standard generator, *g* × 16807 mod 2147483647; a word
+  that seeding left above that range is brought into it by its first step.
+- **The shuffle draw** for a range *d* (the core gate's `shuffle`) makes one draw *r* from the stream, then
+  widens: with *m* = 0x7fff, while *m* < *d* and *m* is not 0xffffffff, *m* becomes (*m* << 15) OR 0x7fff and
+  *r* becomes (*r* << 15) OR 0x7fff, each modulo 2^32. The value is *r* mod *d*, unsigned. It is one draw from
+  the stream whatever *d* is (Q1).
+
+### The sim event queue
+
+- **Records of an event.** An event of up to six arguments is one record; one of seven to twelve is two. The
+  second record has the same `kind` and `tick` as the first, `flags` equal to the event's flags with bit 15
+  (0x8000) set, and the arguments seven to twelve, with 0 in the arguments it lacks. Every argument a record
+  doesn't carry is 0. `kind` and `flags` are the low 16 bits of what the logic gives.
+- **Recording.** The queue is full for an event when `tail` − `head` + its records is above 4096. When it is not,
+  its records go to the ring at index `tail` mod 4096 and the one after, and `tail` grows by the number of
+  records. When it is full, nothing of the event is recorded: a test-mode run ends (section 4.7), and a run that
+  is playing adds 1 to `dropped` and goes on.
+- **Draining** hands over the records from `head` up to `tail`, oldest first, then sets `head` to `tail`. It
+  does not clear the ring and does not change `dropped`. `reserved` is always 0.
+- `head`, `tail` and `dropped` are 32-bit counts that only grow during a match; the queue is empty (all three 0)
+  at the start of a match.
+
+## 6. Quirks
+
+- **Q1.** The shuffle draw makes one draw however wide the range is, and widens it by shifting in 1 bits, not
+  further draws. For a range above 0x7fff the widened value therefore always has its low 15 bits all 1 before the
+  modulo: for *d* = 32768 the value is always 32767.
+- **Q2.** Seeding the generator of `RandomInt` always sets the lowest bit of the word, so two seeds that differ
+  only in their lowest bit give the same generator.
+
+## 7. Examples
+
+All from the kit's `reference/core/`.
+
+1. **A stream draw.** `rand.json`, vector `main-seed-1`: `srand main 1` sets the main word to 1. The first
+   `rand main` gives *w* = 1 × 214013 + 2531011 = 2745024, and 2745024 >> 16 = 41, so the line is
+   `[41, 2745024]`. `state` at the end is `[1924036713, 0, 0]`: the load stream and the generator were never
+   seeded in this vector. The vector `load-seed-1` gives the same values from the load stream, and its `state`
+   is `[0, 1924036713, 0]`.
+2. **Seeding and stepping the generator.** `rand.json`, vector `int-seed-1`: `seed 1` gives (1 XOR 0x66e29572)
+   OR 1 = 0x66e29573 = 1726125427. `int 0` and `int 1` give `[0, 1726125427]`, the word unchanged. The first
+   `int 2`: *q* = 1726125427 div 127773 = 13509, *t* = 1726125427 × 16807 − 13509 × 2147483647 modulo 2^32 =
+   633464266, positive as a signed integer, so the value is 633464266 mod 2 = 0 and the line is
+   `[0, 633464266]`. The next `int 2` gives `[1, 1557480483]`.
+3. **The shuffle draw.** `rand.json`, vector `shuffle-main`: after the call that leaves the main word at
+   1850286559, `shuffle main 32769` draws *w* = 2280092966 and *r* = 2023. 0x7fff < 32769, so *m* becomes
+   0x3fffffff and *r* becomes 2023 × 32768 + 32767 = 66322431, and 66322431 mod 32769 = 30744: the line is
+   `[30744, 2280092966]`. Every `shuffle main 32768` of the vector gives 32767 (Q1).
+4. **A two-record event.** `events.json`, vector `two-record`: at tick 9, `record 3 1` with seven arguments
+   gives `[0, 2, 0]`; `pending` shows `[3, 1, 9, [18953, 69710, 3807, 11756, 52645, 59354]]` then
+   `[3, 32769, 9, [68075, 0, 0, 0, 0, 0]]`: the second record has flags 1 with bit 15 set, and the seventh
+   argument first. After `drain`, `counters` is `[6, 6, 0, 0]`.
+5. **A full queue.** `events.json`, vector `test-overflow`: at tick 11, 4095 one-record events and one more fill
+   the ring (`counters` `[0, 4096, 0, 0]`); the next `record` is `"full"`, the last line of the vector. In
+   `play-overflow`, the same event in play mode gives `[0, 4096, 1]`: nothing recorded, `dropped` 1; after the
+   `drain`, `counters` is `[4096, 4096, 2, 0]`: the drain leaves `dropped` as it was.
+6. **Delivery.** `commands.json`, vector `console-iwin`: the script's lines are `12 console 1 0` (line 12 of the
+   scenario, at tick 1) and `13 console 30 2 PLAYERS_KILL_UNITS ... PLAYERS_END_GAME ...` (line 13, at tick 30);
+   the delivery is `1 console 12 0`, then `30 console 13 2 ...`. The `-reversed` vectors list the same commands with
+   their scenario line numbers in the opposite order, and give the same order of delivery (`1 console 13 0`, then
+   `30 console 12 2 ...`): the tick and the kind decide it before the line number.
+
+**Not covered by a vector:** a shuffle draw of a range of 0 or of a negative range (the logic asks for
+neither), and a `kind` or `flags` above 0xffff. The seeding of section 4.1, the tick of section 4.2, the end of
+a run and capture are judged only by the scenario mode.
+
+## 8. Kit version
+
+Kit `interfaces-vNN` and `reference-traces-vNN`, the first pair that holds `docs/core-gate.md` and
+`reference/core/`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer` 1.0, `sim_events` 1.0 and
+`files` 3.0.
