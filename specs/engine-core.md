@@ -41,8 +41,9 @@ the core.
 | The sim events of each tick | the records the logic recorded in the tick, judged by the `tick` line of the event digest; the records the match load makes carry tick 0 and are judged as the line of tick 0 | `docs/sim-events.md`, `docs/events-log.md` ("The line of a tick") |
 
 A core writes the other rows of `trace.txt` (the phase rows and `world`) and the lines of the runs of
-`events.txt` if it keeps 3.1c's phases. They are diagnostics: the contract judges only the `tick` rows and the
-`tick` lines.
+`events.txt` if it keeps 3.1c's phases. In a played run they are diagnostics: the scenario mode judges only the
+`tick` rows and the `tick` lines. The core gate's `hash` group is the exception: it recomputes every row of a dump,
+the phase rows and `world` included, and judges each of them (section 5, "The hash").
 
 The `view` row of `trace.txt`, right after the `tick` row, is the hash of the player view of
 `interfaces/view.h`, version 1.0, filled at the end of the tick (`docs/trace-format.md`, section 6; `docs/view.md`,
@@ -84,9 +85,13 @@ records over (section 4.5); the kinds, their arguments and the order that counts
   | `commands` | section 4.3: the delivery only, its order and the tick each command precedes |
   | `console` | section 4.3, "Console lines" |
   | `runtime` | section 4.7 |
-  | `loader`, `fuel` | section 4.8 for how the run ends; the checks themselves are scaffolding (`specs/engine-core-transition.md`, section 2) |
-  | `host` | scaffolding (`specs/engine-core-transition.md`, section 4.4) |
+  | `loader`, `fuel` | section 4.8 for how the run ends, and `specs/engine-core-transition.md`, section 2, for the checks |
+  | `host` | `specs/engine-core-transition.md`, section 4.4 |
   | `files` | the files service, `docs/files-gate.md` |
+
+  The gate's verdict covers every group, `loader`, `fuel` and `host` included: a core fails the gate when any
+  group differs or fails (`docs/core-gate.md`, "The verdict"). That what those three check is scaffolding of the
+  port (section 4.9) does not take them out of the gate.
 
   The form of a core the gate runs (a static x86_64 Linux executable), the sandbox it runs in, the 120 s limit
   of each run and the result are `docs/core-gate.md`, "Running a core the gate doesn't trust" and "The verdict".
@@ -111,7 +116,7 @@ every hashed byte:
   spatial grid record, the pathfinder node, the moving class) is judged; where in memory it lives is not. An
   order, an order effect and a link are numbered by the order of a walk of the units' chains, so their
   addresses are not judged either. A pointer to anything that is no element of its target table hashes as
-  `heap`, whatever it points at.
+  `heap`, whatever it points at, but for the exceptions of section 5 of the trace format.
 - **Skips and clamps** are part of the format: a field the format leaves out is free, and a state past a limit
   of the format hashes as the format says.
 
@@ -269,7 +274,12 @@ after the call, the value it returns for an input out of range or NaN, and its t
 
 The entry `rand` is the step of the main stream (section 5). The entries `shuffle` and `load_sequence` are the
 shuffle of a range (section 5, "The shuffle of a range"), drawing from a generator stepped as the main stream
-is: `shuffle` from a freshly seeded one, and `load_sequence` after the draws of the match load's explosion setup.
+is: `shuffle` from a freshly seeded one, and `load_sequence` after the 391606 draws of the match load's explosion
+setup (`runtime/vectors/README.md`, `load_sequence`).
+
+The README does not yet state every rule a record follows: the sine, cosine and rotation tables, `hypot` and
+`acos`, the rounding of `float_text` and `double_text`, and the conversions `sprintf` and `sscanf` take. Those rules
+are ozgb/byte-tactics-moddable#1162; until it lands, the records are the rule.
 
 ### 4.8 Failure
 
@@ -290,10 +300,16 @@ happens at the same tick and the same call on every machine, so the trace up to 
 recovers from one of these and plays on does not conform. A run that is playing (not in test mode) counts an
 event that does not fit instead of ending (section 5), and drops a snapshot that does not fit with its event.
 
+Two answers of the core gate are not yet stated in the kit: which modules a `window`, `window_reaches` or
+`duplicate` error names, and that a call through a table index past the table's size is of the class `table`.
+They are ozgb/byte-tactics-moddable#1162; until it lands, the vectors of `reference/core/loader/` are the rule.
+
 ### 4.9 Not part of the contract
 
 These are free once the port is done. While it lasts they are scaffolding, in
-`specs/engine-core-transition.md`, and no verdict of this contract rests on them. That the subsystems and
+`specs/engine-core-transition.md`. The scenario mode judges none of them, but while the port lasts the core
+gate's `loader`, `fuel` and `host` groups judge parts of them, and a core must pass those groups as it must pass the
+others (section 2, "How it is judged"). That the subsystems and
 presentation are WebAssembly modules the core loads and calls is not among them (section 1): what is free is the
 details of how the core and its modules meet.
 
@@ -314,8 +330,12 @@ details of how the core and its modules meet.
 
 The hash, the pointer IDs, the walk of each section and the rules of the hashed bytes are
 `docs/trace-format.md`, sections 3 to 8 and 11; `tools/tracerehash.py` is a second implementation of every hash
-from a dump. The core gate's `hash` group recomputes the rows of a dump, so it judges the hash apart from the
-logic.
+from a dump. The core gate's `hash` group recomputes every row of a dump, the phase rows and `world` as well as
+`tick`, so it judges the hash apart from the logic.
+
+Two rules of reading a dump are not yet stated in the kit: how a dumped string that holds the byte 0x0a is written,
+and how section 8.12 of the trace format reads `scriptsState.units[i].scale` when section 10 says to skip
+`scriptsState.*`. They are ozgb/byte-tactics-moddable#1162.
 
 ### The random streams
 
@@ -357,6 +377,9 @@ The entries the README marks dropped (some `acos` inputs, and the character clas
   is playing adds 1 to `dropped` and goes on.
 - **Draining** hands over the records from `head` up to `tail`, oldest first, then sets `head` to `tail`. It
   does not clear the ring and does not change `dropped`. `reserved` is always 0.
+- The ring, its indices and `reserved` are part of the contract because the core gate's `events` group reads them
+  (`counters` and `ring`, `docs/core-gate.md`, "events"); the points at which a core drains stay its own (section
+  4.5).
 - `head`, `tail` and `dropped` are 32-bit counts that only grow during a match; the queue is empty (all three 0)
   at the start of a match.
 
@@ -436,3 +459,6 @@ The majors of `services`, `rand_stream`, `state_writer`, `sim_events` and `files
 order of sim events and of random draws, what `WriteState` hashes, how `Emit` picks an outbox), are frozen until a
 clean-room core passes the core gate; their minors may still add to them (`docs/core-gate.md`, "The freeze";
 ozgb/byte-tactics-moddable#1042).
+
+The kit gaps of ozgb/byte-tactics-moddable#1162 are open at this pin, and the pin moves to the interfaces tag that
+its merge makes.

@@ -2,9 +2,11 @@
 
 **This document is removed when the last module is ported.** It is the scaffolding of the port: what an engine
 core must also do while the kit's modules, its own modules and modules written from other specs run together in
-one game. Nothing in it is a verdict on its own. The contract of the core is `specs/engine-core.md`, and a core
-that meets that contract keeps its logic in modules (`specs/engine-core.md`, section 1), and is free to meet them
-through details of its own in place of those here once it no longer runs a module it didn't write.
+one game. Nothing in it is a verdict on its own, but the core gate's `loader`, `fuel` and `host` groups judge
+parts of it, and they count in the gate's verdict like every other group (`specs/engine-core.md`, section 2, "How
+it is judged"). The contract of the core is `specs/engine-core.md`, and a core that meets that contract keeps its
+logic in modules (`specs/engine-core.md`, section 1), and is free to meet them through details of its own in place
+of those here once it no longer runs a module it didn't write.
 
 ## 1. Role
 
@@ -28,6 +30,12 @@ and errors and traps (section 13). The core gate's `loader` and `fuel` groups (`
 sections 5.2, 11 and 13 on the fixtures of `reference/core/loader/` and `reference/core/fuel/`. When a manifest
 holds more than one fault, the loader reports the first in the order of `docs/core-gate.md`, "loader and fuel"
 ("Which error comes first").
+
+Some answers of the loader are not yet stated in the kit: which modules a `window`, `window_reaches` or `duplicate`
+error names (a nameless entry names none), the class `table` of a call through an index past the table's size,
+which numbers a manifest field takes as whole, the order of a pair of faults, and the loader's limit of
+2147483640. They are ozgb/byte-tactics-moddable#1162; until it lands, the vectors of `reference/core/loader/` are
+the rule.
 
 ### The services
 
@@ -175,4 +183,5 @@ and the scheduler's order. The scenario mode, and the module gate of each module
 ## 8. Kit version
 
 Kit `interfaces-v50` and `reference-traces-v47`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
-1.0, `sim_events` 1.0 and `files` 3.0.
+1.0, `sim_events` 1.0 and `files` 3.0. The kit gaps of ozgb/byte-tactics-moddable#1162 are open at this pin, and the
+pin moves to the interfaces tag that its merge makes.
