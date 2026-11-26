@@ -3,12 +3,15 @@
 **This document is removed when the last module is ported.** It is the scaffolding of the port: what an engine
 core must also do while the kit's modules, its own modules and modules written from other specs run together in
 one game. Nothing in it is a verdict on its own. The contract of the core is `specs/engine-core.md`, and a core
-that meets that contract is free to drop everything here once it no longer runs a module it didn't write.
+that meets that contract is free to replace the details here with its own once it no longer runs a module it
+didn't write; it still runs its logic in modules (`specs/engine-core.md`, section 1).
 
 ## 1. Role
 
-During the port the core is a host for modules. Every subsystem is a WebAssembly module over one shared memory,
-called through its interface's slots, and the core loads the modules, defines the services they import, calls
+Under the current architecture the core is native, and the subsystem modules and presentation are WebAssembly
+that it loads and calls (ozgb/byte-tactics-moddable#1047). During the port it hosts
+them through the kit's module ABI. Every subsystem is a WebAssembly module over one shared memory, called through
+its interface's slots, and the core loads the modules, defines the services they import, calls
 their slots in 3.1c's order, carries the effects one module publishes to the modules that handle them, and keeps
 the state block they all read and write. It can also replay a module's recordings, which is how a module, or the
 core's hosting of one, is checked before a scenario can be played.
@@ -170,5 +173,5 @@ and the scheduler's order. The scenario mode, and the module gate of each module
 
 ## 8. Kit version
 
-Kit `interfaces-v44` and `reference-traces-v43`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+Kit `interfaces-v49` and `reference-traces-v46`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
 1.0, `sim_events` 1.0 and `files` 3.0.

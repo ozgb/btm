@@ -11,9 +11,13 @@ is part of this contract.
 The engine core plays a match. It is a deterministic function: given the match setup and seeds, the game data
 and the commands of each tick, it plays the ticks one after another, and after each tick it gives two things,
 the judged state of the tick and the tick's sim events. Two cores conform when, for the same inputs, they give
-the same judged state and the same sim events, up to the order the contract leaves free, at every tick. How a
-core gets there is its own: it may run the logic in any order inside a tick, in modules or not, and keep its
-state in any form, as long as both outputs come out the same.
+the same judged state and the same sim events, up to the order the contract leaves free, at every tick.
+
+Under the current architecture the engine core is native, and the subsystem modules and presentation are
+WebAssembly that the core loads and calls (ozgb/byte-tactics-moddable#1047). Modules are the architecture, and
+the surface a mod extends, so a conforming core runs the logic in them. What the contract leaves to the core is
+how it gets there: it may run the logic in any order inside a tick, keep its state in any form and meet its
+modules through any ABI (section 4.9), as long as both outputs come out the same.
 
 ## 2. Interface
 
@@ -42,6 +46,9 @@ A core writes the other rows of `trace.txt` (the phase rows and `world`) and the
 
 ### The interfaces it names
 
+The files `interfaces/*.h` are the kit's interface export: C declarations used as a language-neutral contract
+for layouts, kinds and signatures, which a core reads and does not compile.
+
 The random streams and the generator of section 4.4 are reached through `interfaces/rand_stream.h`, version
 1.0, and `interfaces/services.h`, version 4.0 (`GameRand`, `RandomInt`). The sim event kinds and their
 arguments are `interfaces/sim_events.h`, version 1.0. Module-private state enters the judged state through
@@ -49,7 +56,7 @@ arguments are `interfaces/sim_events.h`, version 1.0. Module-private state enter
 how a core gives a module its `StateWriter` is scaffolding (`specs/engine-core-transition.md`, section 3).
 
 The payloads of the events a console line publishes (section 4.3) are laid out by `interfaces/players.h`,
-version 5.2, `interfaces/wind_meteors.h`, version 3.1, `interfaces/map.h`, version 9.2, `interfaces/units.h`,
+version 5.3, `interfaces/wind_meteors.h`, version 3.1, `interfaces/map.h`, version 9.2, `interfaces/units.h`,
 version 7.2, and `interfaces/features.h`, version 5.1.
 
 ### Events
@@ -146,7 +153,8 @@ A tick is these, in this order:
 1. The tick counter is incremented by 1. Tick *n* of the trace is the tick whose counter is *n*.
 2. The scenario's settings that take effect before a step are applied: the `player<N>.metal_storage`,
    `energy_storage` and `share_*` keys before the step of tick 1 (`docs/scenario-format.md`, section 3.2), and,
-   when the scenario's `game_type` is 3, every player's load progress set to 100 before every step (section 3.3).
+   when the scenario's `game_type` is 3, every player's load progress set to 100 before every step (section 3.3),
+   and, with `debug_keys` 1, bit 1 (0x2) of `uiOptionFlags` set before the step of tick 1 (section 2).
 3. The commands of the tick are delivered (section 4.3), each to the end of its effects, before any logic of the
    tick runs. Their effects carry the new counter: a sim event a command's effect records has tick *n*.
 4. The logic of the tick runs. Which logic runs is the modules' (their specs, and 3.1c's order in
@@ -189,8 +197,10 @@ is its payload as the interface header of its kind lays it out (`interfaces/play
   info and its index. The core gate's `console` group states that setup and nothing else, runs lines of those
   commands one after another, and delivers their events to no module, so no state but bit 0x2 of
   `uiOptionFlags` changes between two lines (`docs/core-gate.md`, "console").
-- The other commands need the cursor, the units, or the unit and feature types, or are not events
-  (`docs/commands.md`, section 4.3), and only the scenario mode judges them.
+- `control` and `view` (`docs/commands.md`, section 4.2) also need nothing but that setup, but no vector of the
+  `console` group runs them. The commands of the group `inert` publish nothing in any scenario
+  (`docs/commands.md`, section 4.3). The other commands need the cursor, the units, or the unit and feature types,
+  and only the scenario mode judges them.
 
 ### 4.4 The random streams
 
@@ -278,13 +288,16 @@ event that does not fit instead of ending (section 5), and drops a snapshot that
 ### 4.9 Not part of the contract
 
 These are free once the port is done. While it lasts they are scaffolding, in
-`specs/engine-core-transition.md`, and no verdict of this contract rests on them:
+`specs/engine-core-transition.md`, and no verdict of this contract rests on them. That the subsystems and
+presentation are WebAssembly modules the core loads and calls is not among them (section 1): what is free is the
+details of how the core and its modules meet.
 
 - **The phases:** the nine rows of a test-mode tick, the order of the logic inside a tick, and the drains of the
   sim event queue between phases;
 - **the route table:** which module receives which effect, and which deliveries are synchronous;
 - **inboxes and `Apply`:** how an effect reaches a module;
-- **the module ABI:** the shared memory, the manifest, the loader, the data words, the imports and fuel;
+- **the details of the module ABI:** the shared memory, the manifest, the loader, the data words, the imports and
+  fuel;
 - **the layout of the state block:** `layout.json` and where in memory each record is;
 - **owner-only state:** what a module keeps that no other module reads, beyond what the trace hashes;
 - **the recordings:** `tests/replay/` and replaying them;
@@ -410,8 +423,8 @@ a run and capture are judged only by the scenario mode.
 
 ## 8. Kit version
 
-Kit `interfaces-v44` and `reference-traces-v43`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
-1.0, `sim_events` 1.0, `files` 3.0, `players` 5.2, `wind_meteors` 3.1, `map` 9.2, `units` 7.2 and `features` 5.1.
+Kit `interfaces-v49` and `reference-traces-v46`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+1.0, `sim_events` 1.0, `files` 3.0, `players` 5.3, `wind_meteors` 3.1, `map` 9.2, `units` 7.2 and `features` 5.1.
 
 The majors of `services`, `rand_stream`, `state_writer`, `sim_events` and `files`, and what those headers mean (the
 order of sim events and of random draws, what `WriteState` hashes, how `Emit` picks an outbox), are frozen until a
