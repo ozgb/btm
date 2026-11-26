@@ -44,6 +44,11 @@ A core writes the other rows of `trace.txt` (the phase rows and `world`) and the
 `events.txt` if it keeps 3.1c's phases. They are diagnostics: the contract judges only the `tick` rows and the
 `tick` lines.
 
+The `view` row of `trace.txt`, right after the `tick` row, is the hash of the player view of
+`interfaces/view.h`, version 1.0, filled at the end of the tick (`docs/trace-format.md`, section 6; `docs/view.md`,
+"The recorded view"). It is what a presentation is given, not part of the `tick` row, and neither this contract
+nor the core gate judges it; a core that fills the view is judged on it as `docs/view.md` says.
+
 ### The interfaces it names
 
 The files `interfaces/*.h` are the kit's interface export: C declarations used as a language-neutral contract
@@ -292,7 +297,7 @@ These are free once the port is done. While it lasts they are scaffolding, in
 presentation are WebAssembly modules the core loads and calls is not among them (section 1): what is free is the
 details of how the core and its modules meet.
 
-- **The phases:** the nine rows of a test-mode tick, the order of the logic inside a tick, and the drains of the
+- **The phases:** the ten rows of a test-mode tick, the order of the logic inside a tick, and the drains of the
   sim event queue between phases;
 - **the route table:** which module receives which effect, and which deliveries are synchronous;
 - **inboxes and `Apply`:** how an effect reaches a module;
@@ -423,8 +428,9 @@ a run and capture are judged only by the scenario mode.
 
 ## 8. Kit version
 
-Kit `interfaces-v49` and `reference-traces-v46`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
-1.0, `sim_events` 1.0, `files` 3.0, `players` 5.3, `wind_meteors` 3.1, `map` 9.2, `units` 7.2 and `features` 5.1.
+Kit `interfaces-v50` and `reference-traces-v47`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+1.0, `sim_events` 1.0, `files` 3.0, `players` 5.3, `wind_meteors` 3.1, `map` 9.2, `units` 7.2,
+`features` 5.1 and `view` 1.0.
 
 The majors of `services`, `rand_stream`, `state_writer`, `sim_events` and `files`, and what those headers mean (the
 order of sim events and of random draws, what `WriteState` hashes, how `Emit` picks an outbox), are frozen until a

@@ -81,11 +81,12 @@ the call, so the order they are listed in carries no meaning.
 `docs/schedule.md` is 3.1c's order of a tick: the phases and what runs in each ("The tick"), the entry points the
 load of a match calls before the first tick ("The load"), the loop of each pass and the order of the entry points
 for one entity ("Passes"), the steps after the last phase ("After the phases"), and where a write is read back
-inside one entity's update ("Split points"). The core calls the slots in that order. With the kit's modules and
-the modules of the specs, a core that keeps it writes every row of `trace.txt`, the phase rows included, equal to
-`reference/traces/`, and the lines of the runs of the event digest equal to `reference/events/`: the gate inside
-the reference repository. The contract judges only the `tick` rows and the `tick` lines (`specs/engine-core.md`,
-section 2).
+inside one entity's update ("Split points"). The core calls the slots in that order. With the kit's modules and the
+modules of the specs, a core that keeps it writes every row of `trace.txt`, the phase rows included, equal to
+`reference/traces/` (whose digest folds the `view` row too, `docs/trace-format.md`, section 9, so that equality
+also needs the view of `docs/view.md`), and the lines of the runs of the event digest equal to `reference/events/`:
+the gate inside the reference repository. The contract judges only the `tick` rows and the `tick` lines
+(`specs/engine-core.md`, section 2).
 
 The sim event queue is drained between the phases, as `docs/sim-events.md`, "Draining", lists.
 
@@ -173,5 +174,5 @@ and the scheduler's order. The scenario mode, and the module gate of each module
 
 ## 8. Kit version
 
-Kit `interfaces-v49` and `reference-traces-v46`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+Kit `interfaces-v50` and `reference-traces-v47`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
 1.0, `sim_events` 1.0 and `files` 3.0.
