@@ -198,9 +198,9 @@ is its payload as the interface header of its kind lays it out (`interfaces/play
   commands one after another, and delivers their events to no module, so no state but bit 0x2 of
   `uiOptionFlags` changes between two lines (`docs/core-gate.md`, "console").
 - `control` (class `cheat`) and `view` (class `skirmish`), `docs/commands.md`, section 4.2, also need nothing but
-  that setup, class included, but no vector of the `console` group runs them. The commands of the group `inert` publish nothing in any scenario
-  (`docs/commands.md`, section 4.3). The other commands need the cursor, the units, or the unit and feature types,
-  and only the scenario mode judges them.
+  that setup, class included, but no vector of the `console` group runs them. The commands of the group `inert`
+  publish nothing in any scenario (`docs/commands.md`, section 4.3). The other commands need the cursor, the
+  units, or the unit and feature types, and only the scenario mode judges them.
 
 ### 4.4 The random streams
 
