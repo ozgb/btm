@@ -3,8 +3,8 @@
 **This document is removed when the last module is ported.** It is the scaffolding of the port: what an engine
 core must also do while the kit's modules, its own modules and modules written from other specs run together in
 one game. Nothing in it is a verdict on its own. The contract of the core is `specs/engine-core.md`, and a core
-that meets that contract is free to replace the details here with its own once it no longer runs a module it
-didn't write; it still runs its logic in modules (`specs/engine-core.md`, section 1).
+that meets that contract keeps its logic in modules (`specs/engine-core.md`, section 1), and is free to meet them
+through details of its own in place of those here once it no longer runs a module it didn't write.
 
 ## 1. Role
 

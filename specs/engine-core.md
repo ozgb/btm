@@ -154,7 +154,7 @@ A tick is these, in this order:
 2. The scenario's settings that take effect before a step are applied: the `player<N>.metal_storage`,
    `energy_storage` and `share_*` keys before the step of tick 1 (`docs/scenario-format.md`, section 3.2), and,
    when the scenario's `game_type` is 3, every player's load progress set to 100 before every step (section 3.3),
-   and, with `debug_keys` 1, bit 1 (0x2) of `uiOptionFlags` set before the step of tick 1 (section 2).
+   and, with `debug_keys` 1, bit 1 (0x2) of `uiOptionFlags` set before the step of tick 1 (section 3.1).
 3. The commands of the tick are delivered (section 4.3), each to the end of its effects, before any logic of the
    tick runs. Their effects carry the new counter: a sim event a command's effect records has tick *n*.
 4. The logic of the tick runs. Which logic runs is the modules' (their specs, and 3.1c's order in
@@ -197,8 +197,8 @@ is its payload as the interface header of its kind lays it out (`interfaces/play
   info and its index. The core gate's `console` group states that setup and nothing else, runs lines of those
   commands one after another, and delivers their events to no module, so no state but bit 0x2 of
   `uiOptionFlags` changes between two lines (`docs/core-gate.md`, "console").
-- `control` and `view` (`docs/commands.md`, section 4.2) also need nothing but that setup, but no vector of the
-  `console` group runs them. The commands of the group `inert` publish nothing in any scenario
+- `control` (class `cheat`) and `view` (class `skirmish`), `docs/commands.md`, section 4.2, also need nothing but
+  that setup, class included, but no vector of the `console` group runs them. The commands of the group `inert` publish nothing in any scenario
   (`docs/commands.md`, section 4.3). The other commands need the cursor, the units, or the unit and feature types,
   and only the scenario mode judges them.
 
