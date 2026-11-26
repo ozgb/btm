@@ -32,10 +32,10 @@ holds more than one fault, the loader reports the first in the order of `docs/co
 ("Which error comes first").
 
 Some answers of the loader are not yet stated in the kit: which modules a `window`, `window_reaches` or `duplicate`
-error names (a nameless entry names none), the class `table` of a call through an index past the table's size,
-which numbers a manifest field takes as whole, the order of a pair of faults, and the loader's limit of
-2147483640. They are ozgb/byte-tactics-moddable#1162; until it lands, the vectors of `reference/core/loader/` are
-the rule.
+error names, the class of a call through an index past the table's size, which numbers a manifest field takes as
+whole, the order of a pair of faults, and the largest whole number the loader takes (`docs/module-abi.md`, section
+11.3, is the rule for `fuel_budget`). They are ozgb/byte-tactics-moddable#1162; until it lands, the vectors of
+`reference/core/loader/` are the rule.
 
 ### The services
 

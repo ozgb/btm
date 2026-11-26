@@ -301,8 +301,8 @@ recovers from one of these and plays on does not conform. A run that is playing 
 event that does not fit instead of ending (section 5), and drops a snapshot that does not fit with its event.
 
 Two answers of the core gate are not yet stated in the kit: which modules a `window`, `window_reaches` or
-`duplicate` error names, and that a call through a table index past the table's size is of the class `table`.
-They are ozgb/byte-tactics-moddable#1162; until it lands, the vectors of `reference/core/loader/` are the rule.
+`duplicate` error names, and the class of a call through a table index past the table's size. They are
+ozgb/byte-tactics-moddable#1162; until it lands, the vectors of `reference/core/loader/` are the rule.
 
 ### 4.9 Not part of the contract
 
@@ -333,8 +333,9 @@ The hash, the pointer IDs, the walk of each section and the rules of the hashed 
 from a dump. The core gate's `hash` group recomputes every row of a dump, the phase rows and `world` as well as
 `tick`, so it judges the hash apart from the logic.
 
-Two rules of reading a dump are not yet stated in the kit: how a dumped string that holds the byte 0x0a is written,
-and how section 8.12 of the trace format reads `scriptsState.units[i].scale` when section 10 says to skip
+Two points of reading a dump are open in the kit: a string that holds the byte 0x0a can't be read back from a dump
+(`docs/trace-format.md`, section 8.19, says to take it from the trace), and no vector of the `hash` group holds one;
+and section 8.12 of the trace format reads `scriptsState.units[i].scale` where section 10 says to skip
 `scriptsState.*`. They are ozgb/byte-tactics-moddable#1162.
 
 ### The random streams
