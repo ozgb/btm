@@ -116,9 +116,11 @@ Replaying one against a module (`docs/replay-format.md`, "Replaying"): for each 
 its `r` lines into the block, call the slot with its `a` lines (an event payload built as "Event arguments",
 "The payload in memory", states), answer each import the module makes from the recording's `i` and `o` lines in
 order, and at the end of the call compare the fields of the write set and the closing `o` lines with the
-recording. The core gate's `host` group judges this on the recordings of `tests/replay/wind_meteors/` with the
-core's own wind_meteors module, with every `w` line and every closing `o` line taken out of the recording: the
-core writes them from what the module did, so it passes only by running the module (`docs/core-gate.md`, "host").
+recording. The core gate's `host` group judges the same replay from the other side, on the recordings of
+`tests/replay/wind_meteors/` with the core's own wind_meteors module: every `w` line and every closing `o` line is
+taken out of the recording, and the core writes them for each call, a `w` line for each field of the write set
+whose value after the call differs from its last known value (`docs/replay-format.md`, "Lines"), then the closing
+lines (`docs/core-gate.md`, "host").
 
 ## 5. Exactness
 
@@ -131,8 +133,8 @@ core writes them from what the module did, so it passes only by running the modu
   zero. That metering is in the module's own code; the core adds none, and the engine it runs modules on has its
   own fuel off (`docs/module-abi.md`, section 11). The core sets the budget through `__fuel_set` once per tick, before the module's
   first outermost slot call of the tick, and never in between, and reads what is left through `__fuel_get`. A
-  module whose manifest entry has no `fuel_budget` gets no fuel set: its counter keeps its initial value,
-  9223372036854775807, and its calls lower it as they burn (`docs/core-gate.md`, "loader and fuel").
+  module whose manifest entry has no `fuel_budget` is never set: its counter starts at 9223372036854775807 and
+  only its own burning lowers it (`docs/core-gate.md`, "loader and fuel").
 - **Handles.** An opaque u32, index plus 1 into a table of 32 that the core clears when the outermost call
   returns (`docs/module-abi.md`, section 8.1).
 

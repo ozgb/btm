@@ -134,9 +134,9 @@ A test-mode run (`docs/scenario-format.md`, section 2) seeds, with the values of
 | when the match loads | the load stream | `crt_seed` |
 
 The main stream is not seeded again when the match loads: only the generator of `RandomInt` and the load
-stream are (`docs/scenario-format.md`, section 2, "Seeds"). Seeding is section 5, "The random streams". The draws the match load makes from these, and every
-other effect of the load, are the match's behaviour (the modules' specs), not the core's. The tick counter is 0
-while the match loads, so the sim events the load records carry tick 0 and are judged as the line of tick 0
+stream are (`docs/scenario-format.md`, section 2, "Seeds"). Seeding is section 5, "The random streams". The
+draws the match load makes from these, and every other effect of the load, are the match's behaviour (the
+modules' specs), not the core's. The tick counter is 0 while the match loads, so the sim events the load records carry tick 0 and are judged as the line of tick 0
 (section 2, "Outputs"). Every allocation of state is zero filled (section 3).
 
 ### 4.2 The tick
