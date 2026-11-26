@@ -22,7 +22,9 @@ core's hosting of one, is checked before a scenario can be played.
 (section 6), argument kinds and the pointer rule (section 7), handles and the loader data words (section 8),
 imports (section 9), interface majors and adapters (section 10), fuel (section 11), no hidden state (section 12)
 and errors and traps (section 13). The core gate's `loader` and `fuel` groups (`docs/core-gate.md`) judge
-sections 5.2, 11 and 13 on the fixtures of `reference/core/loader/` and `reference/core/fuel/`.
+sections 5.2, 11 and 13 on the fixtures of `reference/core/loader/` and `reference/core/fuel/`. When a manifest
+holds more than one fault, the loader reports the first in the order of `docs/core-gate.md`, "loader and fuel"
+("Which error comes first").
 
 ### The services
 
@@ -73,10 +75,10 @@ the call, so the order they are listed in carries no meaning.
 
 ### 4.1 The scheduler's order
 
-`docs/schedule.md` is 3.1c's order of a tick: the phases and what runs in each ("The tick"), the loop of each
-pass and the order of the entry points for one entity ("Passes"), the steps after the last phase ("After the
-phases"), and where a write is read back inside one entity's update ("Split points"). The core calls the slots in
-that order. With the kit's modules and the modules of the specs, a core that keeps it writes every row of
+`docs/schedule.md` is 3.1c's order of a tick: the phases and what runs in each ("The tick"), the entry points
+the load of a match calls before the first tick ("The load"), the loop of each pass and the order of the entry
+points for one entity ("Passes"), the steps after the last phase ("After the phases"), and where a write is read
+back inside one entity's update ("Split points"). The core calls the slots in that order. With the kit's modules and the modules of the specs, a core that keeps it writes every row of
 `trace.txt`, the phase rows included, equal to `reference/traces/`, and the lines of the runs of the event
 digest equal to `reference/events/`: the gate inside the reference repository. The contract judges only the
 `tick` rows and the `tick` lines (`specs/engine-core.md`, section 2).
@@ -89,17 +91,16 @@ The sim event queue is drained between the phases, as `docs/sim-events.md`, "Dra
   own outbox, through `Emit` (`docs/module-abi.md`, section 9.3). The kinds a module may publish, and each kind's
   payload size, are the `publishes` table of its manifest entry.
 - **Routes.** A route takes the effects of one kind from one outbox to one subscribing module. A route is
-  **queued** (the effect is delivered at the next phase boundary) or **synchronous** (the effect is delivered
-  before the publishing call returns). Between ticks every route delivers at once (`docs/commands.md`,
-  section 1).
+  **queued** (the effect waits in the subscriber's inbox) or **synchronous** (the effect is delivered before the
+  publishing call returns). Outside the tick (between ticks, and before the first) every route delivers at
+  once (`docs/commands.md`, section 1, and `docs/schedule.md`, "Routes").
 - **Inboxes and `Apply`.** A delivery copies the effect into the subscriber's inbox and calls its `Apply` slot
   with the event and its size (`docs/module-abi.md`, section 6.1). The subscriber's interface header gives the
   payload of each kind it handles.
-- **The route table is not in the kit as data.** The kit holds the kinds each interface publishes ("the kinds
-  of effect ... publishes to its outbox, for the modules that subscribe to them" in each header), the slots that
-  are synchronous (their header comments), and the deliveries `docs/schedule.md` lists, but not the table that
-  names, for each kind, its subscribers in order and whether each route is queued. Until the kit carries it, a
-  core that hosts more than one module that publishes asks for it as a spec question.
+- **The route table** is `docs/schedule.md`, "Routes": a row for each publisher, kind and subscriber, in the
+  order the effect is delivered, with whether the route is queued or synchronous, the size of an inbox, and when
+  each inbox is delivered (`docs/module-abi.md`, section 6.1, "Where routes are stated"). The core keeps that
+  table and those rules.
 
 ### 4.3 Calling a slot
 
@@ -112,10 +113,12 @@ pointer rule (sections 7 and 7.1); handles are valid until the outermost call re
 
 `tests/replay/<subsystem>/` holds recordings of 3.1c's slot calls, in the format of `docs/replay-format.md`.
 Replaying one against a module (`docs/replay-format.md`, "Replaying"): for each `call`, restore the fields of
-its `r` lines into the block, call the slot with its `a` lines, answer each import the module makes from the
-recording's `i` and `o` lines in order, and at the end of the call compare the fields of the write set and the
-closing `o` lines with the recording. The core gate's `host` group judges this on the recordings of
-`tests/replay/wind_meteors/` with the core's own wind_meteors module (`docs/core-gate.md`, "host").
+its `r` lines into the block, call the slot with its `a` lines (an event payload built as "Event arguments",
+"The payload in memory", states), answer each import the module makes from the recording's `i` and `o` lines in
+order, and at the end of the call compare the fields of the write set and the closing `o` lines with the
+recording. The core gate's `host` group judges this on the recordings of `tests/replay/wind_meteors/` with the
+core's own wind_meteors module, with every `w` line and every closing `o` line taken out of the recording: the
+core writes them from what the module did, so it passes only by running the module (`docs/core-gate.md`, "host").
 
 ## 5. Exactness
 
@@ -127,7 +130,9 @@ closing `o` lines with the recording. The core gate's `host` group judges this o
   and at the top of each loop body of the module's own code, and the call traps when the counter goes below
   zero. That metering is in the module's own code; the core adds none, and the engine it runs modules on has its
   own fuel off (`docs/module-abi.md`, section 11). The core sets the budget through `__fuel_set` once per tick, before the module's
-  first outermost slot call of the tick, and never in between, and reads what is left through `__fuel_get`.
+  first outermost slot call of the tick, and never in between, and reads what is left through `__fuel_get`. A
+  module whose manifest entry has no `fuel_budget` gets no fuel set: its counter keeps its initial value,
+  9223372036854775807, and its calls lower it as they burn (`docs/core-gate.md`, "loader and fuel").
 - **Handles.** An opaque u32, index plus 1 into a table of 32 that the core clears when the outermost call
   returns (`docs/module-abi.md`, section 8.1).
 
@@ -149,9 +154,12 @@ All from the kit's `reference/core/`.
    `{"error": "out_of_fuel", "modules": ["m"]}`. In `tick_resets`, a `tick` before each of three
    `call m spin 50` sets the budget again, so each gives `{"result": 50}` with `fuel m` 49 after it; a fourth
    `call m spin 50` with no `tick` before it starts from 49, burns past zero and is `out_of_fuel`.
-3. **A replay.** `host.json`, vector `meteors-earthquake`: the first entry is the write set of the recording's
-   first `call`, `call 0 Apply` with `a event.kind 65` and `a size 4`: `w Game.windCounter 0` up to
-   `w SimGlobals.g_meteorNextHitTime 0`, eleven lines, as `host/meteors-earthquake.txt` has them.
+3. **A replay.** `host.json`, vector `meteors-earthquake`: the recording's first `call`, `call 0 Apply` with
+   `a event.kind 65` and `a size 4`, has no `w` line in `host/meteors-earthquake.txt`; the value's first entry is
+   its write set, `w Game.windCounter 0` up to `w SimGlobals.g_meteorNextHitTime 0`, eleven lines. The second
+   `call`, `LoadMeteorDefaults`, keeps the `o` lines of its imports (`o file#1.root rec#1`), and its entry is the
+   five closing lines of what the slot wrote through its argument, `o params.weapon "Meteor"` up to
+   `o params.interval f32:0x42700000`.
 
 **Not covered by a vector:** a module that imports a service (the loader's fixtures import only the memory and
 the table), an adapter (`docs/module-abi.md`, section 10), the hidden-state check, a `StateWriter`, the routes
@@ -159,5 +167,5 @@ and the scheduler's order. The scenario mode, and the module gate of each module
 
 ## 8. Kit version
 
-Kit `interfaces-v36` and `reference-traces-v37` (both on the same commit). Interfaces `services` 4.0,
-`rand_stream` 1.0, `state_writer` 1.0, `sim_events` 1.0 and `files` 3.0.
+Kit `interfaces-v44` and `reference-traces-v43`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+1.0, `sim_events` 1.0 and `files` 3.0.

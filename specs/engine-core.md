@@ -49,8 +49,8 @@ arguments are `interfaces/sim_events.h`, version 1.0. Module-private state enter
 how a core gives a module its `StateWriter` is scaffolding (`specs/engine-core-transition.md`, section 3).
 
 The payloads of the events a console line publishes (section 4.3) are laid out by `interfaces/players.h`,
-version 5.1, `interfaces/wind_meteors.h`, version 3.1, `interfaces/map.h`, version 9.1, `interfaces/units.h`,
-version 7.1, and `interfaces/features.h`, version 5.1.
+version 5.2, `interfaces/wind_meteors.h`, version 3.1, `interfaces/map.h`, version 9.2, `interfaces/units.h`,
+version 7.2, and `interfaces/features.h`, version 5.1.
 
 ### Events
 
@@ -111,6 +111,8 @@ the hash is computed as if over the layout of `data/trace_schema.json` and the a
 **What is not judged state:** the load stream's word (in no row; its draws are judged through what they
 change), the sim event queue and its radar arena (in no row; their records are the second output), the
 presentation's state and its random generator, and every dumped-only section and record of the trace format.
+The view bits that sit in hashed fields are masked out of the hash: the selection bit of a unit's `flags` and the
+debug bits of `endGameFlags` (`docs/trace-format.md`, sections 7.1 and 8.1).
 
 **Between ticks** a core carries the judged state, the load stream's word, the sim event queue's counters and
 any state a module keeps of its own, and nothing else (section 4.6). The radar arena is empty between ticks
@@ -132,8 +134,7 @@ A test-mode run (`docs/scenario-format.md`, section 2) seeds, with the values of
 | when the match loads | the load stream | `crt_seed` |
 
 The main stream is not seeded again when the match loads: only the generator of `RandomInt` and the load
-stream are (`docs/scenario-format.md`, "Seeds", reads as if `rand` were seeded again too: it is the load stream
-that is). Seeding is section 5, "The random streams". The draws the match load makes from these, and every
+stream are (`docs/scenario-format.md`, section 2, "Seeds"). Seeding is section 5, "The random streams". The draws the match load makes from these, and every
 other effect of the load, are the match's behaviour (the modules' specs), not the core's. The tick counter is 0
 while the match loads, so the sim events the load records carry tick 0 and are judged as the line of tick 0
 (section 2, "Outputs"). Every allocation of state is zero filled (section 3).
@@ -223,9 +224,9 @@ of its own choosing, as long as no record is lost and none is drained twice.
 **The radar arena.** The two radar kinds carry the offset of a snapshot that the logic writes into a second
 block beside the queue, the radar arena of 2 MiB (`docs/sim-events.md`, "Radar events"). The snapshot's bytes
 are part of the record as the event log writes it, so they are judged with it. Every drain empties the arena
-once it has handed over the records, and so does the start of a match: a snapshot lives from its recording to
-the next drain, and the arena is empty between ticks. (The sentence of "Radar events" that names a drain that
-finds the queue empty reads as a condition; it is not one, and every drain empties the arena.)
+once it has handed over the records, whether or not the queue held a radar event, and so does the start of a
+match: a snapshot lives from its recording to the next drain, and the arena is empty between ticks
+(`docs/sim-events.md`, "Radar events").
 
 ### 4.6 Capture
 
@@ -401,17 +402,18 @@ All from the kit's `reference/core/`.
    next four values of rand, 26500, 19169, 15724 and 11478, are the record's last field. With size 2 the result
    is 4, 1 (Q3).
 
-**Not covered by a vector:** the hash of a tick other than the one the `hash` group dumps (the scenario mode
-judges every tick), a shuffle draw of a range of 0 or of a negative range (the logic asks for
+**Not covered by a vector:** the hash of a tick other than the five the `hash` group dumps (the scenario mode
+judges every tick), a `link:` value of 2^31 or more and the pathfinder's `node:` pointers (`docs/core-gate.md`,
+"hash" and "Known limits"), a shuffle draw of a range of 0 or of a negative range (the logic asks for
 neither), and a `kind` or `flags` above 0xffff. The seeding of section 4.1, the tick of section 4.2, the end of
 a run and capture are judged only by the scenario mode.
 
 ## 8. Kit version
 
-Kit `interfaces-v36` and `reference-traces-v37` (both on the same commit). Interfaces `services` 4.0,
-`rand_stream` 1.0, `state_writer` 1.0, `sim_events` 1.0, `files` 3.0, `players` 5.1, `wind_meteors` 3.1, `map`
-9.1, `units` 7.1 and `features` 5.1.
+Kit `interfaces-v44` and `reference-traces-v43`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+1.0, `sim_events` 1.0, `files` 3.0, `players` 5.2, `wind_meteors` 3.1, `map` 9.2, `units` 7.2 and `features` 5.1.
 
 The majors of `services`, `rand_stream`, `state_writer`, `sim_events` and `files`, and what those headers mean (the
 order of sim events and of random draws, what `WriteState` hashes, how `Emit` picks an outbox), are frozen until a
-clean-room core passes the core gate; their minors may still add to them (ozgb/byte-tactics-moddable#1042).
+clean-room core passes the core gate; their minors may still add to them (`docs/core-gate.md`, "The freeze";
+ozgb/byte-tactics-moddable#1042).
