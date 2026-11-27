@@ -46,7 +46,7 @@ A core writes the other rows of `trace.txt` (the phase rows and `world`) and the
 the phase rows and `world` included, and judges each of them (section 5, "The hash").
 
 The `view` row of `trace.txt`, right after the `tick` row, is the hash of the player view of
-`interfaces/view.h`, version 2.0, filled at the end of the tick (`docs/trace-format.md`, section 6; `docs/view.md`,
+`interfaces/view.h`, version 2.1, filled at the end of the tick (`docs/trace-format.md`, section 6; `docs/view.md`,
 "The recorded view"). It is what a presentation is given, not part of the `tick` row, and neither this contract
 nor the core gate judges it; a core that fills the view is judged on it as `docs/view.md` says.
 
@@ -128,8 +128,9 @@ the hash is computed as if over the layout of `data/trace_schema.json` and the a
 **What is not judged state:** the load stream's word (in no row; its draws are judged through what they
 change), the sim event queue and its radar arena (in no row; their records are the second output), the
 presentation's state and its random generator, and every dumped-only section and record of the trace format.
-The view bits that sit in hashed fields are masked out of the hash: the selection bit of a unit's `flags` and the
-debug bits of `endGameFlags` (`docs/trace-format.md`, sections 7.1 and 8.1).
+The view bits that sit in hashed fields are masked out of the hash: the selection bit of a unit's `flags` and its
+visit mark (bits 6 and 7), and the debug bits of `endGameFlags` (`docs/trace-format.md`, sections 7.1 and
+8.1).
 
 **Between ticks** a core carries the judged state, the load stream's word, the sim event queue's counters and
 any state a module keeps of its own, and nothing else (section 4.6). The radar arena is empty between ticks
@@ -179,14 +180,22 @@ whichever is first (`docs/scenario-format.md`, section 2); that tick is played a
 
 `docs/commands.md`, sections 1 and 2, is the rule; in short:
 
-- A command is delivered between two ticks: after the counter of the tick it precedes is incremented, before
-  the logic of that tick runs. The tick a scenario line names is the tick the command precedes.
+- A scripted command is delivered between two ticks: after the counter of the tick it precedes is incremented,
+  before the logic of that tick runs. The tick a scenario line names is the tick the command precedes.
 - Within one tick: every `spawn` line, then every `order` line, then every `console` line, each kind in the
   order of its scenario line numbers (the order of the file).
 - A command reads the state as every earlier command of the tick left it, and its events reach the modules that
   handle their kinds at once, in the order published; nothing a command publishes waits for a phase.
 - Only the events a command publishes itself are its own (the `count` of `commands.txt`); an event that a
   handler publishes while it handles one is not.
+- The interface's records (`docs/commands.md`, section 8) are the presentation's commands, not an input of the
+  core: a core without the presentation has none, the core gate's scripts hold scripted lines alone, and every
+  scenario with `input` lines is left out of the judged ones (`docs/commands.md`, section 7), so no verdict judges
+  them. Where they are delivered, `docs/commands.md` states how: those published after tick *n* is played come
+  first at the start of tick *n* + 1, before its `spawn` lines, in the order published, while the tick counter
+  still reads *n*, so an order one of them creates has `created` *n* (section 1); and a run that the interface
+  ends after tick *n* delivers its last records at the start of tick *n* + 1 and ends without playing that tick
+  (sections 1 and 2.2, which also give what such a run writes and its exit status).
 
 What events a `spawn` or `order` line becomes needs the modules (the map and the orders, `docs/commands.md`,
 sections 5 and 6). The core gate's `commands` group judges the delivery only.
@@ -281,7 +290,8 @@ setup (`runtime/vectors/README.md`, `load_sequence`).
 The README's "Rules" states what every record follows: the sine table, the scaled sine and cosine, the rotation
 matrix and its application, the rotation of a point, the angle of a vector, `hypot`, `acos`, the one scanner,
 multiplication and rounding that `float_text` and `double_text` share ("Text to a number"), the conversions of
-`sprintf` (`%f` of an infinity or a NaN included) and those of `sscanf`.
+`sprintf` (`%f` of an infinity or a NaN included) and those of `sscanf`, the digits of `_itoa`, and how every
+string and character entry reads a byte from 0x80 to 0xff ("Bytes above 127").
 
 ### 4.8 Failure
 
@@ -454,9 +464,9 @@ a run and capture are judged only by the scenario mode.
 
 ## 8. Kit version
 
-Kit `interfaces-v55` and `reference-traces-v51`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+Kit `interfaces-v59` and `reference-traces-v53`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
 1.0, `sim_events` 1.0, `files` 3.0, `players` 5.4, `wind_meteors` 3.1, `map` 9.2, `units` 7.2,
-`features` 5.1 and `view` 2.0.
+`features` 5.1 and `view` 2.1.
 
 The majors of `services`, `rand_stream`, `state_writer`, `sim_events` and `files`, and what those headers mean (the
 order of sim events and of random draws, what `WriteState` hashes, how `Emit` picks an outbox), are frozen until a
