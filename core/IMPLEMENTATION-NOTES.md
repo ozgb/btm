@@ -171,3 +171,19 @@ the original before the rewrite), 13, 14 (the target is musl on this machine; ve
 order), 16, 17, 18, 19 (robustness or dead paths no vector reaches).
 
 Verdict of req1 (this session): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
+
+## Session 7: the sixth review
+
+Local gate, runtime check, host check: equal on every group but `files`.
+
+Fixed: 1 (a failing `__fuel_set` is a trap of the module: `prepare_call` returns its class), 2 (`RecordSimEvent` with a count above
+24576, or negative, is the refusal "the sim event queue is full"), 3 (the host replay drains the queue and empties the arena when
+`Game.ticks` changes), 4 (the allocator is first-fit with splitting, merges neighbours and gives the top back), 5 (the window is
+zeroed only in pages that are not zero already; a table above 2^24 slots is `layout`), 6 (`FindWeaponByName` above weapon 255 is
+refused), 7 (the embedded manifest is the kit's `wasm/modules.json`), 8 (`abs`, `neg`, `copysign` are no longer canonicalised;
+the `nan_canonical` vector still equal), 9 (the original is validated with `wasmparser`, not compiled), 13 (the `0x` branch and the
+zero divisor).
+Not changed, with reasons: 10 (the fixture import and shadowing serve adapted imports and the loader fixtures; no vector reaches it),
+11, 12 (dead branches kept as guards), 14 (commands.md 4.2 events of `edge`, `nowisee`, `reloadaiprofiles` are outside the
+twelve commands of engine-core.md 4.3), 15 (only a realloc of 256 MiB or more), 16 (no rustup here; the host triple is musl and the
+binary is checked static).

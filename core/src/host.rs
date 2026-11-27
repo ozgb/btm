@@ -136,6 +136,28 @@ struct SimSvc {
     arena_top: u64,
 }
 
+impl SimSvc {
+    /// Returns a chunk to the free list, merging it with its neighbours and with the bump top.
+    fn release(&mut self, addr: u64, n: u64) {
+        let i = self.free.partition_point(|(a, _)| *a < addr);
+        self.free.insert(i, (addr, n));
+        if i + 1 < self.free.len() && self.free[i].0 + self.free[i].1 == self.free[i + 1].0 {
+            self.free[i].1 += self.free[i + 1].1;
+            self.free.remove(i + 1);
+        }
+        if i > 0 && self.free[i - 1].0 + self.free[i - 1].1 == self.free[i].0 {
+            self.free[i - 1].1 += self.free[i].1;
+            self.free.remove(i);
+        }
+        if let Some(&(a, n)) = self.free.last() {
+            if a + n == self.top {
+                self.top = a;
+                self.free.pop();
+            }
+        }
+    }
+}
+
 impl Default for SimSvc {
     fn default() -> SimSvc {
         SimSvc { top: 0, end: 0, arena_base: 0, live: Default::default(), free: Vec::new(), queue: crate::events::Queue::new(), arena_top: 0 }
@@ -724,6 +746,11 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
         if let Some(en) = &e {
             apply_outs(&mut c, en, &[], None)?;
         }
+        if let Some(n) = e.as_ref().and_then(|en| en.result.as_deref()).and_then(weapon_index) {
+            if n >= 256 {
+                return Result::Err(refuse(c.data_mut(), "import", "import FindWeaponByName: returned a weapon outside the sim block".to_string()));
+            }
+        }
         let bb = c.data().block_base;
         Ok(result_i32(&e, bb))
     })?;
@@ -784,6 +811,10 @@ fn replay(recording: &str, module_path: &str) -> Result<Vec<Vec<String>>, Err> {
         }
         if last_tick != Some(ticks) {
             rp.l.tick();
+            // the presentation drains the queue and the arena at the end of every tick
+            let sim = &mut rp.l.store.data_mut().sim;
+            sim.queue.drain();
+            sim.arena_top = 0;
             last_tick = Some(ticks);
         }
         rp.write_data_words()?;
@@ -943,8 +974,14 @@ fn slot_dpid(c: &Caller<'_, State>, slot: u32) -> i32 {
 fn alloc(c: &mut Caller<'_, State>, name: &str, size: u32) -> Result<i32, wasmi::Error> {
     let want = ((size as u64).max(1) + 7) & !7;
     let st = c.data_mut();
-    let addr = if let Some(i) = st.sim.free.iter().position(|(_, n)| *n == want) {
-        st.sim.free.swap_remove(i).0
+    let addr = if let Some(i) = st.sim.free.iter().position(|(_, n)| *n >= want) {
+        let (a, n) = st.sim.free[i];
+        if n == want {
+            st.sim.free.remove(i);
+        } else {
+            st.sim.free[i] = (a + want, n - want);
+        }
+        a
     } else if st.sim.top + want <= st.sim.end {
         let a = st.sim.top;
         st.sim.top += want;
@@ -972,7 +1009,7 @@ fn define_sim_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
         check_ptrs(&mut c, "SimFree", &[(0, p)])?;
         let st = c.data_mut();
         if let Some(n) = st.sim.live.remove(&(p as u32 as u64)) {
-            st.sim.free.push((p as u32 as u64, n));
+            st.sim.release(p as u32 as u64, n);
         }
         Ok(())
     })?;
@@ -984,7 +1021,7 @@ fn define_sim_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
         }
         // the queue holds 4096 records of six arguments at most
         if count > 6 * 4096 {
-            return Ok(());
+            return Result::Err(refuse(c.data_mut(), "import", "import RecordSimEvent: the sim event queue is full".to_string()));
         }
         let mut words = Vec::new();
         if count > 0 {

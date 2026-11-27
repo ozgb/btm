@@ -257,6 +257,9 @@ impl<T: 'static> Loader<T> {
             }
             Err::new("layout")
         })?;
+        if tsize > 1 << 24 {
+            return Result::Err(Err::new("layout"));
+        }
         let table = Table::new(&mut self.store, TableType::new(RefType::Func, tsize, Some(tsize)), Ref::Func(wasmi::Nullable::Null))
             .map_err(|_| Err::new("layout"))?;
         self.memory = Some(mem);
@@ -280,16 +283,21 @@ impl<T: 'static> Loader<T> {
         }
         let (adapted, adapted_imports) = check_majors(manifest, entry)?;
         let window = manifest.window as usize;
-        let (data_base, table_base) = (entry.data_base as usize, entry.table_base as usize);
+        let table_base = entry.table_base as usize;
         let exports = entry.exports.clone();
         let data = entry.data.clone();
         let budget = entry.fuel_budget;
         let table_slots = manifest.table_slots;
-        // zero the window
+        // zero the window; a page that is zero already is left untouched, so that reserved memory stays unbacked
         {
             let bytes = mem.data_mut(&mut self.store);
-            let end = (data_base + window).min(bytes.len());
-            bytes[data_base.min(end)..end].fill(0);
+            let end = (entry.data_base as usize + window).min(bytes.len());
+            let start = (entry.data_base as usize).min(end);
+            for chunk in bytes[start..end].chunks_mut(4096) {
+                if chunk.iter().any(|b| *b != 0) {
+                    chunk.fill(0);
+                }
+            }
         }
         let mut linker = <Linker<T>>::new(&self.engine);
         linker.allow_shadowing(true);
@@ -315,7 +323,7 @@ impl<T: 'static> Loader<T> {
             let f = adapted_import(&mut self.store, ad.clone(), old, cur, target);
             linker.define(iface, imp, f).map_err(|_| Err::named("instantiate", name))?;
         }
-        Module::new(&self.engine, wasm).map_err(|_| Err::named("compile", name))?;
+        wasmparser::Validator::new().validate_all(wasm).map_err(|_| Err::named("compile", name))?;
         let canon = crate::nan::canonicalize(wasm).ok_or_else(|| Err::named("compile", name))?;
         let module = Module::new(&self.engine, &canon[..]).map_err(|_| Err::named("compile", name))?;
         let instance = linker
@@ -395,23 +403,25 @@ impl<T: 'static> Loader<T> {
     }
 
     /// Sets the fuel at the first outermost call of a tick, when the module has a budget.
-    pub fn prepare_call(&mut self, name: &str) {
+    pub fn prepare_call(&mut self, name: &str) -> Result<(), Err> {
         let (pending, budget) = match self.modules.get(name) {
             Some(m) => (m.fuel_pending, m.budget),
-            None => return,
+            None => return Ok(()),
         };
         if !pending {
-            return;
+            return Ok(());
         }
         if let Some(b) = budget {
             if let Some(f) = self.modules[name].instance.get_func(&self.store, "__fuel_set") {
-                // the surface was checked at load; a failing call here leaves the counter as it was
-                f.call(&mut self.store, &[Val::I64(b)], &mut []).expect("__fuel_set");
+                if let Err(e) = f.call(&mut self.store, &[Val::I64(b)], &mut []) {
+                    return Result::Err(self.trap_error(name, &e));
+                }
             }
         }
         if let Some(m) = self.modules.get_mut(name) {
             m.fuel_pending = false;
         }
+        Ok(())
     }
 
     /// The class of a trap of a call of module `name`: a trap with the counter below zero is out of fuel.
@@ -461,7 +471,7 @@ impl<T: 'static> Loader<T> {
                 _ => return Result::Err(Err::named("export", name)),
             }
         };
-        self.prepare_call(name);
+        self.prepare_call(name)?;
         let ty = func.ty(&self.store);
         let params: Vec<Val> = ty
             .params()
