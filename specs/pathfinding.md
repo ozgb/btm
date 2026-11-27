@@ -83,7 +83,9 @@ build, set from the build's own runs).
 | `pathworld.Seen` | `[int, int, int] -> int` | whether the searching player has seen a cell |
 | `pathworld.BeginSearch`, `pathworld.EndSearch` | `[int] -> void` | around a search |
 
-The world view's `MoveClass`, `LineOfSight` and `TerrainPass` are not imported.
+The world view's `MoveClass`, `LineOfSight` and `TerrainPass` are not imported: this module never calls
+them. The kit's replay schema lists all eighteen slots of the world view, as the world view's own table,
+not as this module's import list.
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. Its fuel budget and `size_budget` are its build's (ABI sections 11.1 and 11.3).
@@ -242,8 +244,10 @@ count (24), and 64 points (28: *x*, *y*, i16 each, in world units).
 ### Read
 
 - `Game.pathfinder` (above).
-- `Game.width` and `Game.height` (signed 32-bit), at `Init`: the grid's size (below). The recordings give
-  them as `r Game.width 224` and `r Game.height 102`, equal to `map.width` and `map.height`.
+- `Game.width` and `Game.height` (signed 32-bit), at `Init` only: the grid's size (below). `RegionSize`
+  uses `map` alone. The recordings give the two fields as `r Game.width 224` and `r Game.height 102` in the
+  read set of the first call of each file, equal to `map.width` and `map.height`, which is all a slot other
+  than `Init` needs of them.
 
 The module reads no other field of the block outside its region.
 
@@ -251,6 +255,20 @@ The module reads no other field of the block outside its region.
 
 Everything in the region carries over. The events are dropped at the start of each `Step`. Nothing outside
 the region and `Game.pathfinder` is kept.
+
+**A window that starts later.** Every recording starts with `RegionSize` and `Init` at tick 0, then jumps to
+its window (`docs/replay-format.md`, "A module's region and world view"): the first call of the window
+carries `r region` runs that restore the region as the game had it at that tick. The module takes the
+region as it finds it at every call, whatever state of this section it is in (a search may be running,
+requests pending, the open list in any state the slots of section 4 can leave), and keeps no copy of
+anything in it. `Game.pathfinder` is in no read or write set of the recordings: the module's own `Init` sets
+it, and the replay never compares it.
+
+**Why the mechanics are specified.** The gate compares every byte of the region, so the exact layout and the
+exact operations of section 4 are observable: which node number a push takes, the order of the items, the
+free list of nodes and of request entries, the dirty bits, the unaligned `cursor` and `budget` fields, and
+the stale bytes a freed node, entry or event keeps. An implementation that reaches the same routes another
+way does not replay equal.
 
 ## 4. Behaviour
 
@@ -544,7 +562,7 @@ that fails (no entry: no import). When it starts:
 **The open list starts**: `count`, `used` and `topPopped` become 0 and `freeHead` −1 (*capacity*, `pool`
 and `items` are kept); the start cell is dirtied, gains flag bit 0, and gets dir ((`state.heading` +
 0x1000) mod 65536) / 8192, truncated; a node is pushed with the start cell, *g* 0, *f* = *H*(start), steps
-100 and a penalty this spec does not define (Q7); the start cell's node becomes the result; `range` becomes
+100 and penalty 0 (Q7); the start cell's node becomes the result; `range` becomes
 4.
 
 **A turn of a search with an open list** (`object` ≠ 0, size > 0): repeat while the size is above 0: `steps`
@@ -563,16 +581,17 @@ is given and *next event* goes up by 1. Its payload is 28 bytes, zero but for: k
 requester (8), target (12), tick (16) from the record; then for kind STARTED (0) the record's status at
 20, and a size of 24; for PROGRESS (1) its count at 20 and a size of 24; for FINISHED (2) its status at 20
 and its count at 24, and a size of 28; for any other kind, a size of 20. The first min(`size`, that size)
-bytes of the payload are copied to `out`, and the record's first min(count, `capacity`) points to
-`points`. The result is the payload's size. No imports.
+bytes of the payload are copied to `out` (the whole payload when `size` is at least its size, nothing when `size` is 0), and the
+record's first min(count, `capacity`) points to `points` (none when `capacity` ≤ 0). The result is the
+payload's size, whatever `size` is. No imports.
 
 ### `WriteState(writer)`
 
-Writes the region through the five calls of `writer`, in the order of the kit's `docs/trace-format.md`,
-section 8.7 (sections 16 and 17, with the field names of the trace schema's `Pathfinder`,
-`PathfinderSearch` and `Node` and the names of the section 17 globals), which no trace row hashes. With
-`Game.pathfinder` 0 it writes section 16 with a 1-byte 0 and section 17 as twenty-one 4-byte zeros (two runs
-of ten, then one). No imports, no writes.
+Does nothing in this module: no imports, no writes. `writer` is a table of calls that the ABI gives a module
+no way to call (no import reaches it, and ABI section 9.1 allows no other call out of the module), so the
+module cannot write its state through it. The game's own pathfinder writes, through it, the lines of the kit's
+`docs/trace-format.md`, section 8.7 (sections 16 and 17). No trace row hashes those sections, and no recording
+holds the slot, so the gate does not judge it. It is a kit gap (section 7).
 
 ### `SetSearchScale(scale)`
 
@@ -613,12 +632,18 @@ refresh (`Step`, step 4).
 - **Q4. Near enough is a goal.** In the open list, a newly reached cell whose estimate is at most `probe`
   gets the goal bit, so the search can end at a cell outside the goal area, the first such cell it takes.
 - **Q5. A cancel does not end the search.** `Cancel` drops a running search with no `pathworld.EndSearch`
-  and no event, and a later `Cancel` of the same requester after its search ended still clears `target` and
-  `owner`.
+  and no event, although the header's comment on `EndSearch` says every implementation calls it when a
+  search is dropped. A later `Cancel` of the same requester, after its search ended, still clears `path`,
+  `target` and `owner` (recorded: section 7, "Cancel after the search ended"). The dropped running search
+  is in no recording.
 - **Q6. A full list.** A push into a full open list (*node limit* nodes) adds nothing and gives node 0, which
   the cell then names.
-- **Q7. The start node's penalty.** The start node is pushed with a penalty this spec does not define. No
-  recording observes it: the first node pushed after it is taken overwrites it.
+- **Q7. The start node's penalty.** The game pushes the start node with a penalty (bytes 16 and 17 of the
+  node) that it leaves unset (the kit's trace schema, `Node`, `excluded`), so its value is not part of the
+  behaviour. This module writes 0 there. The bytes are compared only while the start node is still in the
+  open list at the end of a call, which happens when a `Step` runs out of budget right after the start of a
+  search; no recording does (in every one, the next push overwrites the node in the same call), so no
+  recording can tell 0 from another value.
 - **Q8. The probe reports DIRECT and the search goes on.** A probe that reaches a goal cell gives the event
   STARTED with DIRECT, and the open list still runs.
 - **Q9. The reverse direction twice.** The first expansion of a search considers the reverse of the start's
@@ -675,12 +700,35 @@ becomes 0, its *next by requester* 2 (the old *first free*), *first free* 1 and 
 is 0 and `path` is 5427680, so `path` and `target` (5413312) become 0 (`w region 92:000000 96:000000`,
 Q5); no entry holds the requester. The second `Cancel 5427680` that follows changes nothing.
 
-**Not in any recording:** `Shutdown`, `WriteState`, `SetSearchScale`, `DebugCell`, `CellsChanged` with the
-cause 1, an event PROGRESS, the outcomes PARTIAL and FAILED, a start in the goal area or off the grid, a
-probe at or above *H*(start), a search over more than one tick, a goal of kind circle in the probe's DIRECT
-case, a ring, the growth of the open list past the recorded capacity, a `Cancel` of a running search (Q5),
-a `Cancel` that drops events, Q6, and a `Submit` that replaces a pending request or changes its unit. The events of the recordings are each
-recorded search's STARTED and FINISHED FOUND.
+**The refresh of the weights**, `orders-air.txt`, call at tick 3599 of `Step`: `budgetRefreshCounter`
+reaches 150. `playerTickLoad` is 99900 for players 0 and 1 and 0 for the rest, and
+`pathworld.UnitsPerPlayer` gives 250 (ten imports, one per player), so *v* is 399 for players 0 and 1, whose
+weights become `baseScale` (0x18000), and 0 for players 2 to 9, whose weights become 6 × 0x18000 = 0x90000.
+Every `playerTickLoad` becomes 0.
+
+**Not in any recording:** these are stated by this spec alone, and no recording checks them.
+- The slots `Shutdown`, `WriteState`, `SetSearchScale` and `DebugCell`, and `CellsChanged` with the cause 1
+  (with the cause 2 it is recorded, and does nothing).
+- An event PROGRESS, and the outcomes PARTIAL and FAILED.
+- A start in the goal area or off the grid, and a probe at or above *H*(start).
+- A search over more than one tick: all four recorded searches start and end in one `Step`. Also the start
+  node left in the open list at the end of a call (Q7).
+- A goal of kind 2 (ring), of kind 0 or any other kind, and a circle in the probe's DIRECT case.
+- The growth of the open list past the recorded capacity, and Q6.
+- A `Cancel` of a running search (Q5), and a `Cancel` that drops events.
+- A `Submit` that replaces a pending request or changes its unit.
+- A player picked for a turn while not playing (below).
+
+The events of the recordings are each recorded search's STARTED and FINISHED FOUND.
+
+**Edges.**
+- `pathworld.UnitsPerPlayer` gives 250 in the recordings; a 0 is outside the contract, and the division
+  traps (ABI section 13).
+- The turn loop picks the next player whose `budget` is above 0 whether or not that player plays: a player
+  who stopped playing with a positive bank is served until the bank is spent.
+- A requester or a unit of 0 is a number like any other in `Submit`, `Cancel` and the chains (a free entry
+  is in no chain). The engine's handles are block offsets and never 0.
+- The probe has no limit of its own on its turns: it ends only by the rules of section 4.
 
 **Gaps in the kit.**
 - The kit's manifest has no entry and no signatures for pathfinding or for `pathworld`, so the kinds of
