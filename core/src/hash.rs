@@ -1081,43 +1081,91 @@ fn parse_line(line: &[u8]) -> Option<(u64, usize, &[u8], &[u8])> {
     Some((tick, phase, path, value))
 }
 
-fn compute(dump: &[u8], schema: &Schema) -> R<Vec<(u64, &'static str, u64)>> {
-    let mut it = dump.split(|&b| b == b'\n').peekable();
-    let header = it.next().ok_or(())?;
-    if header != format!("bt-dump {}", schema.trace_format).as_bytes() {
+fn block_rows(
+    schema: &Schema,
+    key: (u64, usize),
+    buf: &[u8],
+    spans: &[(u32, u32, u32)],
+    rows: &mut Vec<(u64, &'static str, u64)>,
+) -> R<()> {
+    // each span: start of the path in buf, length of the path, length of the value (which follows after a space)
+    let lines: Vec<Line> = spans
+        .iter()
+        .map(|&(st, pl, vl)| {
+            let st = st as usize;
+            let pl = pl as usize;
+            (&buf[st..st + pl], &buf[st + pl + 1..st + pl + 1 + vl as usize])
+        })
+        .collect();
+    let (tick, phase) = key;
+    let mut w = Walker::new(schema, &lines);
+    if phase != 8 {
+        let h = w.phase_row()?;
+        rows.push((tick, PHASES[phase], h));
+    }
+    if phase == 7 {
+        let h = w.world_row(tick, true)?;
+        rows.push((tick, "world", h));
+    }
+    if phase == 8 {
+        w.phase_row()?;
+        let h = w.world_row(tick, false)?;
+        rows.push((tick, "tick", h));
+    }
+    Ok(())
+}
+
+/// Reads the dump block by block (the blocks of a dump are contiguous), so that only one block is in memory.
+fn compute(path: &str, schema: &Schema) -> R<Vec<(u64, &'static str, u64)>> {
+    use std::io::BufRead;
+    let f = std::fs::File::open(path).map_err(|_| ())?;
+    let mut rd = std::io::BufReader::with_capacity(1 << 20, f);
+    let mut line: Vec<u8> = Vec::new();
+    rd.read_until(b'\n', &mut line).map_err(|_| ())?;
+    if line.last() == Some(&b'\n') {
+        line.pop();
+    }
+    if line != format!("bt-dump {}", schema.trace_format).as_bytes() {
         return Err(());
     }
-    let mut order: Vec<(u64, usize)> = Vec::new();
-    let mut index: HashMap<(u64, usize), usize> = HashMap::new();
-    let mut blocks: Vec<Vec<Line>> = Vec::new();
-    while let Some(line) = it.next() {
-        if line.is_empty() && it.peek().is_none() {
+    let mut rows = Vec::new();
+    let mut key: Option<(u64, usize)> = None;
+    let mut buf: Vec<u8> = Vec::new();
+    let mut spans: Vec<(u32, u32, u32)> = Vec::new();
+    let mut seen: std::collections::HashSet<(u64, usize)> = std::collections::HashSet::new();
+    loop {
+        line.clear();
+        let n = rd.read_until(b'\n', &mut line).map_err(|_| ())?;
+        if n == 0 {
             break;
         }
-        let (tick, phase, path, value) = parse_line(line).ok_or(())?;
-        let k = *index.entry((tick, phase)).or_insert_with(|| {
-            order.push((tick, phase));
-            blocks.push(Vec::new());
-            blocks.len() - 1
-        });
-        blocks[k].push((path, value));
+        if line.last() == Some(&b'\n') {
+            line.pop();
+        }
+        if line.is_empty() {
+            continue;
+        }
+        let (tick, phase, path, value) = parse_line(&line).ok_or(())?;
+        let k = (tick, phase);
+        if key != Some(k) {
+            if let Some(prev) = key {
+                block_rows(schema, prev, &buf, &spans, &mut rows)?;
+                buf.clear();
+                spans.clear();
+            }
+            if !seen.insert(k) {
+                return Err(());
+            }
+            key = Some(k);
+        }
+        let st = buf.len() as u32;
+        buf.extend_from_slice(path);
+        buf.push(b' ');
+        buf.extend_from_slice(value);
+        spans.push((st, path.len() as u32, value.len() as u32));
     }
-    let mut rows = Vec::new();
-    for (k, &(tick, phase)) in order.iter().enumerate() {
-        let mut w = Walker::new(schema, &blocks[k]);
-        if phase != 8 {
-            let h = w.phase_row()?;
-            rows.push((tick, PHASES[phase], h));
-        }
-        if phase == 7 {
-            let h = w.world_row(tick, true)?;
-            rows.push((tick, "world", h));
-        }
-        if phase == 8 {
-            w.phase_row()?;
-            let h = w.world_row(tick, false)?;
-            rows.push((tick, "tick", h));
-        }
+    if let Some(prev) = key {
+        block_rows(schema, prev, &buf, &spans, &mut rows)?;
     }
     Ok(rows)
 }
@@ -1127,9 +1175,8 @@ fn rows_call(call: &Call) -> String {
         if call.args.len() < 2 {
             return Err(());
         }
-        let dump = std::fs::read(&call.args[0]).map_err(|_| ())?;
         let schema = Schema::load(&std::fs::read(&call.args[1]).map_err(|_| ())?)?;
-        let rows = compute(&dump, &schema)?;
+        let rows = compute(&call.args[0], &schema)?;
         let items: Vec<String> = rows.iter().map(|(t, p, h)| format!("[{},\"{}\",\"{:016x}\"]", t, p, h)).collect();
         Ok(format!("{}\t[{}]", call.name, items.join(",")))
     };
