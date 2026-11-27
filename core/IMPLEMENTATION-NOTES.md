@@ -104,4 +104,4 @@ no hosted module reaches them; first work if another module is hosted; 4 (the 40
 
 ## Verdicts, session 4
 
-- Local gate (module of /work/wind_meteors/ rebuilt): every group but `files` equal. Submitted as req1 of this session; see below.
+- Local gate (module of /work/wind_meteors/ rebuilt): every group but `files` equal. Verdict of req1 (this session, kit interfaces-v60): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
