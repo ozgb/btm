@@ -560,7 +560,16 @@ impl<'a> Walker<'a> {
         }
         let mut live = Vec::new();
         let mut scripted = std::collections::HashSet::new();
-        for (p, _) in self.lines.iter() {
+        for (p, v) in self.lines.iter() {
+            if p.ends_with(b"].class")
+                && (p.starts_with(b"orderFx[") || p.starts_with(b"playersState.conditions.victory[") || p.starts_with(b"playersState.conditions.defeat["))
+            {
+                // section 11: an order effect of a class above 5 and a condition of class 0 fail the run
+                let c = hexval(v)?;
+                if (p.starts_with(b"orderFx[") && c > 5) || (!p.starts_with(b"orderFx[") && c == 0) {
+                    return Err(());
+                }
+            }
             if p.starts_with(b"units[") {
                 if let Some(i) = match_index(p, "units[", "].unitDefIndex") {
                     live.push(i);
@@ -847,6 +856,8 @@ impl<'a> Walker<'a> {
                 self.hash.h32(fx);
                 self.hash.h32(cls as u64);
                 self.hash.h32(vd as u64);
+            } else if !(1..=5).contains(&cls) {
+                return Err(());
             }
         }
         self.hash.end();
@@ -1130,7 +1141,6 @@ fn compute(path: &str, schema: &Schema) -> R<Vec<(u64, &'static str, u64)>> {
     let mut key: Option<(u64, usize)> = None;
     let mut buf: Vec<u8> = Vec::new();
     let mut spans: Vec<(u32, u32, u32)> = Vec::new();
-    let mut seen: std::collections::HashSet<(u64, usize)> = std::collections::HashSet::new();
     loop {
         line.clear();
         let n = rd.read_until(b'\n', &mut line).map_err(|_| ())?;
@@ -1151,9 +1161,6 @@ fn compute(path: &str, schema: &Schema) -> R<Vec<(u64, &'static str, u64)>> {
                 buf.clear();
                 spans.clear();
             }
-            if !seen.insert(k) {
-                return Err(());
-            }
             key = Some(k);
         }
         let st = buf.len() as u32;
@@ -1165,7 +1172,15 @@ fn compute(path: &str, schema: &Schema) -> R<Vec<(u64, &'static str, u64)>> {
     if let Some(prev) = key {
         block_rows(schema, prev, &buf, &spans, &mut rows)?;
     }
-    Ok(rows)
+    // rows by tick, then in the row order of the format; a block that comes back replaces its earlier rows
+    let order = |p: &str| -> usize {
+        if p == "world" { 8 } else if p == "tick" { 9 } else { PHASES.iter().position(|x| *x == p).unwrap_or(0) }
+    };
+    let mut keyed: std::collections::BTreeMap<(u64, usize), (u64, &'static str, u64)> = std::collections::BTreeMap::new();
+    for r in rows {
+        keyed.insert((r.0, order(r.1)), r);
+    }
+    Ok(keyed.into_values().collect())
 }
 
 fn rows_call(call: &Call) -> String {

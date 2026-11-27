@@ -27,6 +27,9 @@ full recordings of `tests/replay/wind_meteors/`.
 - `wasmi` 2.0.3 (features `std`, `validate`, `stable`): the WebAssembly runtime that hosts the module and the loader's
   fixtures. Pure Rust, links statically with musl, and reports trap codes, which the gate's error classes need.
   Engine fuel is off: metering is the module's own (`__fuel_set`, `__fuel_get`).
+- `wasm-encoder` 0.228 (feature `wasmparser`) and `wasmparser` 0.228 (the version wasmi already uses): `nan.rs` rewrites a module
+  before it is compiled so that every f32/f64 arithmetic result (add, sub, mul, div, sqrt, min, max, rounding, abs, neg,
+  demote, promote) that is a NaN becomes the canonical one (ABI 3.2, vector `nan_canonical`); wasmi leaves the hardware's NaN.
 - `serde_json` 1: the manifest (a number with a fraction or an exponent, or above 2147483647, is refused as invalid
   JSON) and nothing else.
 
@@ -105,3 +108,84 @@ no hosted module reaches them; first work if another module is hosted; 4 (the 40
 ## Verdicts, session 4
 
 - Local gate (module of /work/wind_meteors/ rebuilt): every group but `files` equal. Verdict of req1 (this session, kit interfaces-v60): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
+
+
+## Session 4 (interfaces-v64, reference-traces-v54)
+
+Changed for the new vectors: `stack_size`, `fuel_budget` (1 to 2147483647) and `size_budget` are checked in the manifest;
+`fixture.mix` is defined by the `memory`/`load` of the loader and fuel groups, and an adapted import of an older major is
+converted through its adapter (an adapter for an import the host does not define, or defines with another signature, is a
+`manifest` error at `load`); canonical NaNs by the module rewrite above; in `host`, every import checks its `linear`
+arguments against the memory size, its handle (null, unknown: the table is the labels issued in this outermost call, cleared
+when it returns, 32 at most, the 33rd a `glue` error), its buffer; a text out with a size is cut; `Emit` takes 4 to 128 bytes
+and weapon slots 0 to 255; a refusal ends the replay with `{"error","modules","message"}`.
+
+Verdicts in order: req1: `console` failed (one vector, `give-other-local`, "exit status 1", not reproducible: that run
+of the same binary passes locally 200 times and again in req2); every other group but `files` equal. req2 (same binary):
+`commands`, `console`, `events`, `fuel`, `hash`, `host` (18), `loader` (109), `rand`, `runtime` equal; `files` failed (not
+judged); `play` not judged.
+
+Unclear spec points this session: none that blocked. The "exit status 1" of req1 is not an exit code my core can produce
+(its only explicit exits are 2); I believe it came from the run, not the core.
+
+## Session 5 (interfaces-v64, reference-traces-v54): the fourth review
+
+Fixed: 1 (rows sorted by tick and row order, a repeated block replaces its rows), 2 (class above 5 fails the dump), 3 (the ten
+sim-block services are defined by the host: `SimAlloc`/`SimAllocTagged`/`SimFree` over a free-list allocator in the block above the
+Game record, `RecordSimEvent` into the sim event queue of `events.rs`, now one record per six arguments, `SimCaptureAlloc` over a
+2 MiB arena at the end of the block, `GetGafFrame`/`InitGafSequence`/`StepGafSequence` on the frame table layout of ABI 9.3,
+`GetSlotDpid`/`FindSlotByDpid` from `Game.players[i].id` and `.type`; malformed arguments answer 0, -1 or 10 and write nothing; no vector
+and no hosted module reaches them, so they are untested beyond compiling; the sim event kinds accepted are 1 to 35, kind 0 (NONE,
+"never recorded") is treated as not a kind), 4 (an adapted import of an older major is converted for any import the host defines with
+the manifest's current signature, f32/f64 pass unchanged; the host not defining it, or defining it differently, is `manifest`), 5
+(`bigalloc.rs`: a global allocator that maps blocks of 256 MiB or more with `MAP_NORESERVE`, by raw syscall, so `memory` at 65536 pages
+succeeds on a machine whose heuristic overcommit refuses 4 GiB; RSS stays at 1.4 MB), 7 (a module with a `fuel_budget` that does not export
+`__fuel_set` and `__fuel_get` is refused at `load` as `export`; a failing `__fuel_set` call is no longer ignored), 8 (`copysign` joins the
+NaN rewrite), 9 (`FatalError` ends the replay with `{"error":"fatal",...,"message":<its text>}`; the class name is mine, no group judges it),
+15 (`Emit` reads the entry's `publishes`; block base, block size and scratch come from the manifest), 16 (unused manifest fields removed;
+`Replayer.block_base` removed; the `interface` rank of `commands.rs` stays: it is the documented order, no gate script has one),
+17 (`tools/host_check.py` runs every recording that has a vector; an unreadable CALLS file exits 2).
+Not changed, with reasons: 6 (hidden state: the spec says only the scenario mode judges it and this core has no scenario mode; a `replay`
+must not check it, vector `import_stale_handle`); 10 (`edge`, `nowisee`, `reloadaiprofiles` are outside the twelve commands plus `control` and
+`view` that section 4.3 limits the group to; the setup state the scenario mode needs is not a vector); 11 (ABI 7.2 gives only the start-address
+check); 12 (the double compile is the validation of the original before the rewrite, and the scratch locals are two per function: cheap, and
+no vector is near the limit); 13 done in `events.rs` (`repeat` in play mode adds the remaining count to `dropped` in one step); 14 (a stream other
+than 0 or 1 is undefined by `rand_stream.h`; it draws from main); 17 (`gate.py` has no `runtime` group because `reference/core/` has none;
+`runtime_check.py` covers it).
+
+Verdicts, session 5: local gate equal on every group but `files`; runtime check and host check equal. Verdict of req1 (this session): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
+
+## Session 6 (interfaces-v64, reference-traces-v54): the fifth review
+
+Nothing new on `main` or the spec branches; the kit is unchanged. Local gate, runtime check: equal on every group but `files`.
+
+Fixed: 1 (`RecordSimEvent`: a count above 6 x 4096 writes nothing, a buffer past the memory is a trap, no unbounded gather),
+2 (the `world` row fails the dump on any `orderFx[].class` above 5 and any victory/defeat condition of class 0, in whatever block
+the line is), 3 (negative `SimCaptureAlloc` bytes answer 0 and write nothing), 5 (`__fuel_set` must be `(i64)->()` and
+`__fuel_get` `()->i64`, else `export` at load), 10 (the weapon-slot rule is for kind 80 only), 20 (RUNTIME-NOTES wording).
+Not changed, with reasons: 3 (arena and queue never drained: no tick boundary exists in the `host` replay and no hosted module
+records radar events or more than 4096 events; first work for scenario mode), 4 (free list: same, no vector), 6 (`core-gate.md`
+judges only the manifest numbers), 7 (hidden state and glue errors: scenario mode, not judged here), 8, 9 (no
+vector; section 17 lines are what every dump of the kit has), 11 (manifest is the embedded constant), 12 (kept: validation of
+the original before the rewrite), 13, 14 (the target is musl on this machine; verified static), 15 (kept as the documented
+order), 16, 17, 18, 19 (robustness or dead paths no vector reaches).
+
+Verdict of req1 (this session): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
+
+## Session 7: the sixth review
+
+Local gate, runtime check, host check: equal on every group but `files`.
+
+Fixed: 1 (a failing `__fuel_set` is a trap of the module: `prepare_call` returns its class), 2 (`RecordSimEvent` with a count above
+24576, or negative, is the refusal "the sim event queue is full"), 3 (the host replay drains the queue and empties the arena when
+`Game.ticks` changes), 4 (the allocator is first-fit with splitting, merges neighbours and gives the top back), 5 (the window is
+zeroed only in pages that are not zero already; a table above 2^24 slots is `layout`), 6 (`FindWeaponByName` above weapon 255 is
+refused), 7 (the embedded manifest is the kit's `wasm/modules.json`), 8 (`abs`, `neg`, `copysign` are no longer canonicalised;
+the `nan_canonical` vector still equal), 9 (the original is validated with `wasmparser`, not compiled), 13 (the `0x` branch and the
+zero divisor).
+Not changed, with reasons: 10 (the fixture import and shadowing serve adapted imports and the loader fixtures; no vector reaches it),
+11, 12 (dead branches kept as guards), 14 (commands.md 4.2 events of `edge`, `nowisee`, `reloadaiprofiles` are outside the
+twelve commands of engine-core.md 4.3), 15 (only a realloc of 256 MiB or more), 16 (no rustup here; the host triple is musl and the
+binary is checked static).
+
+Verdict of req1 (session 7): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.

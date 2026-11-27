@@ -19,7 +19,7 @@ def expected(path):
 
 
 bad = 0
-for name in ["console-features", "meteors-earthquake", "meteors-hailstorm"]:
+for name in sorted(f[:-4] for f in os.listdir(os.path.join(KIT, "reference/core/host")) if f.endswith(".txt") and os.path.exists(os.path.join(KIT, "tests/replay/wind_meteors", f))):
     with tempfile.TemporaryDirectory() as d:
         os.makedirs(os.path.join(d, "host"))
         shutil.copy(os.path.join(KIT, "reference/core/host", name + ".txt"), os.path.join(d, "host"))

@@ -84,6 +84,9 @@ impl Lcg {
             m = (m << 15) | 0x7fff;
             r = (r << 15) | 0x7fff;
         }
+        if d == 0 {
+            return 0;
+        }
         r % d
     }
 }
@@ -1619,9 +1622,6 @@ fn sscanf(fmt: &[u8], text: &[u8]) -> (i32, [u32; 4], [u8; 64]) {
                 if conv == b'd' {
                 } else if text[pos] == b'0' && pos + 1 < len && (text[pos + 1] == b'x' || text[pos + 1] == b'X') {
                     prefix = true;
-                } else if text[pos] == b'0' && pos + 1 >= len && conv == b'x' {
-                    // a lone 0
-                    radix = 16;
                 } else if conv == b'x' {
                     radix = 16;
                 } else if text[pos] == b'0' {
