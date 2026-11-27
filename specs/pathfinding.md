@@ -49,8 +49,10 @@ The kit's manifest (`wasm/modules.json`) has the entry `pathfinding`, and the si
 - `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase`, `g_region` (ABI 8.2: the four every module
   has, then `g_region` for a module whose slots take its region). The module reads `g_blockBase` and
   `g_region` (the address of the region `Init` was given), and `g_game` for the `Game` fields of section 3.
-- No `fuel_budget` and no `size_budget`: the kit's entry has neither, and no `blocked` key, and the kit has
-  no pathfinding `.wasm`. The budgets are the build's (ABI sections 11.1 and 11.3).
+- `blocked`: the kit's entry is `"blocked": true`, so it has no `fuel_budget` and no `size_budget`, and the
+  kit has no pathfinding `.wasm` (ABI section 4.2). The gate judges a module of it without budgets (ABI
+  section 15, "A blocked entry is judged without budgets"): its size is not judged, and it runs with the
+  largest fuel budget of ABI section 11.3.
 - Slot kinds (`signatures.pathfinding`):
 
 | Slot | Kinds |
@@ -93,10 +95,11 @@ hands back, never follows, and never an ABI handle (section 8.1).
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`.
 - Hooks: every slot of the header says "Hooks: none".
-- The gate: `replay.py --check --subsystem pathfinding` (ABI section 15) replays a module of the manifest on
-  its recordings through the generated glue (`docs/replay-format.md`, "Against the WASM module"); the
-  entry's `engine` slots are the native ones there. A verdict for a submitted module waits on the gate's
-  recordings-only path (see "Gaps in the kit", section 7).
+- The gate: the entry is blocked, so the oracle takes its `recordings` route (ABI section 15): it replays
+  the module on every recording of `tests/replay/pathfinding/` through the generated glue
+  (`docs/replay-format.md`, "Against the WASM module"), with the entry's `engine` slots the native ones
+  there. Its result has `scope` `recordings`, `scenarios` `not_judged` and `budgets` `not_judged`, and
+  `verdict` `equal` when every recording is equal.
 
 ### Arguments outside the block
 
@@ -731,8 +734,8 @@ Every `playerTickLoad` becomes 0 at the refresh; the turns of the same `Step` th
 call ends with 666 for players 0 and 1 (`w region 364:9a0200 368:9a0200`).
 
 **Not in any recording:** these are stated by this spec alone, and no recording checks them. The gate's
-verdict at this stage is on the recordings alone (ozgb/byte-tactics-moddable#1209); the scenarios that would
-reach more of them are judged in the final validation, once the modules are in.
+verdict is on the recordings alone (section 2, "The gate"); the scenarios that would reach more of them are
+judged in the final validation, once the modules are in.
 - The slots `Shutdown`, `WriteState`, `SetSearchScale` and `DebugCell`, and `CellsChanged` with the cause 1
   (with the cause 2 it is recorded, and does nothing).
 - An event PROGRESS, and the outcomes PARTIAL and FAILED.
@@ -759,13 +762,11 @@ records.
 - The probe has no limit of its own on its turns: it ends only by the rules of section 4.
 
 **Gaps in the kit.**
-- The kit's pathfinding entry has no `fuel_budget`, no `size_budget` and no `blocked` key (section 2). ABI
-  section 4.2 makes both budgets required unless an entry is `blocked`, so the kit's entry, as exported,
-  lacks the marker that would excuse them. The kit has no pathfinding `.wasm`, and no recording is of a WASM
-  pathfinding.
-- The gate's verdict on a submitted module from the recordings alone is ozgb/byte-tactics-moddable#1209's.
+- The kit's pathfinding entry is blocked, so it has no budgets, and the kit has no pathfinding `.wasm`. No
+  recording is of a WASM pathfinding, and the module's fuel and size are judged only once the entry has
+  budgets (section 2).
 
 ## 8. Kit version
 
-Kit `interfaces-v65` and `reference-traces-v54`, the versions the gate judges against. Interface
+Kit `interfaces-v68` and `reference-traces-v55`, the versions the gate judges against. Interface
 `pathfinding` 4.1.
