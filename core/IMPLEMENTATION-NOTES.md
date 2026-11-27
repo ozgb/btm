@@ -32,7 +32,12 @@ full recordings of `tests/replay/wind_meteors/`.
 
 ## Verdicts in order
 
-(see the end of this file)
+1. req1: `commands`, `console`, `events`, `fuel`, `loader`, `rand`, `runtime` equal; `hash` failed (two vectors, exit status 1:
+   the core read the whole 47 and 102 MB dumps into memory, which the sandbox evidently does not allow); `host` differs
+   (`instantiate`: the module of /work/wind_meteors/ is for interface 1.2, see SPEC-QUESTIONS.md Q1); `files` failed (not
+   implemented, not judged this session).
+2. req2 (the hash dump is now read block by block, 23 MB peak): `commands`, `console`, `events`, `fuel`, `hash`, `loader`,
+   `rand`, `runtime` equal; `host` differs (same cause); `files` failed (out of scope).
 
 ## Where the specs or the kit were unclear
 
