@@ -131,7 +131,7 @@ and the random streams through the services.
 `WeaponDef.flags` bit 5 (mask 0x20, `meteor` in `layout.json`) is set on a weapon that may be a meteor.
 
 Every offset is the one `layout.json` gives for the record and field. Some `Game` fields lie at offsets
-that aren't multiples of their size (`windDirection` at 229080, `windSpeed` at 229082): they are read and
+that aren't multiples of their size (`windSpeed` at 229082, `windStrength` at 229086, `windEnabled` at 229090): they are read and
 written in place at those offsets, each with its own width, so a write of the 2-byte `windDirection`
 changes those 2 bytes only.
 
@@ -286,9 +286,9 @@ Let *t* be `Game.ticks`. All comparisons with *t* are unsigned 32-bit.
 - `Emit(effect, 36)`, with the `WindMeteorsSpawn` effect: `kind` 80, `weapon` the meteor weapon's slot in
   `Game.weapons`, `pos` the position, `vel` the velocity, and `announce` 1. The slot is the weapon's address
   (`g_blockBase` plus `g_meteorWeapon`) minus the address of `Game.weapons`, divided by 277; it is −1 when
-  `g_meteorWeapon` is 0. The host refuses a SPAWN whose `weapon` is outside the table, as an import error
-  (ABI 13), so a meteor falling while `g_meteorWeapon` is 0 ends the game. In a match it doesn't occur:
-  `InitMeteors` stores a weapon before the first tick.
+  `g_meteorWeapon` is 0. The host accepts −1 (a spawn with no weapon, `docs/replay-format.md`) and refuses, as an
+  import error (ABI 13), a `weapon` below −1 or above 255, which this module never publishes. In a match
+  `g_meteorWeapon` is never 0 when a meteor falls: `InitMeteors` stores a weapon before the first tick.
 
 The imports called, in order: four `GameRand(main)` if a shower started, then two `GameRand(main)` and
 `Emit` if a meteor fell.
