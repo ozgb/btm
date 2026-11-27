@@ -38,33 +38,37 @@ the metal and player feature plot maps of the cells, and frees what it allocated
 | `WriteState` | from the harness, after each phase, to dump map's own state (record 45, `mapState`, dumped and never hashed: `docs/trace-format.md`, section 8.28) |
 | `PathLockStamp` | a query, when a saved game is written, outside the tick |
 
-**The engine's slots.** `FreePassMaps`, `AllocateBuckets` and `FreeBuckets` allocate what map holds at match load, or free it at
-shutdown, and no recording covers them. For this milestone they stay in the engine's native code (ozgb/byte-tactics-moddable#1203,
-decision 2), and moving them into the module is ozgb/btm#43. The module doesn't export them. Their subsections in
-section 4 state what the engine's slot leaves in the block, which the module reads as block data: the bucket grid, the
-off-map bucket, and the pass maps freed at shutdown.
+**The engine's slots.** The manifest's entry for map (`wasm/modules.json`, `engine`) keeps nine slots in the engine:
+`FreePassMaps`, `AllocateBuckets` and `FreeBuckets` (load class), the four plot map slots `LoadMetalPlotmap`,
+`LoadPlayerFeaturesPlotmap`, `SaveMetalPlotmap` and `SavePlayerFeaturesPlotmap` (save class: their buffers are the
+engine's, `docs/module-abi.md` section 13, "What stays in the engine"), `WriteState` (a dump query, called from the
+harness only; the engine writes map's state from the block, the same section) and `PathLockStamp` (a query of a saved
+game). The module doesn't export them, and the host calls the engine's native slot instead, with the module's state
+in the block (ABI section 6, "Engine slots"). Moving the load-class ones into the module is ozgb/btm#43. Their
+subsections in section 4 state what the engine's slot does with the block, which the module keeps or reads as block
+data: the bucket grid, the off-map bucket, the pass maps freed at shutdown, the plot maps, the dumped state and the
+stamps.
 
 ### The manifest entry
 
-The kit's manifest (`wasm/modules.json`) gives map's interface major, 9 (`majors.map`), and has no signatures and no
-entry for it. This section gives the entry the module must have, as exactly as the kit allows. Some parts of it can't
-be exact at this kit (below, "Kit gaps").
+The kit's manifest (`wasm/modules.json`) has map's entry. The module must match it exactly (ABI 9.1):
 
 - `name` and `interface`: `map`.
-- `exports`, in this order (the header's): `Apply`, `UnitsInRange`, `GetCellMeanHeight`, `CanBuildAt`,
-  `CanPlaceUnitFootprint`, `BuildAllPassMaps`, `LoadMetalPlotmap`, `LoadPlayerFeaturesPlotmap`,
-  `SaveMetalPlotmap`, `SavePlayerFeaturesPlotmap`, `SnapWorldPosToFootprint`, `CanPlaceFootprintAt`,
-  `IsPadSlotFree`, `PickRandomReclaimableResourcesInRadius`, `GetGroundHeight`, `PassMapGet`, `PassMapInBounds`,
-  `RefreshMovedUnits`, `RefreshUnitIfStale`, `WriteState`, `PathLockStamp`. `FreePassMaps`, `AllocateBuckets` and
-  `FreeBuckets` are the engine's (above).
+- `exports`, in this order: `Apply`, `UnitsInRange`, `GetCellMeanHeight`, `CanBuildAt`, `CanPlaceUnitFootprint`,
+  `BuildAllPassMaps`, `SnapWorldPosToFootprint`, `CanPlaceFootprintAt`, `IsPadSlotFree`,
+  `PickRandomReclaimableResourcesInRadius`, `GetGroundHeight`, `PassMapGet`, `PassMapInBounds`, `RefreshMovedUnits`,
+  `RefreshUnitIfStale`. The other nine slots are the engine's (above).
 - `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI 8.2). The module reads `g_game`,
   `g_simGlobals` and `g_blockBase`.
-- `majors`: `map` 9, and for its import groups `los_radar` 5, `features` 5, `files` 3, `services` 4.
-- `publishes`: `{"176": 32, "132": 20}`: CELLS_CHANGED (`MapCellsChanged`, 32 bytes) and los_radar's CELL_HEIGHTS
-  (`LosRadarCellHeights`, 20 bytes). See "Kit gaps".
-- `data_base`, `table_base`, `fuel_budget` and `size_budget`: the build picks them (ABI 2, 11.1 and 11.3). The
-  window must not overlap another module's, and the table range must not overlap entries 48 to 79 of `wind_meteors`.
-- Slot kinds:
+- `majors`: `map` 9, `los_radar` 5, `services` 4.
+- `publishes`: `{"132": 20, "176": 32}`: los_radar's CELL_HEIGHTS (`LosRadarCellHeights`, 20 bytes), which the route
+  table carries from map's outbox to los_radar, and CELLS_CHANGED (`MapCellsChanged`, 32 bytes). `Emit` takes any kind
+  a route carries from the calling module's outbox (ABI 9.3).
+- `data_base` 557056 and `table_base` 400: map's window of `window` (32768) bytes from 0x88000, and its 32 table
+  entries from 400 (ABI 2.2).
+- Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`; its
+  budget is ten times the most fuel any gate tick burns (ABI 11.3).
+- Slot kinds, as the entry gives them:
 
 | Slot | Kinds |
 | --- | --- |
@@ -74,68 +78,51 @@ be exact at this kit (below, "Kit gaps").
 | `CanBuildAt` | `[block, linear, int, block] -> int` |
 | `CanPlaceUnitFootprint` | `[block, int, linear, int] -> int` |
 | `BuildAllPassMaps` | `[linear, int] -> void` |
-| `LoadMetalPlotmap`, `LoadPlayerFeaturesPlotmap`, `SaveMetalPlotmap`, `SavePlayerFeaturesPlotmap` | `[handle] -> void` |
 | `SnapWorldPosToFootprint` | `[block, linear] -> void` |
 | `CanPlaceFootprintAt` | `[block, linear] -> int` |
 | `IsPadSlotFree` | `[block, int] -> int` |
 | `PickRandomReclaimableResourcesInRadius` | `[linear, int, linear, linear, linear, linear] -> int` |
 | `PassMapGet`, `PassMapInBounds` | `[int, int, int] -> int` |
-| `RefreshMovedUnits`, `RefreshUnitIfStale` | `[int, block] -> void` |
-| `WriteState` | `[linear] -> void` |
-| `PathLockStamp` | `[block] -> int` |
+| `RefreshMovedUnits`, `RefreshUnitIfStale` | `[int, linear] -> void` |
 
 The `short` argument `type` of `CanBuildAt` arrives sign-extended, and the `unsigned short` `otherTypeId` of
-`CanPlaceUnitFootprint` zero-extended (ABI 7).
+`CanPlaceUnitFootprint` zero-extended (ABI 7). The unit of the two refreshes is the address of a `Unit` in the block.
 
-- Imports, every one listed and nothing else:
+- Imports, as the entry lists them:
 
 | Import | Kinds | Used for |
 | --- | --- | --- |
 | `los_radar.GetMapCell` | `[int, int] -> block` | the first cell of a footprint, in the claim |
-| `los_radar.GetMapCellAtPosition` | `[linear] -> block` | the cell under a point, in the reclaim pick |
-| `features.GetCellFeature` | `[block] -> int` | the feature on a cell, in the reclaim pick |
-| `files.BankOpenAccount` | `[handle, linear] -> int` | the plot maps of a saved game |
-| `files.BankOpenNamedBox` | `[handle, linear] -> int` | the plot maps of a saved game |
-| `files.BankGetBoxSize` | `[handle] -> int` | loading a plot map |
-| `files.BankReadBox` | `[handle, linear, int] -> int` | loading a plot map |
-| `files.BankWriteBox` | `[handle, linear, int] -> int` | saving a plot map |
-| `services.RandomInt` | `[int] -> int` | the reclaim pick's draws |
-| `services.Emit` | `[linear, int] -> void` | publishing CELLS_CHANGED and CELL_HEIGHTS |
 | `services.SimAlloc` | `[int] -> linear` | the pass map words, the scratch block of `BuildAllPassMaps`, the reclaim lists |
 | `services.SimFree` | `[linear] -> void` | the old pass map words, the scratch block, the reclaim lists |
+| `services.Emit` | `[linear, int] -> void` | publishing CELLS_CHANGED and CELL_HEIGHTS |
 
-- Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`.
-  The budget is ten times the most fuel any gate tick burns (ABI 11.3), which the build measures.
+The reclaim pick makes three more imports, which the entry doesn't list (below, "Kit gaps"):
+
+| Import | Kinds | Used for |
+| --- | --- | --- |
+| `los_radar.GetMapCellAtPosition` | `[linear] -> block` | the cell under a point, in the reclaim pick |
+| `features.GetCellFeature` | `[block] -> int` | the feature on a cell, in the reclaim pick |
+| `services.RandomInt` | `[int] -> int` | the reclaim pick's draws |
+
 - Hooks: every slot of `interfaces/map.h` says "Hooks: none", and the module raises none.
 
 ### Kit gaps
 
-At `interfaces-v61` the kit's manifest has no entry for map, and one header comment disagrees with the recordings.
-These are gaps in the kit, not in the module:
+At `interfaces-v65` these are gaps in the kit, not in the module:
 
-- **The publish** (ozgb/byte-tactics-moddable#1206). The recordings carry a publish as a `services.SchedPublish` line,
-  with 7 and the size (the publisher, map, and the payload size; the payload's fields aren't recorded), which is
-  `services.Emit` (ABI 9.3, "Routes in the recordings"). The kit's ABI 9.3 still lists CELL_HEIGHTS (132) among the
-  publishes `Emit` does not carry. #1206 decided that `Emit` takes any kind the route table carries from the calling
-  module's outbox, and the route table carries CELL_HEIGHTS from map's, so the `publishes` table above lists it; the
-  kit's ABI and the host's check follow in #1206.
-  The replay compares only the size of each publish (20 for CELL_HEIGHTS, 32 for CELLS_CHANGED) and its order
-  among the imports. The fields of a CELLS_CHANGED appear as the arguments of pathfinding's `CellsChanged` calls in
-  `tests/replay/pathfinding/` (`orders-factory.txt`, `orders-move-attack.txt`, `skirmish2.txt`); those of a
-  CELL_HEIGHTS are checked only by the scenario traces.
-- **The plot map imports** (ozgb/byte-tactics-moddable#1206) are `files` imports (`interfaces/files.h`, files 3.0);
-  the manifest has no signatures for them yet. Where a plot map's buffer of `Game.width` × `Game.height` bytes lives
-  is a task of #1206 too: on a 256 by 256 map it is the size of the module's whole window.
-- **The replay schema's imports.** `data/replay_schema.json` gives map's imports as `los_radar.GetMapCell` and
-  `pathfinding.CellsChanged`. The recordings carry `los_radar.GetMapCell` and the `services.SchedPublish`,
-  `services.SimAlloc` and `services.SimFree` lines, and this section's import list is the recordings'.
-- **The `MAP_RECLAIM_FOOTPRINT` comment.** `interfaces/map.h` says the event makes the overlapping units give up the
-  cells the unit covers. Section 4 states what it does: the units overlapping the footprint re-claim, the unit among
-  them. No recording has the event.
-- **The reclaim pick's comment** (ozgb/byte-tactics-moddable#1206). The comment on
-  `PickRandomReclaimableResourcesInRadius` in `interfaces/map.h` says it draws "from the game logic stream". The
-  recordings' behaviour is that it draws with `services.RandomInt`, whose generator is `rng.seed` in the recordings
-  (X37). This spec states the recordings' behaviour.
+- **The budgets.** Map's entry has no `fuel_budget` or `size_budget`, which ABI 4.2 requires of an entry; the build
+  measures them (ABI 11.3) until the entry gives them.
+- **The reclaim pick's imports.** `PickRandomReclaimableResourcesInRadius` is an export of map's entry, but the entry's
+  imports lack the three the pick makes (`los_radar.GetMapCellAtPosition`, `features.GetCellFeature`,
+  `services.RandomInt`), and its `majors` lack `features`. No recording calls the pick. Until the entry lists them, a
+  module that makes these imports is refused by the loader (ABI 9.1).
+- **The publish payloads.** The recordings carry a publish as a `services.SchedPublish` line, with 7 and the size (the
+  publisher, map, and the payload size; the payload's fields aren't recorded), which is `services.Emit` (ABI 9.3,
+  "Routes in the recordings"). The replay compares only the size of each publish (20 for CELL_HEIGHTS, 32 for
+  CELLS_CHANGED) and its order among the imports. The rectangle, classes and cause of a CELLS_CHANGED appear as the
+  arguments of pathfinding's `CellsChanged` calls in `tests/replay/pathfinding/` (`orders-factory.txt`,
+  `orders-move-attack.txt`, `skirmish2.txt`); those of a CELL_HEIGHTS are checked only by the scenario traces.
 
 ### Arguments outside the block
 
@@ -150,14 +137,9 @@ These are gaps in the kit, not in the module:
 - **`MapMoveLimits`** (`BuildAllPassMaps`): `count` records of 16 bytes in the engine's memory, as
   `interfaces/map.h` lays them out: `index` (int), `footprintX`, `footprintZ`, `maxWaterDepth`, `minWaterDepth`
   (short), `maxSlope`, `badSlope`, `maxWaterSlope`, `badWaterSlope` (unsigned char).
-- **The saved-game bank** of the four plot map slots is a `handle`, passed back to the `files.Bank*` imports only.
-- **The state writer** given to `WriteState` is a `StateWriter` of `interfaces/state_writer.h`: a table of function
-  pointers the host gives the module, called with the arguments section 4 lists.
 - **The out arguments of the reclaim pick** (`energy`, `metal`: the address of a `Vec3` pointer each;
   `energyAmount`, `metalAmount`: the address of a 32-bit float each) and the `ids` buffer of `UnitsInRange` are the
   caller's memory, written as section 4 says.
-- **The buffers of the plot map slots** are in the module's own memory: the module passes their addresses to
-  `files.BankWriteBox` and `files.BankReadBox`, each at least as large as the size it passes.
 
 ### Events
 
@@ -770,15 +752,17 @@ Let *cx* = trunc(whole(`pos.x`) / 16) and *cz* = trunc(whole(`pos.z`) / 16), rou
 Q14). When 0 ≤ *cx* < `Game.width` and 0 ≤ *cz* < `Game.height`, the result is ⌊(`Cell.low` + `Cell.high`) / 2⌋ of
 the cell (*cx*, *cz*) (X32). Otherwise it is −1. Nothing is written.
 
-### `CanBuildAt(unit, cell, type, player)`
+### `CanBuildAt`
 
-`unit` is the address of a `UnitDef`, `player` of a `Player` or null. The result and the placement record are those of
+The arguments are `unit`, `cell`, `type` and `player`, in that order. `unit` is the address of a `UnitDef`,
+`player` of a `Player` or null. The result and the placement record are those of
 the build test of `unit` at `cell`, with the type id `type` and the player `player`. Nothing else is written and no
 import is made.
 
-### `CanPlaceUnitFootprint(unit, otherTypeId, cell, flags)`
+### `CanPlaceUnitFootprint`
 
-`unit` is the address of a `UnitDef`. Let (x, y) be `cell`. The outcome is the first row that applies, in order:
+The arguments are `unit`, `otherTypeId`, `cell` and `flags`, in that order. `unit` is the address of a
+`UnitDef`. Let (x, y) be `cell`. The outcome is the first row that applies, in order:
 
 | Outcome | Result | The placement record |
 | --- | --- | --- |
@@ -839,8 +823,9 @@ their values. The imports are those frees only, in class order.
 
 ### `LoadMetalPlotmap(file)`
 
-Let *S* = `Game.width` × `Game.height` (X42). The buffer is in the module's own memory, at least *S*
-bytes.
+The engine's slot (section 2): the module doesn't export it. This subsection states what the engine's slot does with the block; its "imports" are the engine's calls, and its buffers are the engine's.
+
+Let *S* = `Game.width` × `Game.height` (X42). The buffer is the engine's, at least *S* bytes.
 
 | Outcome | Imports, in order | Written |
 | --- | --- | --- |
@@ -853,6 +838,8 @@ bytes.
 A negative *r* counts as a full read (Q17).
 
 ### `LoadPlayerFeaturesPlotmap(file)`
+
+The engine's slot (section 2): the module doesn't export it. This subsection states what the engine's slot does with the block; its "imports" are the engine's calls, and its buffers are the engine's.
 
 Let *S* = ⌊`Game.width` × `Game.height` / 2⌋, truncating toward zero (X42). The outcomes, imports and
 buffer are those of this table, with *r* the result of `files.BankReadBox`:
@@ -874,6 +861,8 @@ Only those 4 bits of `Cell.flags` change: bits 0 to 2 and bit 7 keep their value
 
 ### `SaveMetalPlotmap(file)`
 
+The engine's slot (section 2): the module doesn't export it. This subsection states what the engine's slot does with the block; its "imports" are the engine's calls, and its buffers are the engine's.
+
 Let *S* = `Game.width` × `Game.height`. The imports, in this order, every result ignored:
 
 1. `files.BankOpenAccount(file, "Metal")`
@@ -884,6 +873,8 @@ Let *S* = `Game.width` × `Game.height`. The imports, in this order, every resul
 Nothing in the block changes.
 
 ### `SavePlayerFeaturesPlotmap(file)`
+
+The engine's slot (section 2): the module doesn't export it. This subsection states what the engine's slot does with the block; its "imports" are the engine's calls, and its buffers are the engine's.
 
 Let *S* = ⌊`Game.width` × `Game.height` / 2⌋, truncating toward zero. Byte *i* of the buffer, for *i* from 0 to
 *S* − 1, is (`plotFeature4` of cell 2*i*) × 16 + (`plotFeature4` of cell 2*i* + 1): the even cell's 4-bit field in the
@@ -1112,6 +1103,8 @@ Nothing else is written; the stamp and the window keep their values. The import 
 
 ### `WriteState(writer)`
 
+The engine's slot (section 2): the module doesn't export it. This subsection states what the engine's slot does with the block.
+
 Writes section 45 through the `StateWriter` the engine gives (`interfaces/state_writer.h`). It reads only, and makes
 no import. The calls through the writer are in this order, and their order is what a dump shows.
 
@@ -1136,6 +1129,8 @@ above 2^20 (1048576).
 call is made.
 
 ### `PathLockStamp(unit)`
+
+The engine's slot (section 2): the module doesn't export it. This subsection states what the engine's slot does with the block.
 
 Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing is written and nothing is imported.
 
@@ -1571,11 +1566,11 @@ heights are 1, so *north* = *south* = 1 and the result is 1.
 
 Only the scenario traces check these.
 
-- **Slots never called:** `FreePassMaps` (the engine's for now, section 2), `LoadMetalPlotmap`, `LoadPlayerFeaturesPlotmap`, `SaveMetalPlotmap`,
-  `SavePlayerFeaturesPlotmap` (every outcome of the load tables, Q18, Q17),
-  `PickRandomReclaimableResourcesInRadius` (its draws, Q22, Q23, Q21), `AllocateBuckets` and `FreeBuckets` (the engine's
-  for now, section 2), and `WriteState` (only their results in the state, Q25, Q24, Q26), `RefreshMovedUnits`,
-  `RefreshUnitIfStale` and `PathLockStamp` (the refreshes aren't recorded yet, `docs/replay-format.md`).
+- **Slots never called:** of the module's, `PickRandomReclaimableResourcesInRadius` (its draws, Q22, Q23, Q21),
+  `RefreshMovedUnits` and `RefreshUnitIfStale` (the refreshes aren't recorded yet, `docs/replay-format.md`). Of the
+  engine's (section 2), every one: `FreePassMaps`, `AllocateBuckets` and `FreeBuckets` (only their results in the
+  state, Q25, Q24, Q26), the four plot map slots (every outcome of the load tables, Q18, Q17), `WriteState` and
+  `PathLockStamp`.
 - **`Apply`:** `MAP_RECLAIM_FOOTPRINT`, `MAP_LOAD_PATH_LOCK_STAMP`, the refusal of `MAP_BUCKET_PREPEND`, every outcome
   0 (each size check, the null unit, the unknown kinds, a negative `MAP_PASS_MAPS` size, the two refusals of
   `MAP_SET_YARD` and of `MAP_BUCKET_UNLINK`, `MAP_LOAD_PATH_LOCK_STAMP` without motion), `MAP_ADD_UNIT` off the map
@@ -1602,6 +1597,5 @@ Only the scenario traces check these.
 
 ## 8. Kit version
 
-Kit `interfaces-v61` and `reference-traces-v53` (at commits f6b83002b32b and 27e1982918d6), the versions the gate
-judges against. Interface `map` 9.2. The imports are against `los_radar` 5.1, `features` 5.1, `files` 3.0 and
-`services` 4.1.
+Kit `interfaces-v65` and `reference-traces-v54` (at commits d577bfcb6ec6 and 25f3a49bcdd2), the versions the gate
+judges against. Interface `map` 9.2. The imports are against `los_radar` 5.1, `features` 5.1 and `services` 4.2.
