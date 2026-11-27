@@ -46,7 +46,7 @@ A core writes the other rows of `trace.txt` (the phase rows and `world`) and the
 the phase rows and `world` included, and judges each of them (section 5, "The hash").
 
 The `view` row of `trace.txt`, right after the `tick` row, is the hash of the player view of
-`interfaces/view.h`, version 1.0, filled at the end of the tick (`docs/trace-format.md`, section 6; `docs/view.md`,
+`interfaces/view.h`, version 2.0, filled at the end of the tick (`docs/trace-format.md`, section 6; `docs/view.md`,
 "The recorded view"). It is what a presentation is given, not part of the `tick` row, and neither this contract
 nor the core gate judges it; a core that fills the view is judged on it as `docs/view.md` says.
 
@@ -277,9 +277,10 @@ shuffle of a range (section 5, "The shuffle of a range"), drawing from a generat
 is: `shuffle` from a freshly seeded one, and `load_sequence` after the 391606 draws of the match load's explosion
 setup (`runtime/vectors/README.md`, `load_sequence`).
 
-The README does not yet state every rule a record follows: the sine, cosine and rotation tables, `hypot` and
-`acos`, the rounding of `float_text` and `double_text`, and the conversions `sprintf` and `sscanf` take. Those rules
-are ozgb/byte-tactics-moddable#1162; until it lands, the records are the rule.
+The README's "Rules" states what every record follows: the sine table, the scaled sine and cosine, the rotation
+matrix and its application, the rotation of a point, the angle of a vector, `hypot`, `acos`, the one scanner,
+multiplication and rounding that `float_text` and `double_text` share ("Text to a number"), the conversions of
+`sprintf` (`%f` of an infinity or a NaN included) and those of `sscanf`.
 
 ### 4.8 Failure
 
@@ -300,9 +301,8 @@ happens at the same tick and the same call on every machine, so the trace up to 
 recovers from one of these and plays on does not conform. A run that is playing (not in test mode) counts an
 event that does not fit instead of ending (section 5), and drops a snapshot that does not fit with its event.
 
-Two answers of the core gate are not yet stated in the kit: which modules a `window`, `window_reaches` or
-`duplicate` error names, and the class of a call through a table index past the table's size. They are
-ozgb/byte-tactics-moddable#1162; until it lands, the vectors of `reference/core/loader/` are the rule.
+Which modules an error names, by its class, and the class `table` of a call through an index at or past
+`table_size`, are `docs/core-gate.md`, "loader and fuel".
 
 ### 4.9 Not part of the contract
 
@@ -333,10 +333,10 @@ The hash, the pointer IDs, the walk of each section and the rules of the hashed 
 from a dump. The core gate's `hash` group recomputes every row of a dump, the phase rows and `world` as well as
 `tick`, so it judges the hash apart from the logic.
 
-Two points of reading a dump are open in the kit: a string that holds the byte 0x0a can't be read back from a dump
-(`docs/trace-format.md`, section 8.19, says to take it from the trace), and no vector of the `hash` group holds one;
-and section 8.12 of the trace format reads `scriptsState.units[i].scale` where section 10 says to skip
-`scriptsState.*`. They are ozgb/byte-tactics-moddable#1162.
+A dump can't carry a string that holds the byte 0x0a (`docs/trace-format.md`, section 8.19), and no vector of the
+`hash` group holds one, so the gate never judges one (`docs/core-gate.md`, "hash"). The `scriptsState.*` lines a
+reader skips still give the presence byte of each unit's script (`docs/trace-format.md`, section 10, step 1, and
+section 8.12).
 
 ### The random streams
 
@@ -452,14 +452,11 @@ a run and capture are judged only by the scenario mode.
 
 ## 8. Kit version
 
-Kit `interfaces-v50` and `reference-traces-v47`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+Kit `interfaces-v52` and `reference-traces-v49`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
 1.0, `sim_events` 1.0, `files` 3.0, `players` 5.3, `wind_meteors` 3.1, `map` 9.2, `units` 7.2,
-`features` 5.1 and `view` 1.0.
+`features` 5.1 and `view` 2.0.
 
 The majors of `services`, `rand_stream`, `state_writer`, `sim_events` and `files`, and what those headers mean (the
 order of sim events and of random draws, what `WriteState` hashes, how `Emit` picks an outbox), are frozen until a
 clean-room core passes the core gate; their minors may still add to them (`docs/core-gate.md`, "The freeze";
 ozgb/byte-tactics-moddable#1042).
-
-The kit gaps of ozgb/byte-tactics-moddable#1162 are open at this pin, and the pin moves to the interfaces tag that
-its merge makes.

@@ -31,11 +31,10 @@ sections 5.2, 11 and 13 on the fixtures of `reference/core/loader/` and `referen
 holds more than one fault, the loader reports the first in the order of `docs/core-gate.md`, "loader and fuel"
 ("Which error comes first").
 
-Some answers of the loader are not yet stated in the kit: which modules a `window`, `window_reaches` or `duplicate`
-error names, the class of a call through an index past the table's size, which numbers a manifest field takes as
-whole, the order of a pair of faults, and the largest whole number the loader takes (`docs/module-abi.md`, section
-11.3, is the rule for `fuel_budget`). They are ozgb/byte-tactics-moddable#1162; until it lands, the vectors of
-`reference/core/loader/` are the rule.
+The numbers a manifest takes are `docs/module-abi.md`, section 4.1: a non-negative integer of at most 2147483647,
+and a number with a fraction or an exponent makes the manifest invalid JSON. Which modules each class of error
+names, the class `table` of a call through an index at or past `table_size`, and how a pair of faults is ordered
+are `docs/core-gate.md`, "loader and fuel".
 
 ### The services
 
@@ -182,6 +181,5 @@ and the scheduler's order. The scenario mode, and the module gate of each module
 
 ## 8. Kit version
 
-Kit `interfaces-v50` and `reference-traces-v47`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
-1.0, `sim_events` 1.0 and `files` 3.0. The kit gaps of ozgb/byte-tactics-moddable#1162 are open at this pin, and the
-pin moves to the interfaces tag that its merge makes.
+Kit `interfaces-v52` and `reference-traces-v49`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+1.0, `sim_events` 1.0 and `files` 3.0.
