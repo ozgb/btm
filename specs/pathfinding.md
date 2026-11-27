@@ -614,8 +614,8 @@ holds the slot, so the gate does not judge it. It is a kit gap (section 7).
 `baseScale` becomes `scale` (nothing when `Game.pathfinder` is 0). It changes the weights at the next
 refresh (`Step`, step 4).
 
-The engine's handler of SET_SEARCH, not this module, applies the event: its `steps` sets the match's search
-step limit, which this module reads through `pathworld.SearchStepLimit` at every `Step`, and its scale is
+The engine's handler of SET_SEARCH, not this module, applies the event: a nonzero `steps` sets the match's search
+step limit, which this module reads through `pathworld.SearchStepLimit` at every `Step`, and its scale, when `hasScale` is nonzero, is
 passed to this slot. The module has no inbox and takes no effect.
 
 ### `DebugCell(x, y, flags, dir)`
