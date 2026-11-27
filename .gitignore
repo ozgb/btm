@@ -1,3 +1,4 @@
-wind_meteors/target/
-.review/
 *.wasm
+.review/
+target/
+wind_meteors/target/
