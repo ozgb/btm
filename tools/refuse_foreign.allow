@@ -1,0 +1,12 @@
+# Exceptions to tools/refuse_foreign.py, accepted by a reviewer.
+#
+# Format: one entry per line, a path, whitespace, then the reason.
+#   specs/example/fixture.tdf   text written by hand, no game data
+# A path with spaces or other odd characters goes in double quotes (JSON
+# escapes), then the reason:
+#   "specs/my notes/a b.tdf"   text written by hand, no game data
+# The path is the whole path from the repository root, and it is matched
+# exactly. An entry allows that path in every commit of a pull request.
+# An entry without a reason is an error. Blank lines and lines that start
+# with # are ignored. The file starts empty: a fixture a test builds at run
+# time is never committed and needs no entry.

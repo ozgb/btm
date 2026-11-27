@@ -1,0 +1,21 @@
+name: foreign
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  refuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Refuse game data and foreign source
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 tools/refuse_foreign.py "$BASE" "$HEAD"

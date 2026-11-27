@@ -1,3 +1,25 @@
 wind_meteors/target/
 .review/
 *.wasm
+# Total Annihilation game data is never committed (see CONTRIBUTING.md).
+# tools/refuse_foreign.py refuses it in a pull request. Go source is not
+# ignored here: it is refused, not hidden.
+*.[hH][pP][iI]
+*.[gG][pP]3
+*.[cC][cC][xX]
+*.[uU][fF][oO]
+*.[gG][aA][fF]
+*.3[dD][oO]
+*.[cC][oO][bB]
+*.[bB][oO][sS]
+*.[tT][nN][tT]
+*.[oO][tT][aA]
+*.[fF][bB][iI]
+*.[tT][dD][fF]
+*.[gG][uU][iI]
+*.[pP][cC][xX]
+*.[fF][nN][tT]
+*.[pP][aA][lL]
+*.[wW][aA][vV]
+*.[zZ][rR][bB]
+*.[sS][cC][tT]
