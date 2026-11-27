@@ -40,7 +40,7 @@ full recordings of `tests/replay/wind_meteors/`.
    `rand`, `runtime` equal; `host` differs (same cause); `files` failed (out of scope).
 
 3. Session 3 (module rebuilt at 3.1 on main): the local gate gives `equal` on every group but `files` with
-   `/work/wind_meteors/module.wasm`; `host` is `equal` on its 3 vectors. Q1 is resolved. Verdict of the submission: see below.
+   `/work/wind_meteors/module.wasm`; `host` is `equal` on its 3 vectors. Q1 is resolved. Verdict of req1 (this session): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (out of scope); `play` not judged.
 
 ## Answers to the review (/srv/inbox/review.md)
 
