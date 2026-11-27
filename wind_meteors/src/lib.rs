@@ -237,6 +237,7 @@ pub extern "C" fn UpdateMeteors() {
     }
 }
 
+// Not observable: keeps the table import and element segment ABI 9.1 requires; nothing else uses them.
 static KEEP: [extern "C" fn(); 1] = [EmptyShutdownPreCleanup];
 
 #[no_mangle]
