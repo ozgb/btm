@@ -121,7 +121,9 @@ At `interfaces-v66` these are gaps in the kit, not in the module:
   not `blocked`.
 - **The missing imports.** The entry's `imports.services` lists `Emit`, `InitGafSequence`, `SimAllocTagged` and
   `StepGafSequence` only. The draws of the scan, of a fire and of its smoke (`RandomInt`, `GameRand`), the three sim
-  events (`RecordSimEvent`) and the smoke's frame (`GetGafFrame`) are not listed. The recordings carry no line for a
+  events (`RecordSimEvent`) and the smoke's frame are not listed. The kit has no import that reads a cursor's current
+  frame; `GetGafFrame` of the cursor's `src` and `index` is the same frame for a running sequence, whose index is
+  always below its table's count, and the spec names it for that reason. The recordings carry no line for a
   draw (`docs/replay-format.md`, "A random draw inside an import": the replayer advances the stream words), and no
   recording reaches a fire, its smoke or a geothermal placement, so the recordings give no line for the other two.
   Until the entry lists them, a module that imports them is refused by the loader (ABI 9.1).
@@ -265,14 +267,11 @@ cell's position minus (`offsetX`, `offsetY`).
 for the address of a `Vec3` that holds that x and z (its y is not read). One `GetGroundHeight` import each time it is
 taken.
 
-**D4. Moving spot i to a list** (used, rest or free), where "the list's head" means `Pool.usedHead`, `restHead` or
-`freeHead`:
-
-- If spot i's `next` is -1: the first of `usedHead`, `restHead`, `freeHead` (in that order) that equals i becomes
-  spot i's `prev`. Otherwise the `prev` of spot `next` becomes spot i's `prev`.
-- If spot i's `prev` is not -1, the `next` of spot `prev` becomes spot i's `next`.
-- Then spot i's `next` becomes -1, its `prev` becomes the head of the target list as it is now (-1 for an empty list),
-  the head becomes i, and when the new `prev` is not -1, that spot's `next` becomes i.
+**D4. Moving spot i to a list** (used, rest or free; "the list's head" is `Pool.usedHead`, `restHead` or
+`freeHead`). Spot i leaves the list it is on: the spot that was its `next` (when not -1) gets i's old `prev` as its
+`prev`, the spot that was its `prev` (when not -1) gets i's old `next` as its `next`, and when i was the head of its
+list that head becomes i's old `prev`. Spot i becomes the head of the target list: its `next` is -1, its `prev` is the
+target's old head (read after i left its list, -1 for an empty list), and that spot, when not -1, gets `next` i.
 
 **D5. Taking a spot.** When `freeHead` is -1 the pool is full and nothing is written. Otherwise the spot i at
 `freeHead` is moved to the used list (D4) and its bit 0 of `flags` is cleared; its other bytes are left as they are.
@@ -335,8 +334,9 @@ them. `c.Cell.spot` becomes the spot's index and `c.Cell.flag0` 1. The sound's p
 
 **D11. Felling the cell (x, z), by a hit (r = 0) or by a reclaim (r = 1).** c is the cell from `GetMapCell(x, z)`; when
 its `Cell.feature` is 0xfffe, x and z become the origin's position (D2) and c the cell from a second `GetMapCell` of
-that position. T is c's type. For a sprite type the animation pair is (`seqdie`, `seqdieshad`) when r is 0 and
-(`seqreclamate`, `seqreclamateshad`) when r is 1; for a model type there is none.
+that position. T is c's type. The first cell is never 0 (D11 is reached only for a cell that holds a feature) and
+neither is the origin of a covered cell. For a sprite type the animation pair is (`seqdie`, `seqdieshad`) when r is 0
+and (`seqreclamate`, `seqreclamateshad`) when r is 1; for a model type there is none.
 
 | Case | Imports after the `GetMapCell`s | Written |
 | --- | --- | --- |
@@ -481,7 +481,7 @@ number. p is the cell from `GetMapCell(x, z)`.
 | Case | Imports | Written | Result |
 | --- | --- | --- | --- |
 | p is 0 | `GetMapCell` | nothing | 0xffff |
-| `p.Cell.feature` is 0xfffe | `GetMapCell(x, z)`, then `GetMapCell` of (x - `offsetX`, z - `offsetY`), each kept to signed 16 bits; that cell then stands for p in the rows below | | |
+| `p.Cell.feature` is 0xfffe | `GetMapCell(x, z)`, then `GetMapCell` of (x - `offsetX`, z - `offsetY`), each kept to signed 16 bits; that cell then stands for p in the two rows below (it is never 0: a covered cell's origin is on the map) | | |
 | `p.Cell.feature` is 0xfffb or more | as above | nothing | 0xffff |
 | otherwise | as above | `cell`, when not 0, becomes the position of p (the shifted position, or the moved one); `size`, when not 0, becomes `Game.features[p.Cell.feature].footprint` | `p.Cell.feature` |
 
@@ -518,8 +518,8 @@ The PLACE row of `Apply` for the payload `place`, with its limits, and its outco
   reads their result (section 3, "Read").
 - **`PlaceMissionFeatures`** places the mission's features as D9 does, with no position, no rotation and owner 10.
 - **`StampFeatureMetal`** writes `Cell.metal` of the footprint of each indestructible feature with metal.
-- **`FreeFeaturePool`** frees the spots, the piece states (FREE_STATE for each model spot of the rest list, then of the used list)
-  and the types, and leaves `Game.features` 0 and `Game.featureCount` 0.
+- **`FreeFeaturePool`** frees the spots, the piece states (FREE_STATE for each model spot of the rest list, then of
+  the used list) and the types, and leaves `Game.features` 0 and `Game.featureCount` 0.
 - **`SaveFeatures`** reads the cells and spots; **`LoadFeatures`** places the saved features as D9, D10 and D11 do.
 
 ## 5. Exactness
@@ -589,8 +589,8 @@ bit pattern 0.
 - **Q2.** The seed lands only when the scanned cell has no unit (`c.Cell.unit` is 0); the target cell's unit is not
   read.
 - **Q3.** A model spot's `vel` is not set by a placement: it keeps the three words a previous user of the spot left
-  (for a spot that was a sprite spot, the bytes of its shadow cursor and the four after it), so a placed model whose
-  `vel` is not all 0 falls on its next update. SINK sets `vel.y` and `vel.z` only.
+  (for a spot that was a sprite spot, its shadow cursor from the `kind` byte on, then the four bytes after the
+  cursor), so a placed model whose `vel` is not all 0 falls on its next update. SINK sets `vel.y` and `vel.z` only.
 - **Q4.** Replacing a feature that holds a spot by its dead type places the new type at the three words of the spot's
   `pos` and with its `rot`, read after the old feature is removed: for a sprite spot these are its `anim` cursor's
   `kind` byte and the three bytes after it, its `anim.src`, and its `shadow` cursor's `index` and `value`, and a `rot`
@@ -603,13 +603,15 @@ bit pattern 0.
 - **Q7.** A placement refused part way leaves the cells it cleared cleared, with their imports made.
 - **Q8.** DAMAGE reads the cell at (`x`, `z`) without resolving a covered cell (0xfffe), so a hit on a covered cell
   does nothing; a hit on a model compares the spot's cell with (`x`, `z`).
-- **Q9.** RECLAIM refuses a sprite with a spot by the spot flag of the cell under the position, not of the origin, so a
-  burning or dying sprite reclaimed through one of its covered cells is reclaimed.
+- **Q9.** RECLAIM refuses a sprite with a spot by the spot flag of the cell under the position, not of the origin.
+  Through one of the covered cells of a burning or dying sprite, the two INCOMEs are published and the outcome is 1;
+  the felling then does nothing when the type has a reclaim animation (the origin has its spot flag), and otherwise
+  replaces the feature by its `reclamate` type (D12).
 - **Q10.** A remove leaves `Cell.spot` (`offsetX`, `offsetY`, or the damage) and the owner bits of the cells it clears.
 - **Q11.** The burn time is kept to 8 bits.
 - **Q12.** A PLACE of a sprite type has outcome 0 though the feature stands on its cells.
 - **Q13.** A hit that should fell a sprite whose death animation needs a spot, with the pool full, changes nothing and
-  still has outcome 1; so does one whose cell already has its spot flag.
+  still has outcome 1.
 - **Q14.** `GetCellFeature` returns the origin's `Cell.feature` for a covered cell even when it is a marker.
 
 ## 7. Examples
