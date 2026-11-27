@@ -129,8 +129,8 @@ the hash is computed as if over the layout of `data/trace_schema.json` and the a
 change), the sim event queue and its radar arena (in no row; their records are the second output), the
 presentation's state and its random generator, and every dumped-only section and record of the trace format.
 The view bits that sit in hashed fields are masked out of the hash: the selection bit of a unit's `flags` and its
-visit mark (bits 6 and 7, `selectState`), and the debug bits of `endGameFlags` (`docs/trace-format.md`, sections
-7.1 and 8.1).
+visit mark (bits 6 and 7), and the debug bits of `endGameFlags` (`docs/trace-format.md`, sections 7.1 and
+8.1).
 
 **Between ticks** a core carries the judged state, the load stream's word, the sim event queue's counters and
 any state a module keeps of its own, and nothing else (section 4.6). The radar arena is empty between ticks
@@ -180,21 +180,22 @@ whichever is first (`docs/scenario-format.md`, section 2); that tick is played a
 
 `docs/commands.md`, sections 1 and 2, is the rule; in short:
 
-- A command is delivered between two ticks: after the counter of the tick it precedes is incremented, before
-  the logic of that tick runs. The tick a scenario line names is the tick the command precedes.
+- A scripted command is delivered between two ticks: after the counter of the tick it precedes is incremented,
+  before the logic of that tick runs. The tick a scenario line names is the tick the command precedes.
 - Within one tick: every `spawn` line, then every `order` line, then every `console` line, each kind in the
   order of its scenario line numbers (the order of the file).
 - A command reads the state as every earlier command of the tick left it, and its events reach the modules that
   handle their kinds at once, in the order published; nothing a command publishes waits for a phase.
 - Only the events a command publishes itself are its own (the `count` of `commands.txt`); an event that a
   handler publishes while it handles one is not.
-- The interface's records (`docs/commands.md`, section 8) come before the scripted lines: those published after
-  tick *n* is played are delivered at the start of tick *n* + 1, before its `spawn` lines, in the order they were
-  published, and while they are delivered the tick counter reads *n* (`docs/commands.md`, section 1). A run played
-  from a `commands.txt` delivers them the same way (`docs/commands.md`, section 2.2). When the interface ends the
-  run after tick *n* (`PLAYERS_LEAVE_GAME`), its last records are stamped *n* + 1: they are delivered at the start
-  of tick *n* + 1, and the run then ends without playing that tick, as the log's `end` line says. Only the
-  scenario mode judges them: the core gate's scripts hold scripted lines alone.
+- The interface's records (`docs/commands.md`, section 8) are the presentation's commands, not an input of the
+  core: a core without the presentation has none, the core gate's scripts hold scripted lines alone, and every
+  scenario with `input` lines is left out of the judged ones (`docs/commands.md`, section 7), so no verdict judges
+  them. Where they are delivered, `docs/commands.md` states how: those published after tick *n* is played come
+  first at the start of tick *n* + 1, before its `spawn` lines, in the order published, while the tick counter
+  still reads *n*, so an order one of them creates has `created` *n* (section 1); and a run that the interface
+  ends after tick *n* delivers its last records at the start of tick *n* + 1 and ends without playing that tick
+  (sections 1 and 2.2, which also give what such a run writes and its exit status).
 
 What events a `spawn` or `order` line becomes needs the modules (the map and the orders, `docs/commands.md`,
 sections 5 and 6). The core gate's `commands` group judges the delivery only.
