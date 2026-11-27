@@ -87,3 +87,8 @@ mapping gives `null`; I could not find a class other than `layout` for a refused
 13, 14: the hash reader is as lenient as the dumps the gate makes need; a dump the format forbids is not a case of any
 vector. 16: not judged (spec section 4.3). 18: the entry's `publishes` is {"80": 36} for the only module hosted.
 20: the duplicated LCG step and hex helpers are the same code in two places; left as is to avoid touching passing groups.
+
+## Verdicts this session
+
+- req1 (core of the previous commit): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
+- req2 (after the second review's fixes): the same: every judged group equal; `files` failed (not judged).
