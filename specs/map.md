@@ -101,8 +101,8 @@ The `short` argument `type` of `CanBuildAt` arrives sign-extended, and the `unsi
 | `files.BankWriteBox` | `[handle, linear, int] -> int` | saving a plot map |
 | `services.RandomInt` | `[int] -> int` | the reclaim pick's draws |
 | `services.Emit` | `[linear, int] -> void` | publishing CELLS_CHANGED and CELL_HEIGHTS |
-| `SimAlloc` of the `services` group (services 4.1) | `[int] -> linear` | the pass map words, the scratch block of `BuildAllPassMaps`, the reclaim lists |
-| `SimFree` of the `services` group (services 4.1) | `[linear] -> void` | the old pass map words, the scratch block, the reclaim lists |
+| `services.SimAlloc` | `[int] -> linear` | the pass map words, the scratch block of `BuildAllPassMaps`, the reclaim lists |
+| `services.SimFree` | `[linear] -> void` | the old pass map words, the scratch block, the reclaim lists |
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`.
   The budget is ten times the most fuel any gate tick burns (ABI 11.3), which the build measures.
@@ -110,23 +110,20 @@ The `short` argument `type` of `CanBuildAt` arrives sign-extended, and the `unsi
 
 ### Kit gaps
 
-At `interfaces-v58` the entry above can't be loaded as it stands, and one header comment disagrees with the
-recordings. These are gaps in the kit, not in the module:
+At `interfaces-v61` the kit's manifest has no entry for map, and one header comment disagrees with the recordings.
+These are gaps in the kit, not in the module:
 
-- **The allocation and free services.** The recordings carry import lines of the `services` group named `SimAlloc`
-  (with the byte count and the block given) and `SimFree` (with the block). The kit's `interfaces/services.h`
-  (services 4.0) declares neither. Services 4.1 (ozgb/byte-tactics-moddable#1211) declares both, and this spec moves
-  its pin to `interfaces-v60` when that is tagged. The kit doesn't say what the bytes of a new allocation hold, so
-  section 4 states every byte of each allocation that the module must write itself.
-- **The publish** (ozgb/byte-tactics-moddable#1206). The recordings carry a publish as an import line of the
-  `services` group named `SchedPublish`, with 7 and the size (the publisher, map, and the payload size; the payload's
-  fields aren't recorded). The ABI's import for it is `services.Emit` (ABI 9.3). `Emit` publishes only kinds of the
-  entry's own interface, and CELL_HEIGHTS (132) is a kind of `interfaces/los_radar.h`, so the host's `publishes` check
-  refuses it until the ABI lets map publish it.
+- **The publish** (ozgb/byte-tactics-moddable#1206). The recordings carry a publish as a `services.SchedPublish` line,
+  with 7 and the size (the publisher, map, and the payload size; the payload's fields aren't recorded), which is
+  `services.Emit` (ABI 9.3, "Routes in the recordings"). The kit's ABI 9.3 still lists CELL_HEIGHTS (132) among the
+  publishes `Emit` does not carry. #1206 decided that `Emit` takes any kind the route table carries from the calling
+  module's outbox, and the route table carries CELL_HEIGHTS from map's, so the `publishes` table above lists it; the
+  kit's ABI and the host's check follow in #1206.
   The replay compares only the size of each publish (20 for CELL_HEIGHTS, 32 for CELLS_CHANGED) and its order
   among the imports; the payload's fields (section 4) are checked only by the scenario traces.
 - **The plot map imports** (ozgb/byte-tactics-moddable#1206) are `files` imports (`interfaces/files.h`, files 3.0);
-  the manifest has no signatures for them yet.
+  the manifest has no signatures for them yet. Where a plot map's buffer of `Game.width` × `Game.height` bytes lives
+  is a task of #1206 too: on a 256 by 256 map it is the size of the module's whole window.
 - **The reclaim pick's comment** (ozgb/byte-tactics-moddable#1206). The comment on
   `PickRandomReclaimableResourcesInRadius` in `interfaces/map.h` says it draws "from the game logic stream". The
   recordings' behaviour is that it draws with `services.RandomInt`, whose generator is `rng.seed` in the recordings
@@ -1147,11 +1144,11 @@ Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing i
   null (ABI 7.1). An allocation's result is stored as its address minus `g_blockBase`; a free takes the address,
   `g_blockBase` plus the stored offset. A unit's block offset is `Game.units` plus 280 × its index. `h.unit` is a block
   offset, 0 for null. `WriteState` passes a `head` to `Handle` as the stored offset, unchanged.
-- **X3, what an allocation holds.** The kit doesn't say what the allocation service puts in a new block, so
-  the module writes every bit of the pass map words (the full build, with 0 in the bits of rows `height` and up).
-  The grid and the off-map bucket are written by the engine's `AllocateBuckets` (section 2), and the module reads
-  them as block data; section 4 states their bytes. The scratch block of `BuildAllPassMaps` and the two reclaim lists are freed in the
-  call that allocates them, and their bytes aren't part of this spec.
+- **X3, what an allocation holds.** `services.SimAlloc` gives zeroed bytes (ABI 9.3). The module writes every bit
+  of the pass map words (the full build, with 0 in the bits of rows `height` and up). The grid and the off-map bucket
+  are written by the engine's `AllocateBuckets` (section 2), and the module reads them as block data; section 4 states
+  their bytes. The scratch block of `BuildAllPassMaps` and the two reclaim lists are freed in the call that allocates
+  them, and their bytes aren't part of this spec.
 - **X4, the event size.** `size` is compared as an unsigned 32-bit integer, first with 8 and then with the
   kind's payload size (12, 16, 24 or 32, else 8). The negative test of `MAP_PASS_MAPS` is on the signed 32-bit
   `size[0]` and `size[1]`, before truncation, so a size of 65536 passes and becomes 0.
@@ -1317,7 +1314,8 @@ Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing i
 - **Q21.** The *y* of a reclaim scan point, which `los_radar.GetMapCellAtPosition` is given and the picked
   position's `Vec3` receives, isn't specified: no recording calls the pick, and the trace leaves a reclaim order's
   `pos.y` out (`docs/view.md`, "Orders"). An implementation may use any value.
-- **Q22.** The reclaim lists hold ⌊*w*² / 256⌋ entries, which is 0 when `range` is below 16 × 65536. A scan with
+- **Q22.** The reclaim lists hold ⌊*w*² / 256⌋ entries, which is 0 when `range` is below 16 × 65536 (an allocation of
+  0 bytes, which `services.SimAlloc` gives as a new, non-null, smallest allocation, ABI 9.3). A scan with
   more qualifying features than that writes 16-byte entries past the end of its allocation. The lists still behave as
   if they had no limit: the pick reads the entries written. What the block bytes after a list's allocation hold
   afterwards isn't specified by this spec.
@@ -1594,7 +1592,6 @@ Only the scenario traces check these.
 
 ## 8. Kit version
 
-Kit `interfaces-v58` and `reference-traces-v53` (both at commit 27e1982918d6), the versions the gate judges against.
-Interface `map` 9.2. The imports are against `los_radar` 5.1, `features` 5.1, `files` 3.0 and `services` 4.0.
-The pin moves to `interfaces-v60` (services 4.1, which declares `SimAlloc` and `SimFree`) once
-ozgb/byte-tactics-moddable#1211 is merged and tagged.
+Kit `interfaces-v61` and `reference-traces-v53` (at commits f6b83002b32b and 27e1982918d6), the versions the gate
+judges against. Interface `map` 9.2. The imports are against `los_radar` 5.1, `features` 5.1, `files` 3.0 and
+`services` 4.1.
