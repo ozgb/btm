@@ -194,6 +194,7 @@ pub fn parse_manifest(text: &[u8]) -> Result<Manifest, Err> {
 }
 
 pub struct Loaded {
+    pub adapted: HashMap<String, Adapter>,
     pub instance: wasmi::Instance,
     pub data_words: Vec<(String, u32)>,
     pub budget: Option<i64>,
@@ -238,7 +239,12 @@ impl<T: 'static> Loader<T> {
         let m = self.manifest.as_ref().ok_or_else(|| Err::new("manifest"))?;
         let pages = m.memory_pages as u32;
         let tsize = m.table_size as u32;
-        let mem = Memory::new(&mut self.store, MemoryType::new(pages, Some(pages))).map_err(|_| Err::new("layout"))?;
+        let mem = Memory::new(&mut self.store, MemoryType::new(pages, Some(pages))).map_err(|e| {
+            if std::env::var("CORE_DEBUG").is_ok() {
+                eprintln!("memory: {}", e);
+            }
+            Err::new("layout")
+        })?;
         let table = Table::new(&mut self.store, TableType::new(RefType::Func, tsize, Some(tsize)), Ref::Func(wasmi::Nullable::Null))
             .map_err(|_| Err::new("layout"))?;
         self.memory = Some(mem);
@@ -260,12 +266,13 @@ impl<T: 'static> Loader<T> {
         if self.modules.contains_key(name) {
             return Result::Err(Err::named("loaded_twice", name));
         }
-        check_majors(manifest, entry)?;
+        let adapted = check_majors(manifest, entry)?;
         let window = manifest.window as usize;
         let (data_base, table_base) = (entry.data_base as usize, entry.table_base as usize);
         let exports = entry.exports.clone();
         let data = entry.data.clone();
         let budget = entry.fuel_budget;
+        let table_slots = manifest.table_slots;
         // zero the window
         {
             let bytes = mem.data_mut(&mut self.store);
@@ -304,6 +311,9 @@ impl<T: 'static> Loader<T> {
             }
         }
         for (i, f) in funcs.iter().enumerate() {
+            if i as u64 >= table_slots || adapted.contains_key(&exports[i]) {
+                continue;
+            }
             let idx = (table_base + i) as u64;
             if let Some(r) = table.get(&self.store, idx) {
                 if r.is_null() {
@@ -311,7 +321,7 @@ impl<T: 'static> Loader<T> {
                 }
             }
         }
-        self.modules.insert(name.to_string(), Loaded { instance, data_words, budget, fuel_pending: true });
+        self.modules.insert(name.to_string(), Loaded { adapted, instance, data_words, budget, fuel_pending: true });
         Ok(())
     }
 
@@ -365,6 +375,29 @@ impl<T: 'static> Loader<T> {
     }
 
     pub fn call(&mut self, name: &str, export: &str, args: &[i32]) -> Result<Option<i32>, Err> {
+        let adapter = self.modules.get(name).and_then(|m| m.adapted.get(export)).cloned();
+        match adapter {
+            None => self.call_raw(name, export, args),
+            Some(ad) => {
+                let conv: Vec<i32> = ad
+                    .args
+                    .iter()
+                    .map(|a| match a {
+                        Src::Arg(i) => args.get(*i).copied().unwrap_or(0),
+                        Src::Const(c) => *c,
+                    })
+                    .collect();
+                let r = self.call_raw(name, export, &conv)?;
+                Ok(match ad.result {
+                    ResForm::Pass => r,
+                    ResForm::Void => None,
+                    ResForm::Const(c) => Some(c),
+                })
+            }
+        }
+    }
+
+    fn call_raw(&mut self, name: &str, export: &str, args: &[i32]) -> Result<Option<i32>, Err> {
         let func: Func = {
             let m = match self.modules.get(name) {
                 Some(m) => m,
@@ -402,61 +435,145 @@ impl<T: 'static> Loader<T> {
     }
 }
 
-fn check_majors(manifest: &Manifest, entry: &Entry) -> Result<(), Err> {
+/// How an adapter builds a callee argument or the caller's result.
+#[derive(Clone, Debug)]
+pub enum Src {
+    Arg(usize),
+    Const(i32),
+}
+
+#[derive(Clone, Debug)]
+pub enum ResForm {
+    Pass,
+    Void,
+    Const(i32),
+}
+
+#[derive(Clone, Debug)]
+pub struct Adapter {
+    pub args: Vec<Src>,
+    pub result: ResForm,
+}
+
+type Sig = (Vec<String>, String);
+
+fn parse_sig(v: &Value) -> Option<Sig> {
+    let a = v.as_array()?;
+    if a.len() != 2 {
+        return None;
+    }
+    let kinds = a[0].as_array()?.iter().map(|k| k.as_str().map(|s| s.to_string())).collect::<Option<Vec<_>>>()?;
+    Some((kinds, a[1].as_str()?.to_string()))
+}
+
+/// Builds an adapter between the caller's and the callee's signature (section 10.2), or says why it cannot.
+fn build_adapter(spec: &Value, caller: &Sig, callee: &Sig) -> Option<Adapter> {
+    let args = spec.get("args")?.as_array()?;
+    if args.len() != callee.0.len() || args.len() > 16 || caller.0.len() > 16 {
+        return None;
+    }
+    let mut out = Vec::new();
+    for (i, a) in args.iter().enumerate() {
+        match a {
+            Value::Number(n) => {
+                let idx = n.as_u64()? as usize;
+                if idx >= caller.0.len() || caller.0[idx] != callee.0[i] {
+                    return None;
+                }
+                out.push(Src::Arg(idx));
+            }
+            Value::Object(o) => {
+                if callee.0[i] != "int" {
+                    return None;
+                }
+                out.push(Src::Const(o.get("const")?.as_i64()? as i32));
+            }
+            _ => return None,
+        }
+    }
+    let result = match spec.get("result")? {
+        Value::String(s) if s == "pass" => {
+            if caller.1 == "void" || caller.1 != callee.1 {
+                return None;
+            }
+            ResForm::Pass
+        }
+        Value::String(s) if s == "void" => {
+            if caller.1 != "void" {
+                return None;
+            }
+            ResForm::Void
+        }
+        Value::Object(o) => {
+            if caller.1 != "int" {
+                return None;
+            }
+            ResForm::Const(o.get("const")?.as_i64()? as i32)
+        }
+        _ => return None,
+    };
+    Some(Adapter { args: out, result })
+}
+
+fn find_adapter<'a>(manifest: &'a Manifest, iface: &str, from_major: u64, name: &str) -> Option<&'a Value> {
+    manifest.raw.get("adapters")?.as_array()?.iter().find(|x| {
+        x.get("interface").and_then(|v| v.as_str()) == Some(iface)
+            && x.get("from_major").and_then(|v| v.as_u64()) == Some(from_major)
+            && x.get("name").and_then(|v| v.as_str()) == Some(name)
+    })
+}
+
+/// Checks the interface majors of an entry (section 10.2); returns the adapters of its slots by export name.
+fn check_majors(manifest: &Manifest, entry: &Entry) -> Result<HashMap<String, Adapter>, Err> {
+    let mut slots = HashMap::new();
     let mine = match entry.raw.get("majors") {
         Some(Value::Object(o)) => o,
-        _ => return Ok(()),
+        _ => return Ok(slots),
     };
     let theirs = manifest.raw.get("majors").and_then(|v| v.as_object());
     for (iface, m) in mine {
         let m = m.as_u64();
         let t = theirs.and_then(|o| o.get(iface)).and_then(|v| v.as_u64());
-        match (m, t) {
-            (Some(m), Some(t)) => {
-                if m > t {
-                    return Result::Err(Err::new("manifest"));
-                }
-                if m < t && !adapters_cover(manifest, entry, iface, m) {
-                    return Result::Err(Err::new("manifest"));
-                }
-            }
+        let (m, t) = match (m, t) {
+            (Some(m), Some(t)) => (m, t),
             _ => return Result::Err(Err::new("manifest")),
+        };
+        if m > t {
+            return Result::Err(Err::new("manifest"));
+        }
+        if m == t {
+            continue;
+        }
+        let sigs = manifest.raw.get("signatures").and_then(|v| v.get(iface));
+        // (name, the module's signature, is a slot)
+        let mut theirs_list: Vec<(String, &Value, bool)> = Vec::new();
+        if entry.raw.get("interface").and_then(|v| v.as_str()) == Some(iface.as_str()) {
+            if let Some(Value::Object(s)) = entry.raw.get("slots") {
+                theirs_list.extend(s.iter().map(|(k, v)| (k.clone(), v, true)));
+            }
+        }
+        if let Some(Value::Object(imps)) = entry.raw.get("imports") {
+            if let Some(Value::Object(g)) = imps.get(iface) {
+                theirs_list.extend(g.iter().map(|(k, v)| (k.clone(), v, false)));
+            }
+        }
+        for (name, sig, is_slot) in theirs_list {
+            let cur = sigs.and_then(|s| s.get(&name));
+            if cur == Some(sig) {
+                continue;
+            }
+            let spec = find_adapter(manifest, iface, m, &name).ok_or_else(|| Err::new("manifest"))?;
+            let old = parse_sig(sig).ok_or_else(|| Err::new("manifest"))?;
+            let cur = cur.and_then(parse_sig).ok_or_else(|| Err::new("manifest"))?;
+            // a slot: the host calls with the current signature; an import: the module calls with its old one
+            let (caller, callee) = if is_slot { (&cur, &old) } else { (&old, &cur) };
+            let ad = build_adapter(spec, caller, callee).ok_or_else(|| Err::new("manifest"))?;
+            if is_slot {
+                slots.insert(name, ad);
+            }
         }
     }
-    Ok(())
-}
-
-/// An older major needs an adapter for every slot or import whose signature differs from the manifest's.
-fn adapters_cover(manifest: &Manifest, entry: &Entry, iface: &str, from_major: u64) -> bool {
-    let sigs = manifest.raw.get("signatures").and_then(|v| v.get(iface));
-    let adapters = manifest.raw.get("adapters").and_then(|v| v.as_array());
-    let has = |name: &str| {
-        adapters.map_or(false, |a| {
-            a.iter().any(|x| {
-                x.get("interface").and_then(|v| v.as_str()) == Some(iface)
-                    && x.get("from_major").and_then(|v| v.as_u64()) == Some(from_major)
-                    && x.get("name").and_then(|v| v.as_str()) == Some(name)
-            })
-        })
-    };
-    let mut theirs: Vec<(String, &Value)> = Vec::new();
-    if entry.raw.get("interface").and_then(|v| v.as_str()) == Some(iface) {
-        if let Some(Value::Object(s)) = entry.raw.get("slots") {
-            theirs.extend(s.iter().map(|(k, v)| (k.clone(), v)));
-        }
-    }
-    if let Some(Value::Object(imps)) = entry.raw.get("imports") {
-        if let Some(Value::Object(g)) = imps.get(iface) {
-            theirs.extend(g.iter().map(|(k, v)| (k.clone(), v)));
-        }
-    }
-    for (name, sig) in theirs {
-        let cur = sigs.and_then(|s| s.get(&name));
-        if cur != Some(sig) && !has(&name) {
-            return false;
-        }
-    }
-    true
+    Ok(slots)
 }
 
 pub fn run(calls: &[Call]) -> Vec<String> {
@@ -493,10 +610,10 @@ pub fn run(calls: &[Call]) -> Vec<String> {
             }
             "fuel" => Ok(l.fuel(&a[0]).map(|v| v.to_string()).unwrap_or_else(|| "null".to_string())),
             "word" => {
-                let addr: usize = a[0].trim().parse().unwrap_or(0);
+                let addr: usize = a.get(0).and_then(|s| s.trim().parse().ok()).unwrap_or(usize::MAX);
                 let mem = l.memory.ok_or_else(|| Err::new("no_memory"))?;
                 let bytes = mem.data(&l.store);
-                if addr + 4 <= bytes.len() {
+                if addr.checked_add(4).map_or(false, |e| e <= bytes.len()) {
                     Ok(i32::from_le_bytes([bytes[addr], bytes[addr + 1], bytes[addr + 2], bytes[addr + 3]]).to_string())
                 } else {
                     Ok("0".to_string())

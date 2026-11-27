@@ -561,8 +561,8 @@ impl<'a> Walker<'a> {
         let mut live = Vec::new();
         let mut scripted = std::collections::HashSet::new();
         for (p, _) in self.lines.iter() {
-            if p.starts_with(b"unitsState.units[") {
-                if let Some(i) = match_index(p, "unitsState.units[", "].head") {
+            if p.starts_with(b"units[") {
+                if let Some(i) = match_index(p, "units[", "].unitDefIndex") {
                     live.push(i);
                 }
             } else if p.starts_with(b"scriptsState.units[") {
@@ -847,8 +847,6 @@ impl<'a> Walker<'a> {
                 self.hash.h32(fx);
                 self.hash.h32(cls as u64);
                 self.hash.h32(vd as u64);
-            } else if !matches!(cls, 1 | 2 | 3 | 5) {
-                return Err(());
             }
         }
         self.hash.end();

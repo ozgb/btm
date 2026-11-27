@@ -1199,7 +1199,7 @@ fn strtok(s: &[u8], d1: &[u8], d2: &[u8]) -> (i32, Vec<u8>, Vec<u8>) {
     let mut toks: Vec<i32> = Vec::new();
     let mut pos = 0usize;
     let mut done = false;
-    let mut call = |buf: &mut Vec<u8>, delims: &[u8], pos: &mut usize, done: &mut bool| -> Option<(i32, i32)> {
+    let call = |buf: &mut Vec<u8>, delims: &[u8], pos: &mut usize, done: &mut bool| -> Option<(i32, i32)> {
         if *done {
             return None;
         }
@@ -1452,7 +1452,7 @@ fn sprintf(fmt: &[u8], kinds: &[u8], args: &[u8]) -> (Vec<u8>, i32) {
         }
         let mut width = 0usize;
         while i < fmt.len() && fmt[i].is_ascii_digit() {
-            width = width * 10 + (fmt[i] - b'0') as usize;
+            width = (width * 10 + (fmt[i] - b'0') as usize).min(4096);
             i += 1;
         }
         let mut prec: Option<usize> = None;
@@ -1460,7 +1460,7 @@ fn sprintf(fmt: &[u8], kinds: &[u8], args: &[u8]) -> (Vec<u8>, i32) {
             i += 1;
             let mut pr = 0usize;
             while i < fmt.len() && fmt[i].is_ascii_digit() {
-                pr = pr * 10 + (fmt[i] - b'0') as usize;
+                pr = (pr * 10 + (fmt[i] - b'0') as usize).min(4096);
                 i += 1;
             }
             prec = Some(pr);
@@ -1473,7 +1473,7 @@ fn sprintf(fmt: &[u8], kinds: &[u8], args: &[u8]) -> (Vec<u8>, i32) {
         }
         let conv = fmt[i];
         i += 1;
-        let (mut sign, mut body): (Vec<u8>, Vec<u8>);
+        let (sign, mut body): (Vec<u8>, Vec<u8>);
         let mut zero_ok = true;
         match conv {
             b'%' => {
@@ -1782,7 +1782,7 @@ fn call(name: &str, a: &A) -> Option<String> {
         }
         "apply_rotation" => {
             let m: Vec<i32> = (0..9).map(|k| a.i(k)).collect();
-            let (mut x, mut y, mut z) = (a.i(9), a.i(10), a.i(11));
+            let (mut x, mut y, z) = (a.i(9), a.i(10), a.i(11));
             let aliased = a.i(12) == 1;
             let w = |p: i32, q: i32| mulsh(p, q);
             let rx = w(x, m[0]).wrapping_add(w(y, m[3])).wrapping_add(w(z, m[6]));
@@ -1820,7 +1820,7 @@ fn call(name: &str, a: &A) -> Option<String> {
             format!("[{}]", hq(&i32s_le(&v)))
         }
         "shuffle" => {
-            let n = a.i(1).clamp(0, 100000) as usize;
+            let n = a.i(1).clamp(0, 1 << 24) as usize;
             let mut r = Lcg(a.u(0));
             let mut v: Vec<i32> = (0..n as i32).map(|i| 3 * i + 1).collect();
             shuffle_in_place(&mut v, &mut r);

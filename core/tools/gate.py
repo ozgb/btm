@@ -49,6 +49,8 @@ def run_vector(core, group, vec, inputs, module):
                 return "failed", f"malformed line {i+1}: {lines[i][:200]}"
             if n != name or got != val or json.dumps(got) != json.dumps(val) and not eq(got, val):
                 return "differs", f"line {i+1} call {vec['calls'][i]}\n  got  {lines[i][:600]}\n  want {name}\t{json.dumps(val)[:600]}"
+        if len(lines) > len(vec["results"]):
+            return "differs", f"extra line {len(vec['results'])+1}: {lines[len(vec['results'])][:200]}"
         return "equal", ""
 
 

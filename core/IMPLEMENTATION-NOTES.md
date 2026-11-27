@@ -66,3 +66,24 @@ default target is musl; the binary has no dynamic section and no interpreter.
 - The tick of the fuel budget in the `host` group is the call's `Game.ticks`: one budget for all the calls with the
   same tick (the load-time calls are all tick 0).
 - The shuffle of a range (runtime entries `shuffle`, `load_sequence`): see `RUNTIME-NOTES.md`.
+
+## Answers to the second review (/srv/inbox/review.md, numbered as in that file)
+
+Fixed: 1 (`Emit` accepts weapon -1, size message), 2 (table fill stops at `table_slots`, skips adapted slots), 3 (`word` past
+the memory gives 0, no panic), 5 (adapter checks of ABI 10.2: index, kind, constant, length, result form, 16 values, in
+both directions; slot adapters convert the host's call; an adapter for an *import* is validated but the call is not
+converted, because the only module hosted has no import of an older major), 6 (live units come from `units[i].unitDefIndex`),
+7 (an unknown order-effect class hashes nothing), 8 (out-of-range pointer, buffer past the memory and buffer size below 1
+are traps with the ABI 13 texts for the imports the module uses; `FatalError` carries the module's message), 10 (a data word
+outside the module's window is an error `window`), 11 (`main` catches a panic and writes the lines of the longest prefix of
+calls that runs), 12 (`sprintf` width and precision capped at 4096), 15 (shuffle guard raised to 2^24 elements),
+17 (the fuel tick is the number, so `-` and `0` are one tick), 19 (dead code removed, needless `mut`), 21, 22
+(`gate.py` rejects extra lines).
+Not changed, with reasons:
+4: this machine has overcommit heuristic mode and about 3.9 GB RAM; wasmi allocates the memory zeroed in one piece and the
+kernel refuses a 4 GiB mapping (`CORE_DEBUG=1` prints wasmi's error). 57344 pages work. A machine that grants the
+mapping gives `null`; I could not find a class other than `layout` for a refused allocation.
+9: hidden-state hashing is not reached by any group; it is the first work for scenario mode.
+13, 14: the hash reader is as lenient as the dumps the gate makes need; a dump the format forbids is not a case of any
+vector. 16: not judged (spec section 4.3). 18: the entry's `publishes` is {"80": 36} for the only module hosted.
+20: the duplicated LCG step and hex helpers are the same code in two places; left as is to avoid touching passing groups.

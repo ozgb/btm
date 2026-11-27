@@ -239,7 +239,6 @@ impl Replayer {
             return format!("0x{:08x}", w);
         }
         let a = self.addr(f);
-        let (game, block_base) = (self.game, self.block_base);
         let m = self.mem();
         let u32at = |m: &[u8], a: usize| u32::from_le_bytes([m[a], m[a + 1], m[a + 2], m[a + 3]]);
         match f.kind {
@@ -259,7 +258,6 @@ impl Replayer {
                     "null".to_string()
                 } else {
                     let base = GAME_OFF + WEAPONS_OFF;
-                    let _ = (game, block_base);
                     format!("weapondef#{}", (off.wrapping_sub(base)) / WEAPON_SIZE)
                 }
             }
@@ -307,7 +305,7 @@ impl Replayer {
         m[a..a + bytes.len()].copy_from_slice(&bytes);
     }
 
-    fn write_data_words(&mut self) {
+    fn write_data_words(&mut self) -> Result<(), Err> {
         let words: Vec<(String, u32)> = self.l.modules[MODULE].data_words.clone();
         let vals = |n: &str| -> Option<u32> {
             match n {
@@ -319,10 +317,18 @@ impl Replayer {
             }
         };
         let writes: Vec<(u32, u32)> = words.iter().filter_map(|(n, a)| vals(n).map(|v| (*a, v))).collect();
+        let (lo, hi) = {
+            let e = self.l.manifest.as_ref().unwrap().modules.iter().find(|e| e.name == MODULE).unwrap();
+            (e.data_base, e.data_base + self.l.manifest.as_ref().unwrap().window)
+        };
+        if writes.iter().any(|(a, _)| (*a as u64) < lo || *a as u64 + 4 > hi) {
+            return Result::Err(Err::named("window", MODULE));
+        }
         let m = self.mem();
         for (a, v) in writes {
             m[a as usize..a as usize + 4].copy_from_slice(&v.to_le_bytes());
         }
+        Ok(())
     }
 }
 
@@ -406,7 +412,7 @@ fn read_cstr(mem: &[u8], a: usize) -> Vec<u8> {
     v
 }
 
-fn apply_outs(caller: &mut Caller<'_, State>, e: &Entry, ptrs: &[u32]) {
+fn apply_outs(caller: &mut Caller<'_, State>, e: &Entry, ptrs: &[u32]) -> Result<(), wasmi::Error> {
     let mem = caller.data().mem.unwrap();
     let (m, st) = mem.data_and_store_mut(&mut *caller);
     for (n, v) in &e.outs {
@@ -415,16 +421,18 @@ fn apply_outs(caller: &mut Caller<'_, State>, e: &Entry, ptrs: &[u32]) {
             let which = if n.ends_with(".root") { 0 } else if n.ends_with(".current") { 4 } else { continue };
             let h = v.strip_prefix("rec#").and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
             let a = ptrs.first().copied().unwrap_or(0) as usize + which;
-            if a + 4 <= m.len() {
-                m[a..a + 4].copy_from_slice(&h.to_le_bytes());
+            if a + 4 > m.len() {
+                return Result::Err(wasmi::Error::new("import: pointer argument 0 is outside the module memory"));
             }
+            m[a..a + 4].copy_from_slice(&h.to_le_bytes());
         } else if n == "dst" {
             let a = ptrs.get(1).copied().unwrap_or(0) as usize;
             let mut b = unescape(v);
             b.push(0);
-            if a + b.len() <= m.len() {
-                m[a..a + b.len()].copy_from_slice(&b);
+            if a + b.len() > m.len() {
+                return Result::Err(wasmi::Error::new("import: the buffer runs past the module memory"));
             }
+            m[a..a + b.len()].copy_from_slice(&b);
         } else if let Some(rest) = n.strip_prefix("weapondef#") {
             let (idx, f) = split_dot(rest);
             if f == "flags" {
@@ -444,6 +452,7 @@ fn apply_outs(caller: &mut Caller<'_, State>, e: &Entry, ptrs: &[u32]) {
             }
         }
     }
+    Ok(())
 }
 
 fn split_dot(s: &str) -> (u64, &str) {
@@ -488,48 +497,61 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
             None => v as i32,
         }
     })?;
-    linker.func_wrap("services", "FatalError", |_c: Caller<'_, State>, _msg: i32| -> Result<(), wasmi::Error> {
-        Result::Err(wasmi::Error::new("FatalError"))
+    linker.func_wrap("services", "FatalError", |c: Caller<'_, State>, msg: i32| -> Result<(), wasmi::Error> {
+        let mem = c.data().mem.unwrap();
+        let m = mem.data(&c);
+        let a = msg as u32 as usize;
+        if a >= m.len() {
+            return Result::Err(wasmi::Error::new("import FatalError: pointer argument 0 is outside the module memory"));
+        }
+        let text = String::from_utf8_lossy(&read_cstr(m, a)).into_owned();
+        Result::Err(wasmi::Error::new(text))
     })?;
-    linker.func_wrap("services", "BuildDataPath", |mut c: Caller<'_, State>, buf: i32, _d: i32, _n: i32, _e: i32| -> i32 {
+    linker.func_wrap("services", "BuildDataPath", |mut c: Caller<'_, State>, buf: i32, _d: i32, _n: i32, _e: i32| -> Result<i32, wasmi::Error> {
         let e = next_entry(&mut c, "services.BuildDataPath");
+        let mem = c.data().mem.unwrap();
+        let m = mem.data_mut(&mut c);
+        let a = buf as u32 as usize;
+        if a >= m.len() {
+            return Result::Err(wasmi::Error::new("import BuildDataPath: pointer argument 0 is outside the module memory"));
+        }
         if let Some(Entry { result: Some(r), .. }) = &e {
-            let mem = c.data().mem.unwrap();
-            let m = mem.data_mut(&mut c);
             let mut b = unescape(r);
             b.push(0);
-            let a = buf as u32 as usize;
-            if a + b.len() <= m.len() {
-                m[a..a + b.len()].copy_from_slice(&b);
+            if a + b.len() > m.len() {
+                return Result::Err(wasmi::Error::new("import BuildDataPath: the buffer runs past the module memory"));
             }
+            m[a..a + b.len()].copy_from_slice(&b);
         }
-        buf
+        Ok(buf)
     })?;
-    linker.func_wrap("services", "TdfFile_Construct", |mut c: Caller<'_, State>, file: i32| {
+    linker.func_wrap("services", "TdfFile_Construct", |mut c: Caller<'_, State>, file: i32| -> Result<(), wasmi::Error> {
         let _ = next_entry(&mut c, "services.TdfFile_Construct");
         let mem = c.data().mem.unwrap();
         let m = mem.data_mut(&mut c);
         let a = file as u32 as usize;
-        if a + 12 <= m.len() {
-            m[a..a + 12].fill(0);
+        if a.saturating_add(12) > m.len() {
+            return Result::Err(wasmi::Error::new("import TdfFile_Construct: pointer argument 0 is outside the module memory"));
         }
+        m[a..a + 12].fill(0);
+        Ok(())
     })?;
     linker.func_wrap("services", "TdfFile_Destruct", |mut c: Caller<'_, State>, _file: i32| {
         let _ = next_entry(&mut c, "services.TdfFile_Destruct");
     })?;
-    linker.func_wrap("services", "TdfFile_LoadFile", |mut c: Caller<'_, State>, file: i32, _p: i32| -> i32 {
+    linker.func_wrap("services", "TdfFile_LoadFile", |mut c: Caller<'_, State>, file: i32, _p: i32| -> Result<i32, wasmi::Error> {
         let e = next_entry(&mut c, "services.TdfFile_LoadFile");
         if let Some(en) = &e {
-            apply_outs(&mut c, en, &[file as u32]);
+            apply_outs(&mut c, en, &[file as u32])?;
         }
-        result_i32(&e, 0)
+        Ok(result_i32(&e, 0))
     })?;
-    linker.func_wrap("services", "TdfFile_SelectRecord", |mut c: Caller<'_, State>, file: i32, _n: i32| -> i32 {
+    linker.func_wrap("services", "TdfFile_SelectRecord", |mut c: Caller<'_, State>, file: i32, _n: i32| -> Result<i32, wasmi::Error> {
         let e = next_entry(&mut c, "services.TdfFile_SelectRecord");
         if let Some(en) = &e {
-            apply_outs(&mut c, en, &[file as u32]);
+            apply_outs(&mut c, en, &[file as u32])?;
         }
-        result_i32(&e, 0)
+        Ok(result_i32(&e, 0))
     })?;
     linker.func_wrap("services", "TdfRecord_GetFieldInt", |mut c: Caller<'_, State>, _r: i32, _k: i32, _d: i32| -> i32 {
         let e = next_entry(&mut c, "services.TdfRecord_GetFieldInt");
@@ -545,12 +567,15 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
     linker.func_wrap(
         "services",
         "TdfRecord_GetFieldString",
-        |mut c: Caller<'_, State>, _r: i32, dst: i32, _k: i32, _size: i32, _d: i32| -> i32 {
+        |mut c: Caller<'_, State>, _r: i32, dst: i32, _k: i32, size: i32, _d: i32| -> Result<i32, wasmi::Error> {
             let e = next_entry(&mut c, "services.TdfRecord_GetFieldString");
-            if let Some(en) = &e {
-                apply_outs(&mut c, en, &[0, dst as u32]);
+            if size < 1 {
+                return Result::Err(wasmi::Error::new("import TdfRecord_GetFieldString: the buffer size is below 1"));
             }
-            result_i32(&e, 0)
+            if let Some(en) = &e {
+                apply_outs(&mut c, en, &[0, dst as u32])?;
+            }
+            Ok(result_i32(&e, 0))
         },
     )?;
     linker.func_wrap("services", "HapiBank_OpenAccount", |mut c: Caller<'_, State>, _b: i32, _n: i32| -> i32 {
@@ -570,7 +595,10 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
         let mem = c.data().mem.unwrap();
         let m = mem.data(&c);
         let (a, n) = (effect as u32 as usize, size as u32 as usize);
-        if n < 4 || a + n > m.len() {
+        if n < 4 || n > 256 {
+            return Result::Err(wasmi::Error::new("import Emit: the size is outside an effect"));
+        }
+        if a + n > m.len() {
             return Result::Err(wasmi::Error::new("import Emit: the effect runs past the module memory"));
         }
         let kind = i32::from_le_bytes([m[a], m[a + 1], m[a + 2], m[a + 3]]);
@@ -581,18 +609,18 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
             return Result::Err(wasmi::Error::new("import Emit: the size is not the payload's size of its kind"));
         }
         let weapon = i32::from_le_bytes([m[a + 4], m[a + 5], m[a + 6], m[a + 7]]);
-        if !(0..256).contains(&weapon) {
+        if !(-1..256).contains(&weapon) {
             return Result::Err(wasmi::Error::new("import Emit: the weapon slot is outside the table of weapons"));
         }
         Ok(())
     })?;
-    linker.func_wrap("weapons", "FindWeaponByName", |mut c: Caller<'_, State>, _n: i32| -> i32 {
+    linker.func_wrap("weapons", "FindWeaponByName", |mut c: Caller<'_, State>, _n: i32| -> Result<i32, wasmi::Error> {
         let e = next_entry(&mut c, "weapons.FindWeaponByName");
         if let Some(en) = &e {
-            apply_outs(&mut c, en, &[]);
+            apply_outs(&mut c, en, &[])?;
         }
         let bb = c.data().block_base;
-        result_i32(&e, bb)
+        Ok(result_i32(&e, bb))
     })?;
     Ok(())
 }
@@ -613,17 +641,15 @@ fn replay(recording: &str, module_path: &str) -> Result<Vec<Vec<String>>, Err> {
     rp.l.load(MODULE, &wasm, define_services)?;
     let blocks = parse_recording(recording);
     let mut out = Vec::new();
-    let mut last_tick: Option<String> = None;
+    let mut last_tick: Option<i64> = None;
     for c in blocks {
         let mut lines: Vec<String> = Vec::new();
         // the fields of the read set
         for (n, v) in &c.r {
             if let Some(f) = field(n) {
                 rp.write_field(f, v);
-                if f.base != 'r' || true {
-                    let t = rp.read_field(f);
-                    rp.known.insert(n.clone(), t);
-                }
+                let t = rp.read_field(f);
+                rp.known.insert(n.clone(), t);
             }
         }
         // the tick
@@ -631,11 +657,11 @@ fn replay(recording: &str, module_path: &str) -> Result<Vec<Vec<String>>, Err> {
         if let Some(f) = field("Game.ticks") {
             rp.write_field(f, &ticks.to_string());
         }
-        if last_tick.as_deref() != Some(c.ticks.as_str()) {
+        if last_tick != Some(ticks) {
             rp.l.tick();
-            last_tick = Some(c.ticks.clone());
+            last_tick = Some(ticks);
         }
-        rp.write_data_words();
+        rp.write_data_words()?;
         rp.l.store.data_mut().entries = c.entries.into_iter().collect();
         rp.l.store.data_mut().mismatch = None;
         // the arguments
@@ -722,7 +748,6 @@ fn replay(recording: &str, module_path: &str) -> Result<Vec<Vec<String>>, Err> {
         lines.extend(closing);
         out.push(lines);
     }
-    let _ = read_cstr;
     Ok(out)
 }
 
