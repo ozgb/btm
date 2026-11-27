@@ -35,7 +35,7 @@ the metal and player feature plot maps of the cells, and frees what it allocated
 | `PassMapGet`, `PassMapInBounds` | queries, from pathfinding during a search |
 | `RefreshMovedUnits` | synchronous, at the start of a path search for a unit; map's inbox is delivered first |
 | `RefreshUnitIfStale` | synchronous, at the end of a path search for a unit; map's inbox is delivered first |
-| `WriteState` | from the harness, after each phase, to hash and dump map's own state |
+| `WriteState` | from the harness, after each phase, to dump map's own state (record 45, `mapState`, dumped and never hashed: `docs/trace-format.md`, section 8.28) |
 | `PathLockStamp` | a query, when a saved game is written, outside the tick |
 
 **The engine's slots.** `FreePassMaps`, `AllocateBuckets` and `FreeBuckets` allocate what map holds at match load, or free it at
@@ -208,7 +208,7 @@ under other names in `Game`. The two namings are the same bytes:
 | `cells` | `Game.cells_1429f` | `Ref<struct FogCell>` in `layout.json` (`Ref<SpatialBucket>` in `Game`) | the first bucket of the grid; 0 when there is none |
 | `width` | `Game.width_142a3` | unsigned int | buckets in a row, *GW* below |
 | `height` | `Game.height_142a7` | unsigned int | rows of buckets, *GH* below |
-| `count` | `Game.pad_142ab` | int | the number of buckets allocated, *N* below |
+| `count` | `Game.pad_142ab` (`char[4]` in `Game`, the same 4 bytes read as an int) | int | the number of buckets allocated, *N* below |
 | `widthFixed` | `Game.field_142af` | int | `Game.baseX` × 65536 |
 | `heightFixed` | `Game.field_142b3` | int | `Game.baseY` × 65536 |
 
@@ -262,7 +262,8 @@ written by `Apply`; `progress_38d73` (unsigned char), written by `BuildAllPassMa
 - `Player`: `active` (int), `type` (unsigned byte, offset 115), `explored` (`Ref<unsigned char>`), `exploredWidth`,
   `exploredHeight` (int).
 - `Feature`: `flags16` (the bits below), `energy`, `metal` (32-bit floats).
-- `SimGlobals.g_quirks.skipEmptyYardmap` (`interfaces/quirks.h`).
+- `SimGlobals.g_quirks.skipEmptyYardmap` (`interfaces/quirks.h`). Every recording runs with it 0, the default, and no
+  `r` line shows it.
 
 ### Flag bits
 
