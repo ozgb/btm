@@ -126,9 +126,8 @@ lists.
 ### Gaps of the kit
 
 Each mission record a campaign query selects takes one handle, and so does the campaign file's root.
-`CountMissions` and `MissionExists` walk the mission records, so on a campaign with more than 31 of them they go
-past ABI 8.1's 32 handles in one call (`MissionExists` only when it must look past record 30), a fatal error the
-engine's own slots don't have. `GetCampaignMissionName` takes 2 at most. The kit offers no way to release a handle within a call.
+`CountMissions` and `MissionExists` walk every mission record, so on a campaign with more than 31 of them they go
+past ABI 8.1's 32 handles in one call, a fatal error the engine's own slots don't have. `GetCampaignMissionName` takes 2 at most. The kit offers no way to release a handle within a call.
 
 `GetCampaignMissionName` reads the localised key `missionname`: first the key made of the translation table's
 language prefix followed by `missionname`, then `missionname` itself (gap 4 of the list above). No import gives the prefix
@@ -146,7 +145,9 @@ for, such as `english`.
 - **`MissionFeatureInfo`** (`GetMissionFeature`): 12 bytes: `name` (a linear address), `x`, `y` (int).
 - **`Vec3`** (`GetStartPosition`, `SetMissionUnitPosition`): `layout.json` record `Vec3`, three ints.
 - **Texts** given to a slot (`LoadCampaign`, `LoadMissionByName`) are NUL-terminated strings in shared memory.
-- **The parsed file of `SelectSchema`** is the caller's `TdfFile` (ABI 8.1). The slot moves its current record.
+- **The parsed file of `SelectSchema`** is the caller's `TdfFile` (ABI 8.1). The slot moves its current record. Its
+  `schema` argument is a buffer the slot writes the chosen schema's record name to, or 0; the header's "by name
+  when schema is given" means the weighing of section 4 runs only when it is given, for types 2 and 3.
 
 ### Events
 
@@ -336,12 +337,21 @@ A record of a type other than 1 is given a non-empty campaign by no caller.
 `list`'s current record; nothing else reads that.
 
 The module's `MissionExists`, `CountMissions` and `GetCampaignMissionName` don't use `list`: its record words are
-handles from an earlier call, which ABI 8.1 makes invalid. Each call parses the campaign file again: when
-`campaign` isn't empty, `services.TdfFile_Construct` on a `TdfFile` of its own, `services.TdfFile_LoadFile` with
-`names[0]` (the file `list` was loaded from), and `services.TdfFile_Destruct` before it returns. Each lookup of a
-mission record is `services.TdfFile_SelectRecord` with the record's name, made with the file's current record word
-(byte offset 4) set to 0 first, the null handle, so that the lookup is among the top-level records (ABI 9.3). A
-file that doesn't load has no mission records. The results are those of the table; `list` is left as it was.
+handles from an earlier call, which ABI 8.1 makes invalid. Each call parses the campaign file again, in a
+`TdfFile` *F* of its own. Its imports, in order:
+
+- When `campaign` is empty (and, for `GetCampaignMissionName`, when `size` is below 1): none.
+- Otherwise `services.TdfFile_Construct(F)`, then `services.TdfFile_LoadFile(F, names[0])` (`names[0]` is the file
+  `list` was loaded from). When that gives 0, the file has no mission records: `services.TdfFile_Destruct(F)`
+  follows at once.
+- Each lookup of mission record *n* is `services.TdfFile_SelectRecord(F, "MISSION<n>")`, with *n* in decimal (a
+  minus sign before a negative one), made with *F*'s current record word (byte offset 4) set to 0 first, the null
+  handle, so that the lookup is among the top-level records (ABI 9.3).
+- `CountMissions` and `MissionExists` look up records 0, 1, 2, ... until a lookup gives 0, whatever `index` is.
+  `GetCampaignMissionName` looks up record `index` only, then reads its name (below).
+- `services.TdfFile_Destruct(F)` last.
+
+The results are those of the table below; `list` is left as it was.
 
 | Slot | Result | Writes |
 | --- | --- | --- |
@@ -361,6 +371,11 @@ file that doesn't load has no mission records. The results are those of the tabl
 
 **A localised key** *k* is read as the key made of the translation table's language prefix followed by *k*, and,
 when the record hasn't that key, as *k* itself (section 2, gap 4). The default text is empty.
+
+The module's `GetCampaignMissionName` reads it, after the lookup of mission record `index` gives 1, with
+`services.TdfRecord_GetFieldString(current, out, key, size, "")`: *current* is *F*'s current record word, and the key
+is the prefixed one, then, when that gives 0, `missionname`. Either call may write `out`. When both give 0, the
+fallback row's bytes are written over it.
 
 ### `LoadMissionByName(name)`
 
@@ -538,8 +553,11 @@ A result of 0 leaves `parser`'s current record wherever the last lookup left it.
 With the header's 32-bit fields *w* at byte 4, *h* at byte 8, *p* at byte 16, *n* at byte 28 and *o* at byte 32:
 the plot is the *w* × *h* × 4 bytes at offset *p* of the file, and the features the *n* × 132 bytes at offset *o*
 (none when that size isn't above 0). K is section 5's checksum. The file is opened with `files.OpenRead(names[1])`
-(0 is "doesn't open"), read with `files.Read` after `files.Seek` to each offset, and closed with `files.Close`. A
-read may be split into parts: K depends only on the bytes and their positions. `headerChecksum` is the engine's
+(0 is "doesn't open"). The header is the first 64 bytes `files.Read` gives after the open; the plot and the
+features are read with `files.Read` after `files.Seek` to their offsets. A read may be split into parts of any
+size: K depends only on the bytes and their positions. The file is closed with `files.Close` once it is open,
+on every outcome. A file shorter than its header says, a *w* × *h* × 4 outside 0 to 2^31 − 1, or an *n* × 132 above 2^31 − 1, is
+undefined. The slot runs outside the tick, from the lobby, so no tick's fuel includes it. `headerChecksum` is the engine's
 (section 3); the module only reads it. `names[1]` is never empty when the engine calls this slot.
 
 ## 5. Exactness
