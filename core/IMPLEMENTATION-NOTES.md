@@ -27,6 +27,9 @@ full recordings of `tests/replay/wind_meteors/`.
 - `wasmi` 2.0.3 (features `std`, `validate`, `stable`): the WebAssembly runtime that hosts the module and the loader's
   fixtures. Pure Rust, links statically with musl, and reports trap codes, which the gate's error classes need.
   Engine fuel is off: metering is the module's own (`__fuel_set`, `__fuel_get`).
+- `wasm-encoder` 0.228 (feature `wasmparser`) and `wasmparser` 0.228 (the version wasmi already uses): `nan.rs` rewrites a module
+  before it is compiled so that every f32/f64 arithmetic result (add, sub, mul, div, sqrt, min, max, rounding, abs, neg,
+  demote, promote) that is a NaN becomes the canonical one (ABI 3.2, vector `nan_canonical`); wasmi leaves the hardware's NaN.
 - `serde_json` 1: the manifest (a number with a fraction or an exponent, or above 2147483647, is refused as invalid
   JSON) and nothing else.
 
@@ -105,3 +108,22 @@ no hosted module reaches them; first work if another module is hosted; 4 (the 40
 ## Verdicts, session 4
 
 - Local gate (module of /work/wind_meteors/ rebuilt): every group but `files` equal. Verdict of req1 (this session, kit interfaces-v60): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
+
+
+## Session 4 (interfaces-v64, reference-traces-v54)
+
+Changed for the new vectors: `stack_size`, `fuel_budget` (1 to 2147483647) and `size_budget` are checked in the manifest;
+`fixture.mix` is defined by the `memory`/`load` of the loader and fuel groups, and an adapted import of an older major is
+converted through its adapter (an adapter for an import the host does not define, or defines with another signature, is a
+`manifest` error at `load`); canonical NaNs by the module rewrite above; in `host`, every import checks its `linear`
+arguments against the memory size, its handle (null, unknown: the table is the labels issued in this outermost call, cleared
+when it returns, 32 at most, the 33rd a `glue` error), its buffer; a text out with a size is cut; `Emit` takes 4 to 128 bytes
+and weapon slots 0 to 255; a refusal ends the replay with `{"error","modules","message"}`.
+
+Verdicts in order: req1: `console` failed (one vector, `give-other-local`, "exit status 1", not reproducible: that run
+of the same binary passes locally 200 times and again in req2); every other group but `files` equal. req2 (same binary):
+`commands`, `console`, `events`, `fuel`, `hash`, `host` (18), `loader` (109), `rand`, `runtime` equal; `files` failed (not
+judged); `play` not judged.
+
+Unclear spec points this session: none that blocked. The "exit status 1" of req1 is not an exit code my core can produce
+(its only explicit exits are 2); I believe it came from the run, not the core.
