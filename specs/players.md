@@ -110,9 +110,17 @@ The kit's entry for players is the module's entry, and this spec follows it exac
 A recording shows the module's `Emit` as `i services.SchedPublish 4 <size>` (the recorded call of ABI 9.3,
 "Routes in the recordings"; 4 is players' outbox), its `economy.Spend` as `i services.ScheduleEconomySpend`, and its `map.CanPlaceUnitFootprint` as
 `i services.ScheduleMapCanPlaceUnitFootprint`.
-An `o rng.seed` or `w Game.playerIndex` line after a publish is what the synchronous delivery of the effect
-changed, not a write of the module. A `c` line under `map.UnitsInRange` doesn't occur: the module takes ids,
-not a callback.
+An `o rng.seed` line after a publish is what the synchronous delivery of the effect changed in the game,
+which the replayer sets from the line (`docs/replay-format.md`, "A random draw inside an import"). The replayer
+makes no delivery, so no recording shows an effect's own writes, and a publish is compared by its outbox and
+size alone (`docs/replay-format.md`, "Against the WASM module"); the fields of every effect, event and spend this
+spec gives are judged by the scenario traces, through what their subscribers do. The `w Game.playerIndex`
+and `w Game.localPlayer` lines of the first `Apply` of a file are fields of the slot's write set that have no
+known value yet (`docs/replay-format.md`, "Lines"), not writes of the module; their values are the ones
+already in the block. A field the recorded write set leaves out (the `active` of `PLAYERS_DEACTIVATE_CONDITIONS`)
+has no `w` line, and a later call's `r` line shows its value. A `c` line under `map.UnitsInRange` doesn't occur:
+the module takes ids, not a callback. A unit id *n* names slot *n* of the unit table (`Game.units` plus 280·*n*),
+which a recording writes `Unit#n`.
 
 ### Arguments outside the block
 
@@ -138,14 +146,14 @@ not a callback.
 The module's slots record these kinds through `services.RecordSimEvent`, with flags 0; the kit's
 `docs/sim-events.md` gives their arguments and phases:
 
-- `SIM_EVENT_SOUND`, arguments `[0, 0]` (sound name 0, the victory condition sound, and play flag 0): when a
+- `SIM_EVENT_SOUND` (kind 2), arguments `[0, 0]` (sound name 0, the victory condition sound, and play flag 0): when a
   victory condition is satisfied for the first time, in the cases of section 4, "Conditions" (it is recorded
   only while the condition's `celebrated` is 0, which it then sets to 1).
-- `SIM_EVENT_FOCUS_COMMANDER`, arguments `[1]`: when the commander of the local player is respawned
+- `SIM_EVENT_FOCUS_COMMANDER` (kind 19), arguments `[1]`: when the commander of the local player is respawned
   (section 4, "The respawn").
-- `SIM_EVENT_WATCH_PROMPT`, arguments `[p]`: when the defeated local player *p* of a multiplayer game is put
+- `SIM_EVENT_WATCH_PROMPT` (kind 25), arguments `[p]`: when the defeated local player *p* of a multiplayer game is put
   in watch mode and no active AI player is left (section 4, "Watch mode").
-- `SIM_EVENT_WATCH_MODE_NOTICE`, arguments `[p]`: on the same path, when an active AI player is left and at
+- `SIM_EVENT_WATCH_MODE_NOTICE` (kind 26), arguments `[p]`: on the same path, when an active AI player is left and at
   least one combat player.
 
 The terms "unit flag 0x10000000", "unit flag 0x4000", "map flag 1", "map flag 2" and "info flag 0x40" are
@@ -228,7 +236,10 @@ players, `Game.players_1b63`): `rank` (byte), `energy`, `metal` (floats; written
 | `DefeatAnyUnitPassesX` | defeat | `x` (16) |
 | `DefeatAnyUnitPassesZ` | defeat | `z` (16) |
 
-Offsets are bytes from the condition's start; `id` and `count` are unaligned. A `name` is NUL-terminated
+Offsets are bytes from the condition's start; `id` and `count` are unaligned. In a class whose first field
+after `celebrated` is at 16, and in `DefeatAllUnitsKilled` (16 bytes, no such field), bytes 12 to 15 hold a
+second class word, which the module never reads or writes; `layout.json` leaves those bytes unnamed, and
+the word's value is unknown as K1's is. A `name` is NUL-terminated
 (empty for "any type" in the radius and passes classes). The module never writes a class word, a `name`, an
 `x`, a `z`, a `radius` or an `endTick`. A radius condition's `pos` holds the centre's x and z as given, and y
 the marker 0x12345678 until the centre is put on the ground (section 4).
@@ -335,22 +346,27 @@ used.
 
 | Case | Imports after *g2*, in order | Effect |
 | --- | --- | --- |
-| *g2* = 3, *L*'s `rejectReason` is 0, `Game.players[h].info.watching` is set or an active AI player exists; no active AI player | `Emit` RECALCULATE, `network.BroadcastPlayerInfo`, `RecordSimEvent` WATCH_PROMPT | *L*'s info flag 0x40 is set; map flags 1 and 2 are cleared |
-| the same, with an active AI player and a combat player | `Emit` RECALCULATE, `network.BroadcastPlayerInfo`, `RecordSimEvent` WATCH_MODE_NOTICE | as above, and `endGameVictory` becomes 0 |
-| the same, with an active AI player and no combat player | `Emit` RECALCULATE, `network.BroadcastPlayerInfo` | as the first row |
-| any other | none | `endGameFlags` gets bit 2, `endGameVictory` becomes 0, and bit 6 too when *L*'s `rejectReason` is 0 |
+| *W* holds, and there is no active AI player | `Emit` RECALCULATE, `network.BroadcastPlayerInfo`, `RecordSimEvent` WATCH_PROMPT | *L*'s info flag 0x40 is set; map flags 1 and 2 are cleared |
+| *W* holds, with an active AI player and a combat player | `Emit` RECALCULATE, `network.BroadcastPlayerInfo`, `RecordSimEvent` WATCH_MODE_NOTICE | as above, and `endGameVictory` becomes 0 |
+| *W* holds, with an active AI player and no combat player | `Emit` RECALCULATE, `network.BroadcastPlayerInfo` | as the first row |
+| *W* doesn't hold | none | `endGameFlags` gets bit 2, `endGameVictory` becomes 0, and bit 6 too when *L*'s `rejectReason` is 0 |
+
+*W* holds when *g2* is 3, *L*'s `rejectReason` is 0, and `Game.players[h].info.watching` is set or there is at
+least one active AI player.
 
 RECALCULATE is a `LosRadarRecalculate` (`kind` 133, `reset` 1, 8 bytes); the two events carry `[L]`. The
-counts of active AI and combat players are taken after *L*'s info flag 0x40 is set.
+count of combat players is taken after *L*'s info flag 0x40 is set (the count of active AI players doesn't
+read the flag).
 
 **The respawn** (player *L*; *h* is the host slot and *H* is `Game.players[h].info`, the record past the ten
 players when *h* is 10), with these imports in order:
 
 1. `units.FindUnitTypeId` with `Game.sideDefs[s].commander`, *s* the `side` of player *L*'s info; *t* is the
-   result's low 16 bits, and *d* the unit type *t* of `Game.defs`.
+   result's low 16 bits, and *d* the unit type *t* of `Game.defs` (`Game.defs` plus 585·*t*, for any *t*, 0
+   included).
 2. Up to 9999 tries of a position *P*: *cx* = `baseX` / 10 and *cz* = `baseY` / 10 (section 5);
    `services.RandomInt(baseX − 2·cx)` gives *a*, then `services.RandomInt(baseY − 2·cz)` gives *b*;
-   *P* = ((*a* + *cx*) · 65536, 0, (*b* + *cz*) · 65536). Then nine `map.CanPlaceUnitFootprint(d, 0, cell, 1)`,
+   *P* = ((*a* + *cx*) · 65536, 0, (*b* + *cz*) · 65536). Then nine `map.CanPlaceUnitFootprint(d, 0, cell, 1)`, all nine on every try,
    the cell (*X*, *Z*) for *Z* from *P*.z − *Hh* and *X* from *P*.x − *Hw*, each in three steps of *Hh* and *Hw*
    (*Hh* = `height`·65536, *Hw* = `width`·65536), *Z* the outer loop, the cell's `x` and `y` the 16-bit
    truncations of the unsigned values shifted right by 20 (section 5). *P* is taken when all nine answer
@@ -374,12 +390,13 @@ is 0 the check gives 0 with no import. Otherwise its first import is `mission.Ge
 | *g* | *V* | *D* |
 | --- | --- | --- |
 | 1 | each victory condition in list order, stopping at the first that isn't met; 1 when all are met | each defeat condition in list order, stopping at the first that is met; 1 when one is |
-| 2 | 1 when every player *i* other than *L* with `players[L].allied[i]` 0 has `unitCount` 0 | 1 when player *L*'s `unitCount` is 0 |
+| 2 | 1 when every player *i* from 0 to 9 other than *L* with `players[L].allied[i]` 0 has `unitCount` 0, whether or not it plays | 1 when player *L*'s `unitCount` is 0 |
 | 3 | the allied victory below | as for 2 |
 | other | 0 | 0 |
 
 An empty list, in a check of game type 1, first gets one condition: `VictoryDestroyAllUnits` for the victory
-list, `DefeatAllUnitsKilled` for the defeat list, both with `satisfied` and `celebrated` 0 and the count 1 (K6).
+list, `DefeatAllUnitsKilled` for the defeat list, both with `satisfied` and `celebrated` 0, as entry 0 of the list, and the list's count (`victoryCount` or
+`defeatCount`) becomes 1 (K6).
 
 **The allied victory** is 0 when `Game.commanderDeath` is 2. Otherwise, for each player *i* from 0 to 9 other
 than *L* that plays and whose info flag 0x40 is clear: the result is 0 when its `unitsCreated` is 0; when its
@@ -393,10 +410,10 @@ is still in (*L* and *i* included). After every *i*, the result is 1.
 | --- | --- | --- |
 | `VictoryDestroyAllUnits` | `Game.field_1df2` is 0 | when met: celebrate |
 | `VictoryBuildUnitType` | `satisfied` is not 0, or becomes so | when `satisfied` is 0: if `id` is 0, `units.FindUnitTypeId(name)` and `id` becomes its 16-bit result; then a scan of player 0's slice: a unit whose `unitDefIndex` equals `id` and whose `buildLeft` is ±0.0 sets `satisfied` to 1 and celebrates; the scan stops once `satisfied` is not 0 |
-| `VictoryMoveUnitToRadius` | `satisfied` is not 0 after the visits | when `pos.y` is 0x12345678: `los_radar.ClampWorldPosToTerrain` with the x and z of `pos` and `pos` itself as the output. Then `map.UnitsInRange(pos, radius, k, ids, 256)` with *k* 0, 256, 512 and so on, while each answer is 256; each id *n* of an answer, in order, visits unit *n* of `Game.units`: a unit with `playerIndex` 0, whose type matches `name` (any type when `name` is empty) and that can be counted sets `satisfied` to 1 and celebrates. The visits never stop early |
+| `VictoryMoveUnitToRadius` | `satisfied` is not 0 after the visits | when `pos.y` is 0x12345678: `los_radar.ClampWorldPosToTerrain` with the x and z of `pos` and `pos` itself as the output. Then `map.UnitsInRange(pos, radius, k, ids, 256)` with *k* 0, 256, 512 and so on, while each answer is 256; each id *n* of an answer, in order, visits unit slot *n* of `Game.units`: a unit with `playerIndex` 0, whose type matches `name` (any type when `name` is empty) and that can be counted sets `satisfied` to 1 and celebrates. Every id of every answer is visited |
 | `VictoryUnitTypePassesX` (`Z`) | `satisfied` is not 0, or becomes so | when `satisfied` is 0, a scan of player 0's slice: a unit whose type matches `name` (any when empty) and whose `cell.x` (`cell.y`) is within 2 of `x` (`z`) sets `satisfied` and celebrates; stop once set |
 | `VictoryTimerRunsOut`, `DefeatDeathTimerRunsOut` | `Game.ticks` ≥ `endTick`, both unsigned | none |
-| `DefeatAllUnitsKilled` | no unit of player 0's slice can be counted | `satisfied` becomes 1, then a scan of player 0's slice sets it to 0 at the first unit that can be counted, and stops there |
+| `DefeatAllUnitsKilled` | no unit of player 0's slice can be counted | `satisfied` becomes 1 when it is met, 0 when it isn't |
 | `DefeatAnyUnitPassesX` (`Z`) | `satisfied` is not 0, or becomes so | when `satisfied` is 0, a scan of player 1's slice: a unit whose `cell.x` (`cell.y`) is within 2 of `x` (`z`) sets `satisfied` to 1 (no sound); stop once set |
 | every other class | `satisfied` is not 0 | none |
 
@@ -468,7 +485,7 @@ they are).
 when the player's `unitCount` is 0 or its `unitsBegin` is null. Otherwise `unitsEnd` is read once, and each unit
 from `unitsBegin` to it, in table order, that is alive and not dying when its turn comes gives one `Emit`
 KILL_UNIT (`PlayersKillUnit`, 12 bytes: 208, the unit's offset, `selfDestruct`): `selfDestruct` is 0 when the
-unit's `player` is active with `type` 1 or 2, else 1. Each KILL_UNIT is delivered before `Emit` returns, so a
+unit's `player` is active with `type` 1 or 2, else 1 (`type` 3 included). Each KILL_UNIT is delivered before `Emit` returns, so a
 later unit's flags are read after the kills before it took effect.
 
 **The transfer** (`from` *f*, `to` *t*, `amount` *a*, `announce` *n*, nonzero meaning announced):
@@ -601,7 +618,10 @@ refusal of `Apply`; SEND_UNIT and the refusals of the hand-over; an unannounced 
 the classes `VictoryKillEnemyCommander`, `VictoryKillAllMobileUnits`, `VictoryBuildUnitType`,
 `VictoryUnitTypePassesX`, `VictoryUnitTypePassesZ`, `VictoryTimerRunsOut`, `DefeatUnitTypeKilled`,
 `DefeatDeathTimerRunsOut` and `DefeatAnyUnitPassesZ`, and a radius condition met; an empty condition list; a
-second `map.UnitsInRange` call; the rank pass of `UpdatePlayersFinish`.
+second `map.UnitsInRange` call; the rank pass of `UpdatePlayersFinish`; in `UpdatePlayerBody`, game type 1
+with *V* 1, a game type other than 1 with *L*'s info flag 0x40 set, and every row in which *D* is 1 outside
+game type 1 (the countdown rows, the respawn and watch mode); a check of a game type other than 1 to 3; and
+a *p* above 9.
 
 ## 8. Kit version
 
