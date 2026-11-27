@@ -422,7 +422,7 @@ fn apply_outs(caller: &mut Caller<'_, State>, e: &Entry, ptrs: &[u32]) -> Result
             let h = v.strip_prefix("rec#").and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
             let a = ptrs.first().copied().unwrap_or(0) as usize + which;
             if a + 4 > m.len() {
-                return Result::Err(wasmi::Error::new("import: pointer argument 0 is outside the module memory"));
+                return Result::Err(wasmi::Error::new("import TdfFile_LoadFile: pointer argument 0 is outside the module memory"));
             }
             m[a..a + 4].copy_from_slice(&h.to_le_bytes());
         } else if n == "dst" {
@@ -430,7 +430,7 @@ fn apply_outs(caller: &mut Caller<'_, State>, e: &Entry, ptrs: &[u32]) -> Result
             let mut b = unescape(v);
             b.push(0);
             if a + b.len() > m.len() {
-                return Result::Err(wasmi::Error::new("import: the buffer runs past the module memory"));
+                return Result::Err(wasmi::Error::new("import TdfRecord_GetFieldString: the buffer runs past the module memory"));
             }
             m[a..a + b.len()].copy_from_slice(&b);
         } else if let Some(rest) = n.strip_prefix("weapondef#") {
@@ -571,6 +571,10 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
             let e = next_entry(&mut c, "services.TdfRecord_GetFieldString");
             if size < 1 {
                 return Result::Err(wasmi::Error::new("import TdfRecord_GetFieldString: the buffer size is below 1"));
+            }
+            let mlen = c.data().mem.map(|m| m.data(&c).len()).unwrap_or(0);
+            if dst < 0 || dst as usize + size as usize > mlen {
+                return Result::Err(wasmi::Error::new("import TdfRecord_GetFieldString: the buffer runs past the module memory"));
             }
             if let Some(en) = &e {
                 apply_outs(&mut c, en, &[0, dst as u32])?;

@@ -92,3 +92,16 @@ vector. 16: not judged (spec section 4.3). 18: the entry's `publishes` is {"80":
 
 - req1 (core of the previous commit): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
 - req2 (after the second review's fixes): the same: every judged group equal; `files` failed (not judged).
+
+## Answers to the third review (/srv/inbox/review.md, numbered as in that file)
+
+Fixed: 3 (partly): the `apply_outs` texts name their import, and `TdfRecord_GetFieldString` checks the whole `dst..dst+size` buffer.
+6: recorded as `SPEC-QUESTIONS.md` Q3.
+Not changed, with reasons: 1 (see the second review, item 4: the eager allocation is wasmi's; the vectors of the gate hold no 4 GiB case and the
+judged `loader` vectors are `equal`); 2 and the rest of 3 (handle table, argument ranges of the other TDF imports, import adapters): no vector and
+no hosted module reaches them; first work if another module is hosted; 4 (the 4096 and 2^24 caps are resource guards beyond every vector of the kit);
+5 (the bisection is a last resort for a panic; no vector panics, the full local gate takes 5 s); 7, 8 (performance and placement only).
+
+## Verdicts, session 4
+
+- Local gate (module of /work/wind_meteors/ rebuilt): every group but `files` equal. Submitted as req1 of this session; see below.

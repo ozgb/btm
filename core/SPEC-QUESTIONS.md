@@ -36,3 +36,9 @@ session), or is the `host` group expected to be judged with the module as it is?
 
 `docs/core-gate.md` says the rows are "in the order of the dump's blocks"; `tools/tracerehash.py` sorts them by tick
 and phase. They agree on the five vectors. The core follows the dump's order. (Not blocking.)
+
+## Q3. Unknown order-effect class in the `hash` group
+
+`docs/trace-format.md` 8.11 (line ~760) says an order-effect object of any other class hashes nothing; section 11
+(line ~2099) says an object of unknown class fails the run so its hash is never written. The core follows 8.11. No vector
+holds such an object. (Not blocking.)
