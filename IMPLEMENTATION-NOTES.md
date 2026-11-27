@@ -22,6 +22,7 @@
 1. req1: `equal` (3 recordings, every scenario, digest and view).
 
 2. req2, req3: no verdict. The gate answered at once with `the gate wrote no usable result (exit 2): No such file or directory: .../gate/reqN/out/result.json`. The module submitted is byte-identical to req1's (6850 bytes), so this is a gate fault, not a difference.
+3. req4 (after the review answers, same 6850-byte module): `equal` (3 recordings, every scenario).
 
 ## Answers to /srv/inbox/review.md
 - 1 (`--no-stack-first`): `ld-wrap.sh` now appends `--no-stack-first` when the linker's help lists it. The local LLD 20.1.8 doesn't, and rejects it, so it's left off there and the stack falls after the data (top 202176, in the window). Not verifiable against 22.1.8 here.
