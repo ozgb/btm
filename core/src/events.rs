@@ -25,30 +25,27 @@ impl Queue {
         Queue { ring: vec![Rec::default(); CAP], head: 0, tail: 0, dropped: 0, test_mode: true, tick: 0 }
     }
 
-    /// Records an event of up to twelve arguments; false when it does not fit in a test-mode run.
+    /// Records an event: one record per six arguments, at least one; false when it does not fit in a test-mode run.
     pub fn record(&mut self, kind: u32, flags: u32, args: &[u32]) -> bool {
-        let n: u32 = if args.len() > 6 { 2 } else { 1 };
-        if self.tail.wrapping_sub(self.head) as u64 + n as u64 > CAP as u64 {
+        let n = args.len().div_ceil(6).max(1) as u64;
+        if self.tail.wrapping_sub(self.head) as u64 + n > CAP as u64 {
             if self.test_mode {
                 return false;
             }
             self.dropped = self.dropped.wrapping_add(1);
             return true;
         }
-        let mut first = Rec { kind: kind as u16, flags: flags as u16, tick: self.tick, args: [0; 6] };
-        for (i, a) in args.iter().take(6).enumerate() {
-            first.args[i] = *a;
-        }
-        let i = self.tail as usize % CAP;
-        self.ring[i] = first;
-        if n == 2 {
-            let mut second = Rec { kind: kind as u16, flags: (flags as u16) | 0x8000, tick: self.tick, args: [0; 6] };
-            for (i, a) in args.iter().skip(6).take(6).enumerate() {
-                second.args[i] = *a;
+        for i in 0..n as usize {
+            let mut r = Rec { kind: kind as u16, flags: flags as u16, tick: self.tick, args: [0; 6] };
+            if i > 0 {
+                r.flags |= 0x8000;
             }
-            self.ring[(self.tail as usize + 1) % CAP] = second;
+            for (j, a) in args.iter().skip(i * 6).take(6).enumerate() {
+                r.args[j] = *a;
+            }
+            self.ring[self.tail as usize % CAP] = r;
+            self.tail = self.tail.wrapping_add(1);
         }
-        self.tail = self.tail.wrapping_add(n);
         true
     }
 
@@ -103,11 +100,19 @@ pub fn run(calls: &[Call]) -> Vec<String> {
                 let flags = num(&rest[1]) as u32;
                 let args: Vec<u32> = rest[2..].iter().map(|s| num(s) as u32).collect();
                 let mut ok = true;
-                for _ in 0..count {
+                let need = args.len().div_ceil(6).max(1) as u64;
+                let mut left = count;
+                while left > 0 {
+                    if q.tail.wrapping_sub(q.head) as u64 + need > CAP as u64 && !q.test_mode {
+                        // a full queue in play mode only counts the drops
+                        q.dropped = q.dropped.wrapping_add(left as u32);
+                        break;
+                    }
                     if !q.record(kind, flags, &args) {
                         ok = false;
                         break;
                     }
+                    left -= 1;
                 }
                 if ok {
                     format!("[{},{},{}]", q.head, q.tail, q.dropped)

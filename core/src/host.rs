@@ -8,13 +8,18 @@ use wasmi::{Caller, Linker, Memory};
 
 const MANIFEST: &str = include_str!("game_manifest.json");
 const MODULE: &str = "wind_meteors";
-const SCRATCH: usize = 983040;
 const GAME_OFF: u64 = 0x1000;
 const SIM_OFF: u64 = 0x50000;
 const WEAPONS_OFF: u64 = 11507;
 const WEAPON_SIZE: u64 = 277;
 const WEAPON_FLAGS: u64 = 273;
 const TICKS_OFF: u64 = 232007;
+const PLAYERS_OFF: u64 = 7011;
+const PLAYER_SIZE: u64 = 331;
+const ARENA_SIZE: u64 = 2 << 20;
+/// allocations start above the Game and SimGlobals records, 1 MiB into the block, and end at the radar arena
+const ALLOC_OFF: u64 = 0x100000;
+const LAST_KIND: u32 = 35;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -114,6 +119,27 @@ pub struct State {
     handles: Vec<String>,
     /// the refusal that ended the call: its class (`import` or `glue`) and text
     refusal: Option<(&'static str, String)>,
+    /// the sim-block services of the services group: allocations, the sim event queue, the radar arena
+    sim: SimSvc,
+    /// from the manifest: the block's size, the scratch base, the kinds the entry publishes and their payload sizes
+    block_size: u64,
+    publishes: HashMap<i32, i32>,
+}
+
+struct SimSvc {
+    top: u64,
+    end: u64,
+    arena_base: u64,
+    live: std::collections::BTreeMap<u64, u64>,
+    free: Vec<(u64, u64)>,
+    queue: crate::events::Queue,
+    arena_top: u64,
+}
+
+impl Default for SimSvc {
+    fn default() -> SimSvc {
+        SimSvc { top: 0, end: 0, arena_base: 0, live: Default::default(), free: Vec::new(), queue: crate::events::Queue::new(), arena_top: 0 }
+    }
 }
 
 fn unescape(s: &str) -> Vec<u8> {
@@ -220,7 +246,6 @@ struct Replayer {
     game: u64,
     sim: u64,
     known: HashMap<String, String>,
-    block_base: u64,
 }
 
 impl Replayer {
@@ -315,7 +340,7 @@ impl Replayer {
             match n {
                 "g_game" => Some(self.game as u32),
                 "g_simGlobals" => Some(self.sim as u32),
-                "g_blockBase" => Some(self.block_base as u32),
+                "g_blockBase" => Some(self.l.store.data().block_base as u32),
                 "g_extTdf" => Some(u32::from_le_bytes(*b"tdf\0")),
                 _ => None,
             }
@@ -556,7 +581,7 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
         let mem = c.data().mem.unwrap();
         let m = mem.data(&c);
         let text = String::from_utf8_lossy(&read_cstr(m, msg as u32 as usize)).into_owned();
-        Result::Err(wasmi::Error::new(text))
+        Result::Err(refuse(c.data_mut(), "fatal", text))
     })?;
     linker.func_wrap("services", "BuildDataPath", |mut c: Caller<'_, State>, buf: i32, d: i32, n: i32, x: i32| -> Result<i32, wasmi::Error> {
         check_ptrs(&mut c, "BuildDataPath", &[(0, buf), (1, d), (2, n), (3, x)])?;
@@ -662,6 +687,7 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
         check_ptrs(&mut c, "Emit", &[(0, effect)])?;
         let mem = c.data().mem.unwrap();
         let (a, n) = (effect as u32 as usize, size as u32 as usize);
+        let publishes = c.data().publishes.clone();
         let text = if !(4..=128).contains(&n) {
             Some("the size is outside an effect")
         } else if a + n > mem.data(&c).len() {
@@ -669,9 +695,10 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
         } else {
             let m = mem.data(&c);
             let kind = i32::from_le_bytes([m[a], m[a + 1], m[a + 2], m[a + 3]]);
-            if kind != 80 {
+            let want = publishes.get(&kind).copied();
+            if want.is_none() {
                 Some("the kind is not in the module's publishes table")
-            } else if n != 36 {
+            } else if Some(n as i32) != want {
                 Some("the size is not the payload's size of its kind")
             } else {
                 let weapon = i32::from_le_bytes([m[a + 4], m[a + 5], m[a + 6], m[a + 7]]);
@@ -688,6 +715,7 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
         let _ = next_entry(&mut c, "services.Emit");
         Ok(())
     })?;
+    define_sim_services(linker)?;
     linker.func_wrap("weapons", "FindWeaponByName", |mut c: Caller<'_, State>, n: i32| -> Result<i32, wasmi::Error> {
         check_ptrs(&mut c, "FindWeaponByName", &[(0, n)])?;
         let e = next_entry(&mut c, "weapons.FindWeaponByName");
@@ -702,13 +730,33 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
 
 fn replay(recording: &str, module_path: &str) -> Result<Vec<Vec<String>>, Err> {
     let mut rp = Replayer {
-        l: Loader::new(State { block_base: 1048576, ..Default::default() }),
-        game: 1048576 + GAME_OFF,
-        sim: 1048576 + SIM_OFF,
+        l: Loader::new(State::default()),
+        game: 0,
+        sim: 0,
         known: HashMap::new(),
-        block_base: 1048576,
     };
     rp.l.set_manifest(MANIFEST.as_bytes())?;
+    let scratch_base = {
+        let m = rp.l.manifest.as_ref().ok_or_else(|| Err::new("manifest"))?;
+        let bb = m.block_base.ok_or_else(|| Err::new("manifest"))?;
+        let entry = m.modules.iter().find(|e| e.name == MODULE).ok_or_else(|| Err::named("not_in_manifest", MODULE))?;
+        let publishes = entry
+            .raw
+            .get("publishes")
+            .and_then(|v| v.as_object())
+            .map(|o| o.iter().filter_map(|(k, v)| Some((k.parse::<i32>().ok()?, v.as_i64()? as i32))).collect())
+            .unwrap_or_default();
+        rp.game = bb + GAME_OFF;
+        rp.sim = bb + SIM_OFF;
+        let st = rp.l.store.data_mut();
+        st.block_base = bb;
+        st.block_size = m.block_size;
+        st.publishes = publishes;
+        st.sim.top = bb + ALLOC_OFF;
+        st.sim.end = bb + m.block_size - ARENA_SIZE;
+        st.sim.arena_base = st.sim.end;
+        m.scratch.map(|s| s.0 as usize).unwrap_or(0)
+    };
     rp.l.create_memory()?;
     let mem = rp.l.memory.unwrap();
     rp.l.store.data_mut().mem = Some(mem);
@@ -773,14 +821,14 @@ fn replay(recording: &str, module_path: &str) -> Result<Vec<Vec<String>>, Err> {
                         _ => buf[off..off + 4].copy_from_slice(&(parse_num(v) as u32).to_le_bytes()),
                     }
                 }
-                rp.mem()[SCRATCH..SCRATCH + 256].copy_from_slice(&buf);
-                args.push(SCRATCH as i32);
+                rp.mem()[scratch_base..scratch_base + 256].copy_from_slice(&buf);
+                args.push(scratch_base as i32);
                 args.push(find("size").map(|s| parse_num(&s) as i32).unwrap_or(0));
             }
             "LoadMeteorDefaults" => {
-                params_addr = SCRATCH;
-                rp.mem()[SCRATCH..SCRATCH + 52].fill(0);
-                args.push(SCRATCH as i32);
+                params_addr = scratch_base;
+                rp.mem()[scratch_base..scratch_base + 52].fill(0);
+                args.push(scratch_base as i32);
             }
             "SaveMeteors" | "LoadMeteors" => args.push(1),
             _ => {}
@@ -854,4 +902,202 @@ pub fn run(calls: &[crate::Call]) -> Vec<String> {
         }
     }
     out
+}
+
+fn rd32(m: &[u8], a: u64) -> Option<u32> {
+    let a = a as usize;
+    m.get(a..a + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+fn wr(m: &mut [u8], a: u64, v: &[u8]) -> bool {
+    let a = a as usize;
+    match m.get_mut(a..a.saturating_add(v.len())) {
+        Some(d) => {
+            d.copy_from_slice(v);
+            true
+        }
+        None => false,
+    }
+}
+
+fn game_tick(c: &Caller<'_, State>) -> u32 {
+    let m = c.data().mem.unwrap().data(c);
+    rd32(m, c.data().block_base + GAME_OFF + TICKS_OFF).unwrap_or(0)
+}
+
+/// The network id of a slot of the game record (the player's `id`), or -1 for none: slot 10 or a player of type 0.
+fn slot_dpid(c: &Caller<'_, State>, slot: u32) -> i32 {
+    if slot >= 10 {
+        return -1;
+    }
+    let m = c.data().mem.unwrap().data(c);
+    let p = c.data().block_base + GAME_OFF + PLAYERS_OFF + slot as u64 * PLAYER_SIZE;
+    match (m.get((p + 115) as usize), rd32(m, p + 4)) {
+        (Some(t), Some(id)) if *t != 0 => id as i32,
+        _ => -1,
+    }
+}
+
+fn alloc(c: &mut Caller<'_, State>, name: &str, size: u32) -> Result<i32, wasmi::Error> {
+    let want = ((size as u64).max(1) + 7) & !7;
+    let st = c.data_mut();
+    let addr = if let Some(i) = st.sim.free.iter().position(|(_, n)| *n == want) {
+        st.sim.free.swap_remove(i).0
+    } else if st.sim.top + want <= st.sim.end {
+        let a = st.sim.top;
+        st.sim.top += want;
+        a
+    } else {
+        return Result::Err(refuse(st, "import", format!("import {}: the state block has no room for {} bytes", name, size)));
+    };
+    st.sim.live.insert(addr, want);
+    let mem = st.mem.unwrap();
+    let m = mem.data_mut(&mut *c);
+    let (a, n) = (addr as usize, want as usize);
+    if a + n <= m.len() {
+        m[a..a + n].fill(0);
+    }
+    Ok(addr as i32)
+}
+
+fn define_sim_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
+    linker.func_wrap("services", "SimAlloc", |mut c: Caller<'_, State>, size: i32| -> Result<i32, wasmi::Error> { alloc(&mut c, "SimAlloc", size as u32) })?;
+    linker.func_wrap("services", "SimAllocTagged", |mut c: Caller<'_, State>, tag: i32, size: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "SimAllocTagged", &[(0, tag)])?;
+        alloc(&mut c, "SimAllocTagged", size as u32)
+    })?;
+    linker.func_wrap("services", "SimFree", |mut c: Caller<'_, State>, p: i32| -> Result<(), wasmi::Error> {
+        check_ptrs(&mut c, "SimFree", &[(0, p)])?;
+        let st = c.data_mut();
+        if let Some(n) = st.sim.live.remove(&(p as u32 as u64)) {
+            st.sim.free.push((p as u32 as u64, n));
+        }
+        Ok(())
+    })?;
+    linker.func_wrap("services", "RecordSimEvent", |mut c: Caller<'_, State>, kind: i32, flags: i32, args: i32, count: i32| -> Result<(), wasmi::Error> {
+        check_ptrs(&mut c, "RecordSimEvent", &[(2, args)])?;
+        let (kind, count) = (kind as u32, count as u32);
+        if !(1..=LAST_KIND).contains(&kind) || (args == 0 && count > 0) {
+            return Ok(());
+        }
+        let mut words = Vec::new();
+        if count > 0 {
+            let m = c.data().mem.unwrap().data(&c);
+            for i in 0..count as u64 {
+                match rd32(m, args as u32 as u64 + 4 * i) {
+                    Some(w) => words.push(w),
+                    None => return Ok(()),
+                }
+            }
+        }
+        let tick = game_tick(&c);
+        let q = &mut c.data_mut().sim.queue;
+        q.tick = tick;
+        if !q.record(kind, flags as u32, &words) {
+            return Result::Err(refuse(c.data_mut(), "import", "import RecordSimEvent: the sim event queue is full".to_string()));
+        }
+        Ok(())
+    })?;
+    linker.func_wrap("services", "SimCaptureAlloc", |mut c: Caller<'_, State>, bytes: i32, off: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "SimCaptureAlloc", &[(1, off)])?;
+        if off == 0 {
+            return Ok(0);
+        }
+        let want = ((bytes as u32 as u64) + 7) & !7;
+        let st = c.data_mut();
+        if st.sim.arena_top + want > ARENA_SIZE {
+            return Result::Err(refuse(st, "import", "import SimCaptureAlloc: the radar arena has no room".to_string()));
+        }
+        let at = st.sim.arena_top;
+        let st_arena = st.sim.arena_base;
+        st.sim.arena_top += want;
+        let mem = st.mem.unwrap();
+        let m = mem.data_mut(&mut c);
+        let a = (st_arena + at) as usize;
+        if a + want as usize <= m.len() {
+            m[a..a + want as usize].fill(0);
+        }
+        wr(m, off as u32 as u64, &(at as u32).to_le_bytes());
+        Ok((st_arena + at) as i32)
+    })?;
+    linker.func_wrap("services", "GetGafFrame", |mut c: Caller<'_, State>, table: i32, index: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "GetGafFrame", &[(0, table)])?;
+        if table == 0 || index < 0 {
+            return Ok(0);
+        }
+        let m = c.data().mem.unwrap().data(&c);
+        let t = table as u32 as u64;
+        let count = m.get(t as usize..t as usize + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as i32);
+        match count {
+            Some(n) if index < n => Ok(rd32(m, t + 40 + 8 * index as u64).unwrap_or(0) as i32),
+            _ => Ok(0),
+        }
+    })?;
+    linker.func_wrap("services", "InitGafSequence", |mut c: Caller<'_, State>, cur: i32, anim: i32, index: i32| -> Result<(), wasmi::Error> {
+        check_ptrs(&mut c, "InitGafSequence", &[(0, cur), (1, anim)])?;
+        if cur == 0 || anim == 0 || index < 0 {
+            return Ok(());
+        }
+        let mem = c.data().mem.unwrap();
+        let m = mem.data_mut(&mut c);
+        let t = anim as u32 as u64;
+        let (Some(h), Some(&lp)) = (m.get(t as usize..t as usize + 2), m.get(t as usize + 2)) else { return Ok(()) };
+        let count = u16::from_le_bytes([h[0], h[1]]) as i32;
+        let idx = if index < count { index } else { 0 };
+        let dur = rd32(m, t + 40 + 8 * idx as u64 + 4).unwrap_or(0) as u16;
+        let mut rec = [0u8; 12];
+        rec[0..2].copy_from_slice(&(idx as u16).to_le_bytes());
+        rec[2..4].copy_from_slice(&dur.to_le_bytes());
+        rec[4] = lp;
+        rec[8..12].copy_from_slice(&(anim as u32).to_le_bytes());
+        wr(m, cur as u32 as u64, &rec);
+        Ok(())
+    })?;
+    linker.func_wrap("services", "StepGafSequence", |mut c: Caller<'_, State>, cur: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "StepGafSequence", &[(0, cur)])?;
+        if cur == 0 {
+            return Ok(0);
+        }
+        let mem = c.data().mem.unwrap();
+        let m = mem.data_mut(&mut c);
+        let a = cur as u32 as u64;
+        let (Some(idx), Some(ticks), Some(anim)) = (
+            m.get(a as usize..a as usize + 2).map(|b| u16::from_le_bytes([b[0], b[1]])),
+            m.get(a as usize + 2..a as usize + 4).map(|b| u16::from_le_bytes([b[0], b[1]])),
+            rd32(m, a + 8),
+        ) else {
+            return Ok(0);
+        };
+        if anim == 0 {
+            return Ok(0);
+        }
+        if ticks >= 2 {
+            wr(m, a + 2, &(ticks - 1).to_le_bytes());
+            return Ok(0);
+        }
+        let t = anim as u64;
+        let (Some(cb), Some(&lp)) = (m.get(t as usize..t as usize + 2), m.get(t as usize + 2)) else { return Ok(0) };
+        let count = u16::from_le_bytes([cb[0], cb[1]]) as u64;
+        let next = idx as u64 + 1;
+        if next < count {
+            let dur = rd32(m, t + 40 + 8 * next + 4).unwrap_or(0) as u16;
+            wr(m, a, &(next as u16).to_le_bytes());
+            wr(m, a + 2, &dur.to_le_bytes());
+        } else if lp != 0 && count > 0 {
+            let dur = rd32(m, t + 40 + 4).unwrap_or(0) as u16;
+            wr(m, a, &0u16.to_le_bytes());
+            wr(m, a + 2, &dur.to_le_bytes());
+        } else {
+            wr(m, a + 8, &0u32.to_le_bytes());
+        }
+        Ok(1)
+    })?;
+    linker.func_wrap("services", "GetSlotDpid", |c: Caller<'_, State>, slot: i32| -> i32 { slot_dpid(&c, slot as u32) })?;
+    linker.func_wrap("services", "FindSlotByDpid", |c: Caller<'_, State>, id: i32| -> i32 {
+        if id == -1 {
+            return 10;
+        }
+        (0..10).find(|s| slot_dpid(&c, *s) == id).unwrap_or(10) as i32
+    })?;
+    Ok(())
 }

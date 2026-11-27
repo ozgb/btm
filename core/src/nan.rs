@@ -37,7 +37,7 @@ impl Reencode for Canon {
             f.instruction(&ins);
             match ins {
                 I::F32Add | I::F32Sub | I::F32Mul | I::F32Div | I::F32Sqrt | I::F32Min | I::F32Max | I::F32Ceil | I::F32Floor
-                | I::F32Trunc | I::F32Nearest | I::F32Abs | I::F32Neg | I::F32DemoteF64 => {
+                | I::F32Trunc | I::F32Nearest | I::F32Copysign | I::F32Abs | I::F32Neg | I::F32DemoteF64 => {
                     f.instruction(&I::LocalTee(t32));
                     f.instruction(&I::F32Const(f32::from_bits(0x7fc00000).into()));
                     f.instruction(&I::LocalGet(t32));
@@ -46,7 +46,7 @@ impl Reencode for Canon {
                     f.instruction(&I::Select);
                 }
                 I::F64Add | I::F64Sub | I::F64Mul | I::F64Div | I::F64Sqrt | I::F64Min | I::F64Max | I::F64Ceil | I::F64Floor
-                | I::F64Trunc | I::F64Nearest | I::F64Abs | I::F64Neg | I::F64PromoteF32 => {
+                | I::F64Trunc | I::F64Nearest | I::F64Copysign | I::F64Abs | I::F64Neg | I::F64PromoteF32 => {
                     f.instruction(&I::LocalTee(t64));
                     f.instruction(&I::F64Const(f64::from_bits(0x7ff8000000000000).into()));
                     f.instruction(&I::LocalGet(t64));

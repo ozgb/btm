@@ -127,3 +127,30 @@ judged); `play` not judged.
 
 Unclear spec points this session: none that blocked. The "exit status 1" of req1 is not an exit code my core can produce
 (its only explicit exits are 2); I believe it came from the run, not the core.
+
+## Session 5 (interfaces-v64, reference-traces-v54): the fourth review
+
+Fixed: 1 (rows sorted by tick and row order, a repeated block replaces its rows), 2 (class above 5 fails the dump), 3 (the ten
+sim-block services are defined by the host: `SimAlloc`/`SimAllocTagged`/`SimFree` over a free-list allocator in the block above the
+Game record, `RecordSimEvent` into the sim event queue of `events.rs`, now one record per six arguments, `SimCaptureAlloc` over a
+2 MiB arena at the end of the block, `GetGafFrame`/`InitGafSequence`/`StepGafSequence` on the frame table layout of ABI 9.3,
+`GetSlotDpid`/`FindSlotByDpid` from `Game.players[i].id` and `.type`; malformed arguments answer 0, -1 or 10 and write nothing; no vector
+and no hosted module reaches them, so they are untested beyond compiling; the sim event kinds accepted are 1 to 35, kind 0 (NONE,
+"never recorded") is treated as not a kind), 4 (an adapted import of an older major is converted for any import the host defines with
+the manifest's current signature, f32/f64 pass unchanged; the host not defining it, or defining it differently, is `manifest`), 5
+(`bigalloc.rs`: a global allocator that maps blocks of 256 MiB or more with `MAP_NORESERVE`, by raw syscall, so `memory` at 65536 pages
+succeeds on a machine whose heuristic overcommit refuses 4 GiB; RSS stays at 1.4 MB), 7 (a module with a `fuel_budget` that does not export
+`__fuel_set` and `__fuel_get` is refused at `load` as `export`; a failing `__fuel_set` call is no longer ignored), 8 (`copysign` joins the
+NaN rewrite), 9 (`FatalError` ends the replay with `{"error":"fatal",...,"message":<its text>}`; the class name is mine, no group judges it),
+15 (`Emit` reads the entry's `publishes`; block base, block size and scratch come from the manifest), 16 (unused manifest fields removed;
+`Replayer.block_base` removed; the `interface` rank of `commands.rs` stays: it is the documented order, no gate script has one),
+17 (`tools/host_check.py` runs every recording that has a vector; an unreadable CALLS file exits 2).
+Not changed, with reasons: 6 (hidden state: the spec says only the scenario mode judges it and this core has no scenario mode; a `replay`
+must not check it, vector `import_stale_handle`); 10 (`edge`, `nowisee`, `reloadaiprofiles` are outside the twelve commands plus `control` and
+`view` that section 4.3 limits the group to; the setup state the scenario mode needs is not a vector); 11 (ABI 7.2 gives only the start-address
+check); 12 (the double compile is the validation of the original before the rewrite, and the scratch locals are two per function: cheap, and
+no vector is near the limit); 13 done in `events.rs` (`repeat` in play mode adds the remaining count to `dropped` in one step); 14 (a stream other
+than 0 or 1 is undefined by `rand_stream.h`; it draws from main); 17 (`gate.py` has no `runtime` group because `reference/core/` has none;
+`runtime_check.py` covers it).
+
+Verdicts, session 5: local gate equal on every group but `files`; runtime check and host check equal. Verdict of the submission: see below.

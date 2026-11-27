@@ -1,3 +1,4 @@
+mod bigalloc;
 mod commands;
 mod console;
 mod events;
@@ -7,6 +8,9 @@ mod loader;
 mod nan;
 mod rand;
 mod runtime;
+
+#[global_allocator]
+static ALLOC: bigalloc::BigAlloc = bigalloc::BigAlloc;
 
 use std::fs;
 use std::io::Write;
@@ -35,7 +39,13 @@ fn main() {
         std::process::exit(2);
     }
     let group = &args[1];
-    let calls_text = fs::read(&args[2]).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+    let calls_text = match fs::read(&args[2]) {
+        Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+        Err(e) => {
+            eprintln!("cannot read {}: {e}", args[2]);
+            std::process::exit(2);
+        }
+    };
     let calls = parse_calls(&calls_text);
     if !matches!(group.as_str(), "rand" | "events" | "commands" | "console" | "runtime" | "hash" | "loader" | "fuel" | "host") {
         eprintln!("unknown group {group}");

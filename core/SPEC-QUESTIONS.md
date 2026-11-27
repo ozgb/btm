@@ -32,13 +32,12 @@ equal, no fuel overrun at the 250 budget). So the remaining difference is the mo
 **Question.** Is the module at /work/wind_meteors/ meant to be rebuilt for 3.1 (by whom: the module's own
 session), or is the `host` group expected to be judged with the module as it is? I submitted the module as built.
 
-## Q2. The row order of the `hash` group
+## Q2. The row order of the `hash` group (resolved)
 
-`docs/core-gate.md` says the rows are "in the order of the dump's blocks"; `tools/tracerehash.py` sorts them by tick
-and phase. They agree on the five vectors. The core follows the dump's order. (Not blocking.)
+The current `core-gate.md` and `engine-core.md` section 5 say the rows come by tick and then in the row order, whatever
+the order of the dump's blocks. The core sorts them so (session 5); a block that comes back replaces its earlier rows.
 
-## Q3. Unknown order-effect class in the `hash` group
+## Q3. Unknown order-effect class in the `hash` group (resolved)
 
-`docs/trace-format.md` 8.11 (line ~760) says an order-effect object of any other class hashes nothing; section 11
-(line ~2099) says an object of unknown class fails the run so its hash is never written. The core follows 8.11. No vector
-holds such an object. (Not blocking.)
+`engine-core.md` section 5 and `trace-format.md` section 11 say a class above 5 fails the run. The core now answers `[]`
+for such a dump (as for every dump it cannot hash).
