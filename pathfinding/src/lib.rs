@@ -54,6 +54,10 @@ pub static mut g_blockBase: u32 = 0;
 pub static mut g_region: u32 = 0;
 
 
+static NEVER: u32 = 0;
+fn noop() {}
+static TABLE: [fn(); 1] = [noop];
+
 const GAME_PATHFINDER: u32 = 82439;
 const GAME_WIDTH: u32 = 82483;
 const GAME_HEIGHT: u32 = 82487;
@@ -1037,7 +1041,9 @@ pub extern "C" fn RegionSize(map: u32) -> u32 {
 }
 
 #[no_mangle]
-pub extern "C" fn Init(map: u32, reg: u32, _size: u32) {
+pub extern "C" fn Init(map: u32, reg_arg: u32, _size: u32) {
+    let gr = region();
+    let reg = if gr != 0 { gr } else { reg_arg };
     let (w, h, s) = (r32(map), r32(map + 4), r32(map + 8));
     let l = layout(w, h, s);
     let p = Pf { b: reg };
@@ -1074,12 +1080,15 @@ pub extern "C" fn Init(map: u32, reg: u32, _size: u32) {
     }
     w32(game() + GAME_PATHFINDER, rbase as i32);
     // keep the imports no slot calls
-    // Function pointers to the imports no slot calls keep the imports and the table import.
-    let keep: [usize; 3] = [w_move_class as usize, w_los as usize, w_terrain_pass as usize];
+    // The imports no slot needs sit behind a test that never holds; the table entry keeps the table import.
     unsafe {
-        let _ = read_volatile(&keep[0]);
-        let _ = read_volatile(&keep[1]);
-        let _ = read_volatile(&keep[2]);
+        if read_volatile(&NEVER) != 0 {
+            let f = read_volatile(&TABLE[0]);
+            f();
+            let c = w_move_class(0);
+            w_los(c, 0, 0, 0, 0);
+            w_terrain_pass(c, 0, 0);
+        }
     }
 }
 
