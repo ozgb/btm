@@ -120,10 +120,18 @@ These are gaps in the kit, not in the module:
   module's outbox, and the route table carries CELL_HEIGHTS from map's, so the `publishes` table above lists it; the
   kit's ABI and the host's check follow in #1206.
   The replay compares only the size of each publish (20 for CELL_HEIGHTS, 32 for CELLS_CHANGED) and its order
-  among the imports; the payload's fields (section 4) are checked only by the scenario traces.
+  among the imports. The fields of a CELLS_CHANGED appear as the arguments of pathfinding's `CellsChanged` calls in
+  `tests/replay/pathfinding/` (`orders-factory.txt`, `orders-move-attack.txt`, `skirmish2.txt`); those of a
+  CELL_HEIGHTS are checked only by the scenario traces.
 - **The plot map imports** (ozgb/byte-tactics-moddable#1206) are `files` imports (`interfaces/files.h`, files 3.0);
   the manifest has no signatures for them yet. Where a plot map's buffer of `Game.width` × `Game.height` bytes lives
   is a task of #1206 too: on a 256 by 256 map it is the size of the module's whole window.
+- **The replay schema's imports.** `data/replay_schema.json` gives map's imports as `los_radar.GetMapCell` and
+  `pathfinding.CellsChanged`. The recordings carry `los_radar.GetMapCell` and the `services.SchedPublish`,
+  `services.SimAlloc` and `services.SimFree` lines, and this section's import list is the recordings'.
+- **The `MAP_RECLAIM_FOOTPRINT` comment.** `interfaces/map.h` says the event makes the overlapping units give up the
+  cells the unit covers. Section 4 states what it does: the units overlapping the footprint re-claim, the unit among
+  them. No recording has the event.
 - **The reclaim pick's comment** (ozgb/byte-tactics-moddable#1206). The comment on
   `PickRandomReclaimableResourcesInRadius` in `interfaces/map.h` says it draws "from the game logic stream". The
   recordings' behaviour is that it draws with `services.RandomInt`, whose generator is `rng.seed` in the recordings
@@ -606,7 +614,7 @@ Outcome 1.
 
 #### `MAP_REMOVE_UNIT` (161)
 
-Outcome 1.
+Outcome 1, and the removal of the unit. **The removal of a unit** is these writes and imports:
 
 1. **The cells,** only when `Unit.spatialBucket` differs from `Game.overflowBucket` (the two stored offsets compared:
    a null bucket differs from a non-null off-map bucket). For each cell of the footprint, read from `Game.cells` (the
@@ -631,7 +639,7 @@ order (step 2), then the reports of step 3.
 
 #### `MAP_CLEAR_UNIT` (162)
 
-Outcome 1. The writes and the imports of `MAP_REMOVE_UNIT` (its three steps, with the same import order), and also:
+Outcome 1, the removal of the unit (its three steps, with the same import order), and also:
 
 - if `Unit.carrier` is null and `Unit.spatialBucket` isn't null, the unit is unlinked from that bucket's chain (the
   off-map bucket as well as a bucket of the grid), and its `Unit.cargoNext` becomes null;
@@ -819,7 +827,7 @@ Imports, for each class k with `defined` 1, in class order, and nothing else:
 2. When *n* ≠ 0: the allocation service with *n* × 4 bytes.
 3. The allocation service with the scratch size *S* + 3 bytes (X22), and then the free service with that
    same block. This pair is made for every defined class, *n* = 0 included. What the scratch block holds isn't part of
-   this spec.
+   this spec: the module may use its *S* + 3 bytes as working memory during the build.
 
 ### `FreePassMaps()`
 
@@ -1243,7 +1251,8 @@ Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing i
   list, giving an index 0 to *n* − 1 (0 for *n* below 2), used unscaled. A list of length 1 still makes its three
   calls. The draws are three for the energy list, then three for the metal list, each list's only when it isn't empty:
   0, 3 or 6 in all. `RandomInt` advances its own generator (`rng.seed` in the recordings), not a game logic stream:
-  the pick makes no draw from `rng.main` or any other stream.
+  the pick makes no draw from `rng.main` or any other stream. `rng.seed` is the Park-Miller state that the trace's
+  phase row calls `rng` (`docs/trace-format.md`) and `docs/schedule.md` calls the Park-Miller generator.
 - **X38, the floats.** The amounts are copied as 32-bit floats, bit for bit. The "not 0.0" tests and the
   pick's "greater" comparisons are IEEE 754 single-precision comparisons. The empty-list amount is +0.0 (0x00000000).
 - **X39, the grid size.** `Game.baseX` × 65536 and `Game.baseY` × 65536 wrap at 32 bits. *GW* and *GH* are those
@@ -1315,7 +1324,8 @@ Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing i
   position's `Vec3` receives, isn't specified: no recording calls the pick, and the trace leaves a reclaim order's
   `pos.y` out (`docs/view.md`, "Orders"). An implementation may use any value.
 - **Q22.** The reclaim lists hold ⌊*w*² / 256⌋ entries, which is 0 when `range` is below 16 × 65536 (an allocation of
-  0 bytes, which `services.SimAlloc` gives as a new, non-null, smallest allocation, ABI 9.3). A scan with
+  0 bytes, which `services.SimAlloc` gives as a new, non-null, smallest allocation, ABI 9.3; the kit doesn't give that
+  allocation's size). A scan with
   more qualifying features than that writes 16-byte entries past the end of its allocation. The lists still behave as
   if they had no limit: the pick reads the entries written. What the block bytes after a list's allocation hold
   afterwards isn't specified by this spec.
