@@ -6,44 +6,49 @@ Wind and meteors are the two pieces of weather in a match. Every few seconds the
 speed and direction within the map's limits; wind generators and anything else that reads the wind
 use the result. Meteors are showers of a map-chosen weapon falling on a random spot of the map: a
 schedule starts a shower, a shower drops one projectile at a fixed interval for a fixed duration,
-and the next shower comes a fixed gap after the last one ends. Showers can be switched on and off by
-the map and by the `meteor` console command, and their state is kept in saved games.
+and the next shower comes a fixed gap after the last one ends. The engine switches showers on and
+off, sets their parameters and the wind's limits, and starts a shower at once, through events in the
+module's inbox. The meteor state is kept in saved games.
 
 ## 2. Interface
 
-### Slots (`interfaces/wind_meteors.h`, version 1.2)
+### Slots (`interfaces/wind_meteors.h`, version 3.1)
 
 | Slot | When the engine calls it |
 | --- | --- |
-| `UpdateWind` | every game tick, in the wind phase |
-| `UpdateMeteors` | every game tick, right after `UpdateWind` |
-| `UpdateWindOnStream` | once at match load, with the load stream; `UpdateWind` behaves as this slot with the main stream |
-| `InitMeteors` | at match load, after the map's meteor parameters are set |
+| `UpdateWind` | every game tick, in the wind phase, with the main stream; and once at match load, with the load stream |
+| `UpdateMeteors` | every game tick, in the meteors phase |
+| `Apply` | for each event of the module's inbox, in the order it was published (`docs/schedule.md`, "Routes") |
+| `InitMeteors` | at match load, after the map's meteor parameters are applied and the weapon types are loaded |
 | `EmptyShutdownPreCleanup` | when a match shuts down |
-| `EnableMeteors`, `DisableMeteors` | when a map is loaded, and from the console command |
-| `SetMeteorParams` | when a map is loaded |
 | `LoadMeteorDefaults` | when a map's meteor parameters are missing or incomplete |
 | `SaveMeteors`, `LoadMeteors` | when a game is saved or loaded |
-| `CmdMeteor` | the `meteor` console command |
 
 ### The manifest entry
 
-The module's entry in the engine's manifest (`docs/module-abi.md` section 4). The kit doesn't carry the
-manifest yet, so its entry is given here in full, and it is exact (ABI 9.1).
+The kit's manifest (`wasm/modules.json`) has the module's entry, and the module must match it exactly (ABI 9.1). In full:
 
 - `name` and `interface`: `wind_meteors`.
-- `exports`, in this order: `UpdateWind`, `UpdateMeteors`, `InitMeteors`, `EmptyShutdownPreCleanup`,
-  `EnableMeteors`, `DisableMeteors`, `SetMeteorParams`, `LoadMeteorDefaults`, `SaveMeteors`,
-  `LoadMeteors`, `CmdMeteor`, `UpdateWindOnStream`.
+- `exports`, in this order (the header's): `UpdateWind`, `UpdateMeteors`, `Apply`, `InitMeteors`,
+  `EmptyShutdownPreCleanup`, `LoadMeteorDefaults`, `SaveMeteors`, `LoadMeteors`.
 - `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI 8.2).
-- Slot kinds: every slot returns `void`. `SetMeteorParams` and `LoadMeteorDefaults` take `[linear]`,
-  `SaveMeteors` and `LoadMeteors` `[handle]`, `CmdMeteor` `[scratch]`, `UpdateWindOnStream` `[int]` (the
-  stream: 0 main, 1 load), and the others `[]`.
+- `majors`: `wind_meteors` 3, `weapons` 4, `services` 4.
+- `publishes`: `{"80": 36}`, the SPAWN effect (`WindMeteorsSpawn`, 36 bytes).
+- `data_base` 196608, `table_base` 48, `fuel_budget` 250, `size_budget` 13100 (ABI 2, 11.3 and 16).
+- Slot kinds:
+
+| Slot | Kinds |
+| --- | --- |
+| `UpdateWind` | `[int] -> void` (the stream: 0 main, 1 load) |
+| `UpdateMeteors`, `InitMeteors`, `EmptyShutdownPreCleanup` | `[] -> void` |
+| `Apply` | `[linear, int] -> void` |
+| `LoadMeteorDefaults` | `[linear] -> void` |
+| `SaveMeteors`, `LoadMeteors` | `[handle] -> void` |
+
 - Imports, every one listed and nothing else:
 
 | Import | Kinds | Used for |
 | --- | --- | --- |
-| `weapons.SpawnProjectile` | `[block, linear, linear, int] -> int` | dropping a meteor |
 | `weapons.FindWeaponByName` | `[linear] -> block` | finding the meteor weapon |
 | `services.GameRand` | `[int] -> int` | every meteor draw, and the first draw of a wind change |
 | `services.RandomInt` | `[int] -> int` | the wind's speed and direction |
@@ -56,28 +61,30 @@ manifest yet, so its entry is given here in full, and it is exact (ABI 9.1).
 | `services.TdfRecord_GetFieldInt` | `[handle, linear, int] -> int` | the default data file |
 | `services.TdfRecord_GetFieldDouble` | `[handle, linear, f64] -> f64` | the default data file |
 | `services.TdfRecord_GetFieldString` | `[handle, linear, linear, int, linear] -> int` | the default data file |
-| `services.CommandArgs_GetIntArg` | `[scratch, int, int] -> int` | the console command's argument |
 | `services.HapiBank_OpenAccount` | `[handle, linear] -> int` | saved games |
 | `services.HapiBank_SetIntegerItem` | `[handle, linear, int] -> int` | saved games |
 | `services.HapiBank_GetIntegerItem` | `[handle, linear, int] -> int` | saved games |
-
-The saved-game imports are `services` (ABI 9.3), as listed. Where `docs/replay-format.md` calls them
-slots of the `files` seam, it describes a different module.
+| `services.Emit` | `[linear, int] -> void` | publishing a meteor (SPAWN) |
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. The budget is 250 units per tick for all of the module's slot calls together (ABI section
-  11.3, and the appendix in section 16). By ABI 11.3 the budget is ten times the most fuel any gate tick burns.
+  11.3, and the appendix in section 16).
 
 ### Arguments outside the block
 
-- **`MeteorParams`** (`layout.json` record `MeteorParams`, 48 bytes): `name` (32 bytes, a NUL-terminated
-  weapon name), `radius` (int), `density`, `duration`, `interval` (each a 32-bit float). It is owned by
-  the caller. `LoadMeteorDefaults` writes it in place, and `SetMeteorParams` reads it.
-- **The console command** (`CmdMeteor`'s `scratch` argument) is the `CommandArgs` class of
-  `interfaces/services.h`. The module reads argument 1 with `CommandArgs_GetIntArg`, and the argument
-  count from the `count` field: the 32-bit integer at byte offset 0xd0 of the copy. The count includes
-  the command's own name, so `meteor 1` has a count of 2. No import gives the count, so this read is an
-  exception to ABI 7.2 ("its raw bytes are for the engine"). The exception stands until the ABI settles it.
+- **The event** (`Apply`'s two arguments): the address of a `WindMeteorsEventHeader`, and the size in bytes of
+  the whole event, payload included (ABI 6.1, `docs/replay-format.md`, "Event arguments"). The payload of each
+  kind is the struct the interface header names for it, laid out in declaration order with no padding:
+  - `WindMeteorsParams`, 52 bytes: `kind` (0), `weapon` (4, 32 bytes, a NUL-terminated weapon name), `radius`
+    (36, int), `density` (40), `duration` (44), `interval` (48), each of the last three a 32-bit float.
+  - `WindMeteorsLimits`, 12 bytes: `kind` (0), `min` (4), `max` (8), ints.
+  - ENABLE, DISABLE, START and RESET are the header alone, 4 bytes.
+- **The effect** (`Emit`'s two arguments): the address of a `WindMeteorsSpawn` in the module's memory and its
+  size, 36. Its layout: `kind` (0, 80), `weapon` (4), `pos` (8, three ints: x, y, z), `vel` (20, three ints),
+  `announce` (32).
+- **`MeteorShowerParams`** (`layout.json` record `MeteorShowerParams`, 48 bytes): `weapon` (32 bytes, a
+  NUL-terminated weapon name), `radius` (int), `density`, `duration`, `interval` (each a 32-bit float). It is
+  owned by the caller, and `LoadMeteorDefaults` writes it in place.
 - **The `TdfFile`** (ABI 8.1) is three 32-bit words in the module's memory: the root record handle, the
   current record handle (byte offset 4), and flags. "The current record" below means the handle at
   byte offset 4.
@@ -110,19 +117,20 @@ None. No slot of this module records a sim event (kinds are listed in `docs/sim-
 
 ### Owned (`Game`)
 
-`windCounter` (unsigned int, the tick after which the wind next changes), `windSpeed` (int),
-`windDirection` (unsigned short, a 16-bit angle: 0x10000 is a full turn), `windX`, `windZ` (int),
-`windStrength` (float), `windEnabled` (int, 1 on a tick when the wind changed, else 0).
-`windY` is never written.
+`windCounter` (unsigned int, the tick after which the wind next changes), `windSpeedMin`, `windSpeedMax`
+(int, the map's wind limits), `windSpeedDenominator` (int), `windSpeed` (int), `windDirection` (unsigned
+short, a 16-bit angle: 0x10000 is a full turn), `windX`, `windZ` (int), `windStrength` (float),
+`windEnabled` (int, 1 on a tick when the wind changed, else 0). `windY` is never written.
 
 ### Read
 
 `Game.ticks` (int), `Game.width` and `Game.height` (int, the map's size in the same units as the
-target), `Game.windSpeedMin`, `Game.windSpeedMax`, `Game.windSpeedDenominator` (int), `Game.weapons`
-(the weapon table, `WeaponDef[256]`), `WeaponDef.flags`, and the random streams through the services.
+target), `Game.weapons` (the weapon table, `WeaponDef[256]`, each entry 277 bytes), `WeaponDef.flags`,
+and the random streams through the services.
 
-`WeaponDef.flags` is a 32-bit word at offset 273 of a `WeaponDef`. Its bit 5 (mask 0x20) is the
-`meteor` bit, set on a weapon that may be a meteor.
+`WeaponDef.flags` bit 5 (mask 0x20, `meteor` in `layout.json`) is set on a weapon that may be a meteor.
+
+Every offset is the one `layout.json` gives for the record and field.
 
 ### Between ticks
 
@@ -133,9 +141,9 @@ Nothing outside the fields above. Every tick comparison is against `Game.ticks` 
 Within one call, only the order of import calls is observable. The block writes are compared at the
 end of the call, so the order they are listed in here carries no meaning.
 
-### `UpdateWindOnStream(stream)` and `UpdateWind()`
+### `UpdateWind(stream)`
 
-`UpdateWind()` has exactly the behaviour of `UpdateWindOnStream(main)`. Let *t* be `Game.ticks`.
+Let *t* be `Game.ticks`.
 
 If `windCounter` < *t*, compared as unsigned 32-bit integers, the wind changes:
 
@@ -147,9 +155,9 @@ If `windCounter` < *t*, compared as unsigned 32-bit integers, the wind changes:
 4. `windX` becomes −S(`windDirection`, `windSpeed`) × 2 and `windZ` becomes
    −C(`windDirection`, `windSpeed`) × 2 (S and C in section 5).
 5. `windStrength` becomes `windSpeed` / `windSpeedDenominator`, computed as a 32-bit float division of
-   the two values converted to float, and then 1.0 if the quotient is above 1.0. The engine sets
-   `windSpeedDenominator` to 5000 at match load. A denominator of 0 never occurs, and the spec doesn't
-   define it.
+   the two values converted to float, and then 1.0 if the quotient is above 1.0. RESET sets
+   `windSpeedDenominator` to 5000 before the first call. A denominator of 0 never occurs, and the spec
+   doesn't define it.
 6. `windEnabled` becomes 1.
 
 Otherwise, only `windEnabled` becomes 0.
@@ -157,11 +165,43 @@ Otherwise, only `windEnabled` becomes 0.
 The imports called, in order: `GameRand(stream)`, `RandomInt`, and then `RandomInt` again if the speed
 isn't 0. `RandomInt` draws from its own generator (`rng.seed` in the recordings), whatever `stream` is (Q1).
 
+### `Apply(event, size)`
+
+If `size` is below 4, nothing changes and `kind` isn't read. Otherwise, by `kind`:
+
+| `kind` | Needs `size` of at least | Effect |
+| --- | --- | --- |
+| 64 ENABLE | 4 | `g_meteorsEnabled` becomes 1 |
+| 65 DISABLE | 4 | `g_meteorsEnabled` becomes 0 |
+| 66 PARAMS | 52 | the shower parameters are set (below) |
+| 67 START | 4 | a shower starts (section 4, "A shower starts"), whether or not showers are switched on |
+| 68 LIMITS | 12 | `Game.windSpeedMin` becomes `min`, and `Game.windSpeedMax` becomes `max` |
+| 69 RESET | 4 | `Game.windSpeedDenominator` becomes 5000, and `Game.windCounter` becomes 0 |
+| any other | | nothing |
+
+A PARAMS or LIMITS event whose `size` is below its payload's changes nothing. The only imports any event
+makes are START's four draws. START makes no meteor fall: the first one falls in the next `UpdateMeteors`,
+on the same tick if it runs at the same `Game.ticks`.
+
+**The shower parameters** (PARAMS), from the payload's fields:
+
+- `g_meteorWeaponName` becomes a copy of `weapon`, up to and including its NUL. The bytes of
+  `g_meteorWeaponName` after that NUL keep the values they had. Publishers always give a name that ends
+  within its 32 bytes. Any other name is undefined.
+- `g_meteorSpawnMagnitude` becomes `radius`.
+- `g_meteorSpawnInterval` becomes 30 / `density`.
+- `g_meteorShowerDuration` becomes `duration` × 30.
+- `g_meteorScheduleGap` becomes `interval` × 30.
+
+The last three are computed in double precision from the float widened to double, then truncated
+toward zero to an int (section 5). The parameters are in seconds and the fields in ticks, at 30 ticks a second.
+
 ### `InitMeteors()`
 
 - `g_meteorActive` becomes 0.
 - `g_meteorNextStrikeTime` becomes `g_meteorSpawnInterval` (Q2).
-- `FindWeaponByName(g_meteorWeaponName)` (the address of the name in the block). If the result is 0,
+- `FindWeaponByName(name)`, where *name* is the address of a NUL-terminated copy of the 32 bytes of
+  `g_meteorWeaponName` (the field in the block, or a copy of it in the module's memory). If the result is 0,
   or the weapon's `meteor` bit is clear, `g_meteorWeapon` becomes the first entry of `Game.weapons`.
   Otherwise it becomes the weapon found. Either way it's stored as a block offset: the weapon's address
   minus `g_blockBase`. For the first entry of `Game.weapons`, that's `g_game` plus the field's offset in
@@ -170,23 +210,6 @@ isn't 0. `RandomInt` draws from its own generator (`rng.seed` in the recordings)
 ### `EmptyShutdownPreCleanup()`
 
 Does nothing.
-
-### `EnableMeteors()`, `DisableMeteors()`
-
-`g_meteorsEnabled` becomes 1, or 0.
-
-### `SetMeteorParams(params)`
-
-- `g_meteorWeaponName` becomes a copy of `params.name`, up to and including its NUL. The bytes of
-  `g_meteorWeaponName` after that NUL keep the values they had. Callers always pass a name that ends
-  within its 32 bytes. Any other name is undefined.
-- `g_meteorSpawnMagnitude` becomes `params.radius`.
-- `g_meteorSpawnInterval` becomes 30 / `params.density`.
-- `g_meteorShowerDuration` becomes `params.duration` × 30.
-- `g_meteorScheduleGap` becomes `params.interval` × 30.
-
-The last three are computed in double precision from the float widened to double, then truncated
-toward zero to an int (section 5). The parameters are in seconds and the fields in ticks, at 30 ticks a second.
 
 ### `LoadMeteorDefaults(params)`
 
@@ -201,11 +224,11 @@ What follows depends on the outcome:
 
 | Outcome | The imports after those | `params` |
 | --- | --- | --- |
-| The file doesn't load (`LoadFile` gives 0) | `TdfFile_Destruct(file)` | unchanged (Q3) |
+| The file doesn't load (`TdfFile_LoadFile` gives 0) | `TdfFile_Destruct(file)` | unchanged (Q3) |
 | No `Default` record | `TdfFile_SelectRecord(file, "Default")` = 0, `TdfFile_Destruct(file)` | unchanged (Q3) |
-| No `MeteorWeapon` field | `SelectRecord` = 1, `TdfRecord_GetFieldString(current, params.name, "MeteorWeapon", 32, "")` = 0, `FatalError` | as `GetFieldString` left `name` |
-| A field is zero | `SelectRecord`, `GetFieldString`, then the fields (below), then `FatalError` | written |
-| Good | `SelectRecord`, `GetFieldString`, then the fields (below), then `TdfFile_Destruct(file)` | written |
+| No `MeteorWeapon` field | `TdfFile_SelectRecord` = 1, `TdfRecord_GetFieldString(current, params.weapon, "MeteorWeapon", 32, "")` = 0, `FatalError` | as `TdfRecord_GetFieldString` left `weapon` |
+| A field is zero | `TdfFile_SelectRecord`, `TdfRecord_GetFieldString`, then the fields (below), then `FatalError` | written |
+| Good | `TdfFile_SelectRecord`, `TdfRecord_GetFieldString`, then the fields (below), then `TdfFile_Destruct(file)` | written |
 
 - **The fields:** `TdfRecord_GetFieldInt(current, "MeteorRadius", 0)` gives `params.radius`. Then
   `TdfRecord_GetFieldDouble(current, key, 0.0)` for `"MeteorDensity"`, `"MeteorDuration"` and
@@ -215,6 +238,8 @@ What follows depends on the outcome:
   are written before `FatalError` is called.
 - **`FatalError`** takes the message `Hey, hoser!  The default meteor shower data was bogus!` (two spaces
   after the `!`). It doesn't return, so no `TdfFile_Destruct` follows it.
+
+The block is not written.
 
 ### `UpdateMeteors()`
 
@@ -227,7 +252,7 @@ Let *t* be `Game.ticks`. All comparisons with *t* are unsigned 32-bit.
       a meteor falls (below).
    2. Then, if `g_meteorStrikeEndTime` ≤ *t*, `g_meteorActive` becomes 0.
 
-**A shower starts:**
+**A shower starts** (here, and on START):
 
 - `g_meteorActive` becomes 1.
 - `g_meteorStrikeEndTime` becomes `g_meteorShowerDuration` + *t*.
@@ -251,20 +276,13 @@ Let *t* be `Game.ticks`. All comparisons with *t* are unsigned 32-bit.
   - the angle *a* = *d6* × 2, as a 16-bit angle.
 - The position is (`g_meteorOrigin.x` × 2^20 − S(*a*, *R*), 88473600, `g_meteorOrigin.y` × 2^20 − C(*a*, *R*)),
   each wrapping at 32 bits.
-- `SpawnProjectile(g_meteorWeapon, position, velocity, 1)`: the weapon as its address (block base plus
-  the stored offset, or 0 when the stored offset is 0, as `interfaces/ref.h` converts it), and the position and velocity as `Vec3` records (`x`, `y`, `z`, each a 32-bit
-  int) in the module's memory. The result is ignored.
+- `Emit(effect, 36)`, with the `WindMeteorsSpawn` effect: `kind` 80, `weapon` the meteor weapon's slot in
+  `Game.weapons`, `pos` the position, `vel` the velocity, and `announce` 1. The slot is the weapon's address
+  (`g_blockBase` plus `g_meteorWeapon`) minus the address of `Game.weapons`, divided by 277; it is −1 when
+  `g_meteorWeapon` is 0.
 
 The imports called, in order: four `GameRand(main)` if a shower started, then two `GameRand(main)` and
-`SpawnProjectile` if a meteor fell.
-
-### `CmdMeteor(args)`
-
-- If the argument count is above 1: `CommandArgs_GetIntArg(args, 1, 0)`. `g_meteorsEnabled` becomes 1
-  if the result isn't 0, and 0 if it is. Nothing else changes.
-- Otherwise a shower starts at once: the same writes and the same four draws as a shower that starts in
-  `UpdateMeteors` (section 4, "A shower starts"), whether or not showers are switched on. No meteor falls in this call: the first one falls in the next
-  `UpdateMeteors`, on the same tick if it runs at the same `Game.ticks`.
+`Emit` if a meteor fell.
 
 ### `SaveMeteors(bank)`
 
@@ -305,6 +323,8 @@ The weapon, its name and the timing parameters aren't saved. They come from the 
   wrap at 32 bits, and multiplying by 2^20 or 65536 is the same as a left shift that wraps. Signed
   division truncates toward zero. Tick comparisons are unsigned. `Point16` coordinates are signed 16-bit:
   in every computation they're sign-extended to 32 bits first, and storing one wraps to 16 bits.
+- **The weapon's slot.** The difference of the two addresses is a multiple of 277 for every weapon
+  `InitMeteors` stores, so the division is exact.
 - **Float to int.** A double truncated toward zero to an int. A value outside the int range, or a NaN,
   becomes −2147483648. This has to hold without a trap. The module is built without non-trapping
   conversions (ABI section 3.2), and wasm's trapping conversion traps on exactly those values.
@@ -321,7 +341,7 @@ The weapon, its name and the timing parameters aren't saved. They come from the 
 
 ## 6. Quirks
 
-- **Q1.** `UpdateWindOnStream` takes its first draw from the stream it's given, but speed and direction
+- **Q1.** `UpdateWind` takes its first draw from the stream it's given, but speed and direction
   always come from `RandomInt`'s own generator (`rng.seed`). A wind change made with the load stream
   therefore draws from both.
 - **Q2.** `InitMeteors` schedules the first shower at tick `g_meteorSpawnInterval` (a few ticks into
@@ -336,17 +356,28 @@ The weapon, its name and the timing parameters aren't saved. They come from the 
 
 From `tests/replay/wind_meteors/` of the kit.
 
-**Wind**, `meteors-earthquake.txt`, call at tick 1 of `UpdateWind`. `windCounter` 0 < 1, with
+**Wind**, `meteors-earthquake.txt`, call at tick 1 of `UpdateWind` (`a stream main`). `windCounter` 0 < 1, with
 `windSpeedMin` 1000, `windSpeedMax` 2000 and `windSpeedDenominator` 5000.
 - `GameRand main` = 4620 gives ⌊4620 × 10 / 32768⌋ = 1, so the counter becomes (1 + 5) × 30 = 180.
 - `RandomInt 1000` = 198 gives speed 1198. `RandomInt 65536` = 29704 gives the direction.
 - `windX` = −S(29704, 1198) × 2 = −696, and `windZ` = −C(29704, 1198) × 2 = 2292.
 - `windStrength` = 1198 / 5000 = f32:0x3e7559b4.
 
-**Params**, `meteors-earthquake.txt`, call at tick 0 of `SetMeteorParams`. `density` f32:0x3ecccccd
-(0.4000000059604645) gives 30 / 0.4000000059604645 = 74.9999988…, truncated to 74. A float division
-would give 75. `duration` 4.0 gives 120, and `interval` 720.0
-gives 21600.
+**No wind change**, `meteors-hailstorm.txt`, call at tick 0 of `UpdateWind` (`a stream load`), after RESET: the
+counter 0 isn't below 0, so there is no draw and `windEnabled` is 0.
+
+**Params**, `meteors-earthquake.txt`, call at tick 0 of `Apply` with `a event.kind 66` and `a size 52`. `density`
+f32:0x3ecccccd (0.4000000059604645) gives 30 / 0.4000000059604645 = 74.9999988…, truncated to 74. A float division
+would give 75. `duration` 4.0 gives 120, and `interval` 720.0 gives 21600. In `meteors-hailstorm.txt`,
+`density` 400.0 gives 30 / 400 = 0.075, so `g_meteorSpawnInterval` 0.
+
+**Limits and reset**, `meteors-hailstorm.txt`, calls at tick 0 of `Apply`: LIMITS with `min` 2200 and `max` 4000 (size 12)
+writes `windSpeedMin` 2200 and `windSpeedMax` 4000; RESET (size 4) writes `windSpeedDenominator` 5000 (`windCounter` was
+0 already).
+
+**The weapon**, `console-features.txt`, call at tick 0 of `InitMeteors`. `FindWeaponByName "Meteor"` gives
+`weapondef#225`, whose flags 0x00000020 have the `meteor` bit, so `g_meteorWeapon` is that weapon, and
+`g_meteorNextStrikeTime` becomes `g_meteorSpawnInterval`, 15. Its meteors are published with `weapon` 225.
 
 **A shower and its first meteor**, `meteors-hailstorm.txt`, call at tick 1 of `UpdateMeteors`.
 `Game.width` is 384, `Game.height` 320, and `g_meteorSpawnMagnitude` 2800.
@@ -355,20 +386,23 @@ gives 21600.
 - The velocity is (9 × 2^20 / 90, −983040, 14 × 2^20 / 90) = (104857, −983040, 163111).
 - The draws 19902 and 20102 give r = 1700, so *R* = 111411200 and *a* = 40204.
 - The position is (90599392, 88473600, 327630432).
+- The effect is `Emit (80,226,90599392,88473600,327630432,104857,-983040,163111,1) 36`.
 
-**Rounding toward zero**, `console-features.txt`, call at tick 70 of `CmdMeteor` (count 1), then
+**START and rounding toward zero**, `console-features.txt`, call at tick 70 of `Apply` with `a event.kind 67`, then
 `UpdateMeteors` at tick 70.
 - The draws 11777, 5660, 8954 and 31871 give the target (38, 36) and the origin (52, 23).
 - `g_meteorStrikeEndTime` is 70 + 150 = 220, and `g_meteorNextStrikeTime` is 220 + 1800 = 2020.
-- The meteor's vx is −14 × 2^20 / 90 = −163111.8…, so −163111.
+- In `UpdateMeteors`, the meteor's vx is −14 × 2^20 / 90 = −163111.8…, so −163111, and `g_meteorNextHitTime` becomes
+  70 + 15 = 85.
 
-**The console switch**, `console-features.txt`, call at tick 100 of `CmdMeteor`, with `meteor 1` (count 2).
-`CommandArgs_GetIntArg 1 0` = 1 gives `g_meteorsEnabled` 1.
+**The switch**, `console-features.txt`, calls of `Apply` at tick 100 (ENABLE) and 150 (DISABLE), each with `a size 4`:
+`g_meteorsEnabled` becomes 1, then 0.
 
 **Not in any recording:** `SaveMeteors`, `LoadMeteors`, `FatalError`, `EmptyShutdownPreCleanup`, the two
-Q3 outcomes, and a wind change on the load stream. Only the scenario traces check these.
+Q3 outcomes, a wind change on the load stream, an event shorter than its payload or of another kind, and a
+meteor with no weapon stored (`weapon` −1). Only the scenario traces check these.
 
 ## 8. Kit version
 
-Kit `interfaces-v1` and `reference-traces-v20`, the versions the gate judges against. Interface
-`wind_meteors` 1.2.
+Kit `interfaces-v59` and `reference-traces-v53`, the versions the gate judges against. Interface
+`wind_meteors` 3.1. The imports are against `weapons` 4.0 and `services` 4.0.
