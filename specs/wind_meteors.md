@@ -130,7 +130,10 @@ and the random streams through the services.
 
 `WeaponDef.flags` bit 5 (mask 0x20, `meteor` in `layout.json`) is set on a weapon that may be a meteor.
 
-Every offset is the one `layout.json` gives for the record and field.
+Every offset is the one `layout.json` gives for the record and field. Some `Game` fields lie at offsets
+that aren't multiples of their size (`windDirection` at 229080, `windSpeed` at 229082): they are read and
+written in place at those offsets, each with its own width, so a write of the 2-byte `windDirection`
+changes those 2 bytes only.
 
 ### Between ticks
 
@@ -204,8 +207,8 @@ toward zero to an int (section 5). The parameters are in seconds and the fields 
   `g_meteorWeaponName`: the field in the block, or a copy of its 32 bytes in the module's memory. If the result is 0,
   or the weapon's `meteor` bit is clear, `g_meteorWeapon` becomes the first entry of `Game.weapons`.
   Otherwise it becomes the weapon found. Either way it's stored as a block offset: the weapon's address
-  minus `g_blockBase`. For the first entry of `Game.weapons`, that's `g_game` plus the field's offset in
-  `layout.json` (11507), minus `g_blockBase`.
+  minus `g_blockBase`. For the first entry of `Game.weapons`, that's the game record's address (the value the
+  data word `g_game` holds, ABI 8.2) plus the field's offset in `layout.json` (11507), minus `g_blockBase`.
 
 ### `EmptyShutdownPreCleanup()`
 
@@ -215,7 +218,8 @@ Does nothing.
 
 Reads record `Default` of the data file `gamedata/meteor.<ext>` into `params`, where `<ext>` is the
 data word `g_extTdf`. The file is a `TdfFile` in the module's memory, and the path buffer must be large
-enough for the path the service writes. Every outcome starts with these imports:
+enough for the path the service writes: here `gamedata\meteor.tdf` and its NUL, 20 bytes (the recordings'
+`BuildDataPath` line). Every outcome starts with these imports:
 
 - `TdfFile_Construct(file)`, then `BuildDataPath(buffer, "gamedata", "meteor", g_extTdf)`, then
   `TdfFile_LoadFile(file, buffer)`.
@@ -237,7 +241,10 @@ What follows depends on the outcome:
 - **"A field is zero":** `params.radius` is 0, or any of the three floats is 0.0 after rounding. All four
   are written before `FatalError` is called.
 - **`FatalError`** takes the message `Hey, hoser!  The default meteor shower data was bogus!` (two spaces
-  after the `!`). It doesn't return, so no `TdfFile_Destruct` follows it.
+  after the `!`). It doesn't return: the import returns an error, the call unwinds as a trap does, and the game ends with
+  the message (ABI 13). No import follows it, and nothing the slot would have done after it happens.
+- **`TdfRecord_GetFieldString`'s arguments** are, in order: the record, the destination (`params.weapon`),
+  the key, the size and the default (`interfaces/services.h`).
 
 The block is not written.
 
@@ -279,7 +286,9 @@ Let *t* be `Game.ticks`. All comparisons with *t* are unsigned 32-bit.
 - `Emit(effect, 36)`, with the `WindMeteorsSpawn` effect: `kind` 80, `weapon` the meteor weapon's slot in
   `Game.weapons`, `pos` the position, `vel` the velocity, and `announce` 1. The slot is the weapon's address
   (`g_blockBase` plus `g_meteorWeapon`) minus the address of `Game.weapons`, divided by 277; it is −1 when
-  `g_meteorWeapon` is 0.
+  `g_meteorWeapon` is 0. The host refuses a SPAWN whose `weapon` is outside the table, as an import error
+  (ABI 13), so a meteor falling while `g_meteorWeapon` is 0 ends the game. In a match it doesn't occur:
+  `InitMeteors` stores a weapon before the first tick.
 
 The imports called, in order: four `GameRand(main)` if a shower started, then two `GameRand(main)` and
 `Emit` if a meteor fell.
@@ -326,14 +335,16 @@ The weapon, its name and the timing parameters aren't saved. They come from the 
 - **The weapon's slot.** The difference of the two addresses is a multiple of 277 for every weapon
   `InitMeteors` stores, so the division is exact.
 - **Float to int.** The double truncated toward zero to a 64-bit integer, keeping its low 32 bits as a
-  signed int, as MSVC 5's `_ftol` does (`docs/files-gate.md` words it the same way). A NaN, an infinity
+  signed int (as in `docs/files-gate.md`). A NaN, an infinity
   or a magnitude of 2^63 or more gives 0. No value traps: a `density` of 0.0 gives 30 / 0 = +∞, so
   `g_meteorSpawnInterval` 0, and a `density` of f32:0x3089705f (about 1e-9) gives 30000000848.45…,
   truncated to 30000000848, whose low 32 bits are −64770224.
 - **The table sine and cosine, S(*a*, *s*) and C(*a*, *s*).** *a* is a 16-bit angle (only its low 16
   bits count, 0x10000 a full turn) and *s* a 32-bit int.
   - The table: *T*[*i*] = round(sin(*i* × 2π / 512) × 8192) for *i* = 0 to 511, rounded to nearest,
-    with sin computed in double precision. No entry is a tie.
+    with sin computed in double precision. No entry is a tie. It is fixed data: *T*[0] to *T*[5] are 0, 101,
+    201, 302, 402, 502, *T*[64] is 5793, *T*[128] is 8192, *T*[256 − *i*] = *T*[*i*], *T*[256 + *i*] = −*T*[*i*],
+    and *T*[0] + … + *T*[128] is 671631.
   - S(*a*, *s*) = *P*(*T*[⌊(*a* + 32) / 128⌋ mod 512], *s*), with *a* taken as an unsigned 16-bit
     value (0 to 65535). The table entry is the nearest one, a tie going up.
   - C(*a*, *s*) = S(*a* + 0x4000, *s*): the cosine is the sine a quarter turn on.
@@ -346,8 +357,7 @@ The weapon, its name and the timing parameters aren't saved. They come from the 
 - **Q1.** `UpdateWind` takes its first draw from the stream it's given, but speed and direction
   always come from `RandomInt`'s own generator (`rng.seed`). A wind change made with the load stream
   therefore draws from both.
-- **Q2.** `InitMeteors` schedules the first shower at tick `g_meteorSpawnInterval` (a few ticks into
-  the match), not after `g_meteorScheduleGap`.
+- **Q2.** `InitMeteors` schedules the first shower at tick `g_meteorSpawnInterval`, not after `g_meteorScheduleGap`.
 - **Q3.** A missing default meteor data file, or one without a `Default` record, leaves the params as
   they were, with no error. Only a present but bad record is fatal.
 - **Q4.** When showers are switched off, the schedule keeps running. A due shower still makes its four
