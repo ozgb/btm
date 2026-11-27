@@ -700,6 +700,8 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
                 Some("the kind is not in the module's publishes table")
             } else if Some(n as i32) != want {
                 Some("the size is not the payload's size of its kind")
+            } else if kind != 80 || n < 8 {
+                None
             } else {
                 let weapon = i32::from_le_bytes([m[a + 4], m[a + 5], m[a + 6], m[a + 7]]);
                 if !(0..256).contains(&weapon) {
@@ -980,14 +982,18 @@ fn define_sim_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
         if !(1..=LAST_KIND).contains(&kind) || (args == 0 && count > 0) {
             return Ok(());
         }
+        // the queue holds 4096 records of six arguments at most
+        if count > 6 * 4096 {
+            return Ok(());
+        }
         let mut words = Vec::new();
         if count > 0 {
             let m = c.data().mem.unwrap().data(&c);
+            if args as u32 as u64 + 4 * count as u64 > m.len() as u64 {
+                return Result::Err(refuse(c.data_mut(), "import", "import RecordSimEvent: the buffer runs past the module memory".to_string()));
+            }
             for i in 0..count as u64 {
-                match rd32(m, args as u32 as u64 + 4 * i) {
-                    Some(w) => words.push(w),
-                    None => return Ok(()),
-                }
+                words.extend(rd32(m, args as u32 as u64 + 4 * i));
             }
         }
         let tick = game_tick(&c);
@@ -1000,7 +1006,7 @@ fn define_sim_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
     })?;
     linker.func_wrap("services", "SimCaptureAlloc", |mut c: Caller<'_, State>, bytes: i32, off: i32| -> Result<i32, wasmi::Error> {
         check_ptrs(&mut c, "SimCaptureAlloc", &[(1, off)])?;
-        if off == 0 {
+        if off == 0 || bytes < 0 {
             return Ok(0);
         }
         let want = ((bytes as u32 as u64) + 7) & !7;

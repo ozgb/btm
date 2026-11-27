@@ -560,7 +560,16 @@ impl<'a> Walker<'a> {
         }
         let mut live = Vec::new();
         let mut scripted = std::collections::HashSet::new();
-        for (p, _) in self.lines.iter() {
+        for (p, v) in self.lines.iter() {
+            if p.ends_with(b"].class")
+                && (p.starts_with(b"orderFx[") || p.starts_with(b"playersState.conditions.victory[") || p.starts_with(b"playersState.conditions.defeat["))
+            {
+                // section 11: an order effect of a class above 5 and a condition of class 0 fail the run
+                let c = hexval(v)?;
+                if (p.starts_with(b"orderFx[") && c > 5) || (!p.starts_with(b"orderFx[") && c == 0) {
+                    return Err(());
+                }
+            }
             if p.starts_with(b"units[") {
                 if let Some(i) = match_index(p, "units[", "].unitDefIndex") {
                     live.push(i);

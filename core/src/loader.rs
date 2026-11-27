@@ -336,7 +336,18 @@ impl<T: 'static> Loader<T> {
         }
         if budget.is_some() {
             for f in ["__fuel_set", "__fuel_get"] {
-                if !matches!(instance.get_export(&self.store, f), Some(Extern::Func(_))) {
+                let ok = match instance.get_export(&self.store, f) {
+                    Some(Extern::Func(h)) => {
+                        let t = h.ty(&self.store);
+                        if f == "__fuel_set" {
+                            t.params() == [ValType::I64] && t.results().is_empty()
+                        } else {
+                            t.params().is_empty() && t.results() == [ValType::I64]
+                        }
+                    }
+                    _ => false,
+                };
+                if !ok {
                     return Result::Err(Err::named("export", name));
                 }
             }

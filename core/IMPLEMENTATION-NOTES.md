@@ -154,3 +154,20 @@ than 0 or 1 is undefined by `rand_stream.h`; it draws from main); 17 (`gate.py` 
 `runtime_check.py` covers it).
 
 Verdicts, session 5: local gate equal on every group but `files`; runtime check and host check equal. Verdict of req1 (this session): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
+
+## Session 6 (interfaces-v64, reference-traces-v54): the fifth review
+
+Nothing new on `main` or the spec branches; the kit is unchanged. Local gate, runtime check: equal on every group but `files`.
+
+Fixed: 1 (`RecordSimEvent`: a count above 6 x 4096 writes nothing, a buffer past the memory is a trap, no unbounded gather),
+2 (the `world` row fails the dump on any `orderFx[].class` above 5 and any victory/defeat condition of class 0, in whatever block
+the line is), 3 (negative `SimCaptureAlloc` bytes answer 0 and write nothing), 5 (`__fuel_set` must be `(i64)->()` and
+`__fuel_get` `()->i64`, else `export` at load), 10 (the weapon-slot rule is for kind 80 only), 20 (RUNTIME-NOTES wording).
+Not changed, with reasons: 3 (arena and queue never drained: no tick boundary exists in the `host` replay and no hosted module
+records radar events or more than 4096 events; first work for scenario mode), 4 (free list: same, no vector), 6 (`core-gate.md`
+judges only the manifest numbers), 7 (hidden state and glue errors: scenario mode, not judged here), 8, 9 (no
+vector; section 17 lines are what every dump of the kit has), 11 (manifest is the embedded constant), 12 (kept: validation of
+the original before the rewrite), 13, 14 (the target is musl on this machine; verified static), 15 (kept as the documented
+order), 16, 17, 18, 19 (robustness or dead paths no vector reaches).
+
+Verdict of req1 (this session): see below.
