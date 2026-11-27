@@ -94,10 +94,9 @@ the kit", below), so the entry is not exact for them yet.
 ### What the engine's slots need
 
 The engine's slots reach these engine calls, which no import of the kit's `interfaces/services.h` (version 4.0)
-or of an interface offers. ozgb/btm#43 adds them when it moves the slots into the module. The kit's imports they
-would use besides are `players.NewConditions`, `players.DeleteConditions`, `players.RegisterConditions`,
-`players.FreeConditions`, `wind_meteors.LoadMeteorDefaults`, `services.BuildDataPath`, the `services.TdfFile_*`
-and `services.TdfRecord_*` imports, and `services.FatalError`.
+or of an interface offers. ozgb/btm#43 adds them when it moves the slots into the module. The list is for that
+issue: the module of this spec exports none of the engine's slots, and imports only what "The manifest entry"
+lists.
 
 1. **Allocation in the block:** the record itself, the units and their strings, the start position rules, the
    features and the briefing's text; and their release, with the release of the conditions object players made. The block's allocations are zeroed.
@@ -128,6 +127,11 @@ Four of the module's slots need calls of that list (ozgb/byte-tactics-moddable#1
 | `GetCampaignMissionName` | 3, as above, and 4: the language prefix of a localised key |
 | `ComputeMapChecksum` | 2: opening the terrain file and reading its bytes at an offset |
 
+In particular, the module has no way to reach the campaign file's records. `Mission.list` is a `TdfFile` that the
+engine's slots filled in an earlier call, and its record words are handles, which ABI 8.1 makes valid only within
+the call that got them. Until the kit offers these calls, a module can't implement `MissionExists`, `CountMissions`
+and `GetCampaignMissionName` from the kit alone, nor, without gap 2, `ComputeMapChecksum`.
+
 ### Arguments outside the block
 
 - **`MissionParams`** (`GetMissionParams`): the struct of `interfaces/mission.h`, 124 bytes: eleven 32-bit fields
@@ -149,8 +153,10 @@ None. No slot of this module records a sim event (kinds are listed in `docs/sim-
 
 ### Owned
 
-- **`Game.net`**, a `Ref<Mission>`: the record, or null before the first `SetMissionType` and after
-  `FreeOtaEnumCacheAndMission`. "The record" below is the `Mission` it points at.
+- **`Game.net`**, a `Ref<Mission>`: the record, or null before the engine first makes one (`SetMissionType`) and
+  after `FreeOtaEnumCacheAndMission`. The engine makes a record before it calls any of the module's slots, and
+  calls them only while there is one, so the module's slots never see a null `Game.net`. "The record" below is the
+  `Mission` it points at.
 - **`Mission`** (`layout.json`, 3780 bytes). Its fields, with what the slots of section 4 make of them:
 
 | Field | Type | Meaning |
@@ -333,7 +339,7 @@ record.
 | --- | --- | --- |
 | `size` is below 1, or `campaign` is empty | unchanged | 0 |
 | Mission record `index` is missing | unchanged | 0 |
-| It has the localised key `missionname` | its text, as the parser copies it with `size` | 1 |
+| It has the localised key `missionname` | what `services.TdfRecord_GetFieldString` writes for that key with `size` (the key's text, cut to `size` − 1 bytes, padded with zero bytes up to `out[size − 1]`, which is 0: all `size` bytes are written) | 1 |
 | It hasn't | the first `size` − 1 bytes of `Error -- Unnamed Mission`, padded with zero bytes to `size` − 1, then a 0 at `out[size − 1]`: all `size` bytes are written | 1 |
 
 **A localised key** *k* is read as the key made of the translation table's language prefix followed by *k*, and,
@@ -572,12 +578,14 @@ rules of `type` 1 with ids 0, 2, 4, 6, 8, 1, 3, 5, 7, 9. Rule 0 has `id` 0, `x` 
 recording writes the backslash doubled), so the result is its address, recorded as that text. With `index` 7 the
 text is `ai\default.txt`.
 
-**The figures**, `console-ilose.txt`, the first `GetMissionParams` at tick 0: `surfaceMetal` 3, `minWindSpeed` 100,
+**The figures**, `console-ilose.txt`, the first `GetMissionParams` at tick 0. The recording writes the out struct as
+one value, `o result (...)`, its two arrays as `x:` bytes (`docs/replay-format.md`): `surfaceMetal` 3, `minWindSpeed` 100,
 `maxWindSpeed` 3000, `gravity` 112, `tidalStrength` f32:0x00000000, `killMul` f32:0x42480000 (50.0), `timeMul` 0,
 `startMetal` and `startEnergy` f32:0x447a0000 (1000.0) for players 0 and 1 and 0 for 2 to 9.
 
-**The game type**, `console-ilose.txt`: the first `GetGameType` at tick 0 reads `type` 0, the second `type` 2 (the
-record was replaced by `SetMissionType` between them).
+**The game type**, `console-ilose.txt`: the first `GetGameType` at tick 0 reads `type` 0, the second `type` 2. Between
+the two, the engine's `SetMissionType` replaced the record. The recordings don't record the engine's slots, so the
+replay restores the new record's fields from the next call's `r` lines.
 
 **A mission unit**, `long/mission-build-unit.txt`, the first `GetMissionUnit` at tick 0, `index` 0, `unitCount` 160:
 `out.name` `ARMCK`, `out.ident` the empty text (the key exists with no text), `out.initialMission` null (0),
