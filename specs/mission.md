@@ -47,10 +47,10 @@ module's slots read, and the scenario traces judge it (section 3).
 ### The manifest entry
 
 The kit's manifest (`wasm/modules.json`) has no entry and no `signatures.mission` for this module, only its
-interface major, 2 (`majors.mission`). This section gives the entry for the module's 25 slots. It is exact for 21
-of them. The other 4, `MissionExists`, `CountMissions`, `GetCampaignMissionName` and `ComputeMapChecksum`, are
-queries that are not load class but read a file, and they need engine calls no import of the kit offers ("Gaps of
-the kit", below), so the entry is not exact for them yet.
+interface major, 2 (`majors.mission`). This section gives the entry for the module's 25 slots. It is exact for 24
+of them. `GetCampaignMissionName` needs one value no import of the kit gives ("Gaps of the kit", below). The kit's
+replay schema lists no imports for mission (`subsystems.mission.header.imports`) because no recorded call makes
+one; the imports below are those of the unrecorded queries.
 
 - `name` and `interface`: `mission`.
 - `exports`, in the header's slot order: `GetGameType`, `GetNameSlot`, `GetCampaignName`, `GetMissionIndex`,
@@ -60,7 +60,7 @@ the kit", below), so the entry is not exact for them yet.
   `GetMissionUnit`, `CountMissionFeatures`, `GetMissionFeature`, `GetMemory`, `GetNumPlayers`.
 - `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI 8.2). The module reads `g_game` and
   `g_blockBase` only.
-- `majors`: `mission` 2 and `services` 4.
+- `majors`: `mission` 2, `files` 3 and `services` 4.
 - `data_base`, `table_base`, `fuel_budget` and `size_budget`: the build picks them (ABI 2, 11.1 and 11.3). The
   window must not overlap another module's window, nor its table range another module's range.
 - Slot kinds. A text a slot returns points into the record, so it is a `block` result: the record's address
@@ -79,29 +79,35 @@ the kit", below), so the entry is not exact for them yet.
 
 `HasMissionName` returns 0 or 1.
 
-- Imports of the 21: none.
-- Imports of `MissionExists`, `CountMissions` and `GetCampaignMissionName` that the kit declares, with the kinds
-  this entry gives them, besides the gaps below:
+- Imports, every one listed and nothing else. The slots not named in the table make none.
 
 | Import | Kinds | Used for |
 | --- | --- | --- |
-| `services.TdfFile_SelectRecord` | `[linear, linear] -> int` | the mission records of the campaign file |
-| `services.TdfRecord_GetFieldString` | `[handle, linear, linear, int, linear] -> int` | the localised `missionname` of `GetCampaignMissionName` |
+| `services.TdfFile_Construct`, `services.TdfFile_Destruct` | `[linear] -> void` | the module's own parsed copy of the campaign file (`MissionExists`, `CountMissions`, `GetCampaignMissionName`) |
+| `services.TdfFile_LoadFile` | `[linear, linear] -> int` | loading it from `names[0]` |
+| `services.TdfFile_SelectRecord` | `[linear, linear] -> int` | its mission records |
+| `services.TdfRecord_GetFieldString` | `[handle, linear, linear, int, linear] -> int` | the localised `missionname` (`GetCampaignMissionName`) |
+| `files.OpenRead` | `[linear] -> handle` | the terrain file (`ComputeMapChecksum`); 0 when it doesn't open |
+| `files.Read` | `[handle, linear, int] -> int` | its header, plot and features |
+| `files.Seek` | `[handle, int] -> int` | the offsets of the plot and the features |
+| `files.Close` | `[handle] -> int` | closing it |
+
+The recordings hold no call of these slots, so their import order isn't compared; section 4 gives what each reads.
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`.
 - Hooks: every slot of `interfaces/mission.h` says "Hooks: none", so the module raises none.
 
 ### What the engine's slots need
 
-The engine's slots reach these engine calls, which no import of the kit's `interfaces/services.h` (version 4.0)
-or of an interface offers. ozgb/btm#43 adds them when it moves the slots into the module. The list is for that
+The engine's slots reach these engine calls. All but item 2 are calls that no import of the kit's
+`interfaces/services.h` (version 4.0) or of an interface offers. ozgb/btm#43 adds them when it moves the slots into the module. The list is for that
 issue: the module of this spec exports none of the engine's slots, and imports only what "The manifest entry"
 lists.
 
 1. **Allocation in the block:** the record itself, the units and their strings, the start position rules, the
    features and the briefing's text; and their release, with the release of the conditions object players made. The block's allocations are zeroed.
 2. **Files by name:** a file's length (0 for a missing file), whether it opens for reading, and reading its
-   bytes at an offset.
+   bytes at an offset. `interfaces/files.h` offers these (`LengthByName`, `OpenRead`, `ReadAt`).
 3. **The parser's records beyond the imports:** unloading a file, resetting its current record to none,
    counting and indexing the sub-records of a record, finding a sub-record by name, setting the current record
    to a record found earlier, the checksum the parser keeps for a record's text, and a parsed file kept between
@@ -119,18 +125,15 @@ lists.
 
 ### Gaps of the kit
 
-Four of the module's slots need calls of that list (ozgb/byte-tactics-moddable#1206):
+Each mission record a campaign query selects takes one handle, and so does the campaign file's root.
+`CountMissions` and `MissionExists` walk the mission records, so on a campaign with more than 31 of them they go
+past ABI 8.1's 32 handles in one call (`MissionExists` only when it must look past record 30), a fatal error the
+engine's own slots don't have. `GetCampaignMissionName` takes 2 at most. The kit offers no way to release a handle within a call.
 
-| Slot | Needs |
-| --- | --- |
-| `MissionExists`, `CountMissions` | 3: the campaign file the record keeps, parsed, between calls, and resetting its current record |
-| `GetCampaignMissionName` | 3, as above, and 4: the language prefix of a localised key |
-| `ComputeMapChecksum` | 2: opening the terrain file and reading its bytes at an offset |
-
-In particular, the module has no way to reach the campaign file's records. `Mission.list` is a `TdfFile` that the
-engine's slots filled in an earlier call, and its record words are handles, which ABI 8.1 makes valid only within
-the call that got them. Until the kit offers these calls, a module can't implement `MissionExists`, `CountMissions`
-and `GetCampaignMissionName` from the kit alone, nor, without gap 2, `ComputeMapChecksum`.
+`GetCampaignMissionName` reads the localised key `missionname`: first the key made of the translation table's
+language prefix followed by `missionname`, then `missionname` itself (gap 4 of the list above). No import gives the prefix
+(ozgb/byte-tactics-moddable#1206). The prefix is the name of the language the game's translations were loaded
+for, such as `english`.
 
 ### Arguments outside the block
 
@@ -207,10 +210,16 @@ hint, 5 the glamour picture, 6 the use-only unit list, 7 the AI profile, 8 the g
 ### Between ticks
 
 Nothing outside the record, the tables and texts it points at, and the `Game` fields above. The trace hashes the
-record at tick 1 (`docs/trace-format.md`, section 8.20): `type`, `multi`, the figures, the start resources, and
-every unit, rule and feature with their strings, so these must hold what section 4 says a load leaves. A query
-slot changes nothing, but `ComputeMapChecksum` sets `tntChecksum`, and the campaign queries move the current
-record of `list` (section 4).
+record at tick 1 (`docs/trace-format.md`, section 8.20, and the tables `MissionData` and `MissionStartRest` of
+`data/trace_schema.json`), so these must hold what section 4 says a load leaves:
+
+- `type`, `multi`, `surfaceMetal`, `gravity`, `tidalStrength`, `lavaWorld`, `noSeaLevelTrigger`,
+  `waterDoesDamage`, `waterDamage`, `killMul` and `timeMul`;
+- `startMetal` and `startEnergy` of players 0 and 1, and those of players 2 to 9 when `type` is 1;
+- `unitCount`, `ruleCount` and `featureCount`, and every unit, rule and feature, with their strings.
+
+The trace schema is the authority on the rest, which isn't hashed (`minWindSpeed` and `maxWindSpeed` among it: the
+trace hashes their copies in `Game`). A query slot changes nothing, but `ComputeMapChecksum` sets `tntChecksum`.
 
 ## 4. Behaviour
 
@@ -229,7 +238,7 @@ address of a field" is the record's address (`g_blockBase` plus `Game.net`) plus
 | Slot | Result |
 | --- | --- |
 | `GetGameType()` | `type` |
-| `GetNameSlot(index)` | the address of `names[index]` when its first byte isn't 0, else 0. Callers pass 0 to 8; another index is undefined |
+| `GetNameSlot(index)` | the address of `names[index]` when its first byte isn't 0, else 0. Callers pass 0 to 8 only; for another index the result is never judged, and 0 will do (the slot must not trap) |
 | `GetCampaignName()` | the address of `campaign` when its first byte isn't 0, else 0 |
 | `GetMissionIndex()` | `missionIndex` |
 | `GetMissionName()` | the address of `missionName`, even when it is empty |
@@ -323,8 +332,16 @@ A record of a type other than 1 is given a non-empty campaign by no caller.
 
 "Mission record *n*" is the top-level record named `MISSION`*n* (*n* in decimal, from 0) of the campaign file
 `list`. "The campaign's count" is 0 when `campaign` is empty, and otherwise the number of mission records 0, 1,
-2, ... that exist before the first missing one. A lookup of a mission record leaves it as the file's current
-record.
+2, ... that exist before the first missing one. A lookup of a mission record by the engine's slots leaves it as
+`list`'s current record; nothing else reads that.
+
+The module's `MissionExists`, `CountMissions` and `GetCampaignMissionName` don't use `list`: its record words are
+handles from an earlier call, which ABI 8.1 makes invalid. Each call parses the campaign file again: when
+`campaign` isn't empty, `services.TdfFile_Construct` on a `TdfFile` of its own, `services.TdfFile_LoadFile` with
+`names[0]` (the file `list` was loaded from), and `services.TdfFile_Destruct` before it returns. Each lookup of a
+mission record is `services.TdfFile_SelectRecord` with the record's name, made with the file's current record word
+(byte offset 4) set to 0 first, the null handle, so that the lookup is among the top-level records (ABI 9.3). A
+file that doesn't load has no mission records. The results are those of the table; `list` is left as it was.
 
 | Slot | Result | Writes |
 | --- | --- | --- |
@@ -520,9 +537,10 @@ A result of 0 leaves `parser`'s current record wherever the last lookup left it.
 
 With the header's 32-bit fields *w* at byte 4, *h* at byte 8, *p* at byte 16, *n* at byte 28 and *o* at byte 32:
 the plot is the *w* × *h* × 4 bytes at offset *p* of the file, and the features the *n* × 132 bytes at offset *o*
-(none when that size isn't above 0). K is section 5's checksum. The result is a function of the file: a module may
-compute it each time `tntChecksum` is 0. A name the engine has seen before gives the same value as the first time.
-`names[1]` is never empty when the engine calls this slot.
+(none when that size isn't above 0). K is section 5's checksum. The file is opened with `files.OpenRead(names[1])`
+(0 is "doesn't open"), read with `files.Read` after `files.Seek` to each offset, and closed with `files.Close`. A
+read may be split into parts: K depends only on the bytes and their positions. `headerChecksum` is the engine's
+(section 3); the module only reads it. `names[1]` is never empty when the engine calls this slot.
 
 ## 5. Exactness
 
@@ -533,6 +551,8 @@ compute it each time `tntChecksum` is 0. A name the engine has seen before gives
   Signed comparisons everywhere a table above doesn't say otherwise.
 - **Floats.** A double the parser gives is rounded to the nearest float (IEEE 754, ties to even). An int converted
   to float is rounded to nearest the same way. `GetMissionParams` copies floats as their bits.
+- **Reads into *n* bytes.** A text read into *n* bytes keeps at most *n* − 1 bytes of the key's text, then a 0; the
+  rest of the *n* bytes are zero.
 - **Case.** "Ignoring case" and "lower case" act on the ASCII letters `A` to `Z` only.
 - **The checksum K** of *len* bytes *b*[0] to *b*[*len* − 1]: four 8-bit values *a*, *x*, *c*, *d*, all 0 at the start.
   For each *i* from 0: *a* = (*a* + *b*[*i*]) mod 256; *x* = *x* XOR *b*[*i*]; *c* = (*c* + ((*i* XOR *b*[*i*]) mod
@@ -564,7 +584,9 @@ compute it each time `tntChecksum` is 0. A name the engine has seen before gives
 
 ## 7. Examples
 
-From `tests/replay/mission/` of the kit.
+From `tests/replay/mission/` of the kit. The recordings name element *i* of `names`, `startMetal` and `startEnergy`
+as `names<i>`, `startMetal<i>` and `startEnergy<i>`, and record a text result (a `block` address) as the text it
+points at, which is what the gate compares.
 
 **A start position**, `console-ilose.txt`, the first `GetStartPosition` at tick 0, with `id` 0. The record holds 10
 rules of `type` 1 with ids 0, 2, 4, 6, 8, 1, 3, 5, 7, 9. Rule 0 has `id` 0, `x` 560, `z` 240: `out.x` = 560 × 65536 =
