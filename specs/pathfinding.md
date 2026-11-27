@@ -640,10 +640,10 @@ refresh (`Step`, step 4).
   the cell then names.
 - **Q7. The start node's penalty.** The game pushes the start node with a penalty (bytes 16 and 17 of the
   node) that it leaves unset (the kit's trace schema, `Node`, `excluded`), so its value is not part of the
-  behaviour. This module writes 0 there. The bytes are compared only while the start node is still in the
-  open list at the end of a call, which happens when a `Step` runs out of budget right after the start of a
-  search; no recording does (in every one, the next push overwrites the node in the same call), so no
-  recording can tell 0 from another value.
+  behaviour. This module writes 0 there. The bytes are compared while no later push has overwritten the node:
+  when a `Step` runs out of budget right after the start of a search, or when the first expansion pushes
+  nothing (the start node is then removed, which writes only its `index`, and its penalty stays in the pool
+  until a push reuses it). No recording reaches either case, so no recording can tell 0 from another value.
 - **Q8. The probe reports DIRECT and the search goes on.** A probe that reaches a goal cell gives the event
   STARTED with DIRECT, and the open list still runs.
 - **Q9. The reverse direction twice.** The first expansion of a search considers the reverse of the start's
@@ -704,7 +704,8 @@ Q5); no entry holds the requester. The second `Cancel 5427680` that follows chan
 reaches 150. `playerTickLoad` is 99900 for players 0 and 1 and 0 for the rest, and
 `pathworld.UnitsPerPlayer` gives 250 (ten imports, one per player), so *v* is 399 for players 0 and 1, whose
 weights become `baseScale` (0x18000), and 0 for players 2 to 9, whose weights become 6 × 0x18000 = 0x90000.
-Every `playerTickLoad` becomes 0.
+Every `playerTickLoad` becomes 0 at the refresh; the turns of the same `Step` then count their visits, so the
+call ends with 666 for players 0 and 1 (`w region 364:9a0200 368:9a0200`).
 
 **Not in any recording:** these are stated by this spec alone, and no recording checks them.
 - The slots `Shutdown`, `WriteState`, `SetSearchScale` and `DebugCell`, and `CellsChanged` with the cause 1
