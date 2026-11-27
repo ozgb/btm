@@ -134,7 +134,7 @@ of this spec are the module's own path events (`PathEventKind`), polled through 
 
 ### Owned
 
-- **`Game.pathfinder`**: the block offset of the region, *R*, from `Init` until `Shutdown`, which sets it
+- **`Game.pathfinder`** (`layout.json`: byte 82439 of `Game`, unaligned): the block offset of the region, *R*, from `Init` until `Shutdown`, which sets it
   to 0. Every slot but `RegionSize` and `Init` finds the region through it; while it is 0, `Submit`,
   `Cancel` and `Step` do nothing and `Poll` returns 0 (`DebugCell` is outside the contract then).
 - **The region**, every byte of it, compared byte for byte at the end of every recorded call (the pseudo-field
@@ -245,7 +245,7 @@ count (24), and 64 points (28: *x*, *y*, i16 each, in world units).
 ### Read
 
 - `Game.pathfinder` (above).
-- `Game.width` and `Game.height` (signed 32-bit), at `Init` only: the grid's size (below). `RegionSize`
+- `Game.width` and `Game.height` (signed 32-bit, bytes 82483 and 82487 of `Game`), at `Init` only: the grid's size (below). `RegionSize`
   uses `map` alone. The recordings give the two fields as `r Game.width 224` and `r Game.height 102` in the
   read set of the first call of each file, equal to `map.width` and `map.height`, which is all a slot other
   than `Init` needs of them.
@@ -314,7 +314,8 @@ coordinate is taken as its low 16 bits, signed.
 2. With *vx* = ⌊*x* / 2⌋ + ⌊*footprint x* / 4⌋ and *vy* = ⌊*y* / 2⌋ + ⌊*footprint y* / 4⌋ (floor
    division, signed): when *vx* ≥ *seen width* or *vy* ≥ *seen height* (signed comparisons), *S* = 0
    with no further import.
-3. `pathworld.Seen(player, vx, vy)`; 0 gives *S* = 2 (Q3). `player` is the head's `player`.
+3. `pathworld.Seen(player, vx, vy)`; 0 gives *S* = 2 (Q3). `player` is the head's `player`, the player whose
+   turn started the search; `state.player` of `pathworld.UnitState` is never read.
 4. Otherwise *S* is the result of `pathworld.Pass(owner, x, y)`, taken as unsigned.
 
 *S* = 0 is *blocked*. A cell is *passable* when *S* ≥ 1.
@@ -439,7 +440,8 @@ When the node taken is in a goal cell, the search has found its route. `found_x`
 cell. The route is traced back from it: with *dir* the found cell's dir (read as signed 8-bit), the list
 starts with the found cell; at each cell *k* from the found cell, until the start cell: when *k*'s dir
 differs from *dir*, *dir* becomes *k*'s dir and *k* is added to the list; then *k* moves back one step,
-against *dir*. The start cell is added last. With *n* the list's length, the route is the list's last 64
+against *dir*. The start cell is added last, so a found cell that is the start gives the list [start,
+start] and a route of two points. With *n* the list's length, the route is the list's last 64
 entries (all of them when *n* ≤ 64) in reverse order: the start first, then the corners towards the found
 cell, which is last when *n* ≤ 64.
 
@@ -457,15 +459,15 @@ Returns the region's size for `map` (section 3). No imports, no writes.
 With *w*, *h*, *s* from `map` and *R* the region's offset, the region (zero on entry) becomes:
 
 - the settings' *node limit*, *goal capacity*, *request capacity*, *bucket mask*, *event capacity* and
-  the eight offsets as section 3 gives them; *first free* 1; every other field of the settings 0, but
-  `playerBudgetCap`;
+  the eight offsets as section 3 gives them; *first free* 1; `playerBudgetCap`[*p*] 0x18000 for each
+  player *p* from 0 to 9; every other field of the settings 0;
 - each request entry *e* from 1 to *P* − 1 gets *next by requester* *e* + 1 (entry *P* keeps 0);
 - the head: `freeHead` −1; `width` `Game.width`, `height` `Game.height`, and `cellCount` their product
   rounded up to a multiple of 8 (in the recordings these are *w*, *h* and *C*: the grid's size is the
   game's, while the layout of the parts follows `map`); `cells` and `dirty` their
   references; `stepsPerTick` the result of `pathworld.SearchStepLimit()`, or 0x535 (1333) when it is 0;
-  `baseScale` 0x18000; then for each player *p* from 0 to 9, `playerBudgetCap`[*p*] 0x18000 and
-  `cursor`[*p*] the result of `pathworld.FirstUnit(p)`; every other byte of the head 0;
+  `baseScale` 0x18000; `cursor`[*p*] the result of `pathworld.FirstUnit(p)`, for each player *p* from 0 to 9;
+  every other byte of the head 0;
 - the cells and the dirty words all 0.
 
 `Game.pathfinder` becomes *R*. Imports, in order: `pathworld.SearchStepLimit`, then `pathworld.FirstUnit`
@@ -548,12 +550,14 @@ that fails (no entry: no import). When it starts:
 3. `start_x`, `start_y` become `state.cell`.
 4. `pathworld.BeginSearch(object)`.
 5. `turnCost` and `stepCost` become their values (section 3).
-6. The cells' flags are cleared: for each dirty word with any bit set, the word becomes 0 and each cell
-   its set bits name gets flags 0 (dir and node kept).
-7. Each goal cell of the goal area, in its order, is marked as a goal. Among them, the first with the
-   smallest (`start_x` − *x*)² + (`start_y` − *y*)² gives `goalX`, `goalY` (when there are none, they keep
-   their values).
-8. The outcome:
+6. The cells' flags are cleared: for each of the first ⌈`cellCount` / 256⌉ dirty words that has any bit
+   set, the word becomes 0 and each cell its set bits name gets flags 0 (dir and node kept).
+7. Each goal cell of the goal area, in its order (only the first *goal capacity* of them), is marked as a
+   goal; one off the grid is not marked but still counts here. Among them all, the first with the smallest
+   (`start_x` − *x*)² + (`start_y` − *y*)² gives `goalX`, `goalY` (when there are none, they keep their
+   values).
+8. The outcome is the first row of the table below that holds, in its order (a start both in the goal area
+   and off the grid is the first row):
 
 | Case | Events, in order, and what follows |
 | --- | --- |
@@ -587,7 +591,8 @@ is given and *next event* goes up by 1. Its payload is 28 bytes, zero but for: k
 requester (8), target (12), tick (16) from the record; then for kind STARTED (0) the record's status at
 20, and a size of 24; for PROGRESS (1) its count at 20 and a size of 24; for FINISHED (2) its status at 20
 and its count at 24, and a size of 28; for any other kind, a size of 20. The first min(`size`, that size)
-bytes of the payload are copied to `out` (the whole payload when `size` is at least its size, nothing when `size` is 0), and the
+bytes of the payload are copied to `out` (`size` is the header's `unsigned int`, compared unsigned, so the whole payload when `size`
+is at least its size, or 2^31 or more, and nothing when `size` is 0), and the
 record's first min(count, `capacity`) points to `points` (none when `capacity` ≤ 0). The result is the
 payload's size, whatever `size` is. No imports.
 
@@ -596,7 +601,8 @@ payload's size, whatever `size` is. No imports.
 Does nothing in this module: no imports, no writes. `writer` is a table of calls that the ABI gives a module
 no way to call (no import reaches it, and ABI section 9.1 allows no other call out of the module), so the
 module cannot write its state through it. The game's own pathfinder writes, through it, the lines of the kit's
-`docs/trace-format.md`, section 8.7 (sections 16 and 17). No trace row hashes those sections, and no recording
+`docs/trace-format.md`, section 8.7 (sections 16 and 17). No trace row hashes those sections (the kit's `docs/trace-format.md`, the paragraph "The rows hash state,
+and events are only dumped": sections 16 and 17 are in a dump and in no row), and no recording
 holds the slot, so the gate does not judge it. It is a kit gap (section 7).
 
 ### `SetSearchScale(scale)`
