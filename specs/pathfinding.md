@@ -42,7 +42,7 @@ below follow from `interfaces/pathfinding.h` by the rules of ABI section 7: a po
 stores and hands back, never follows, and never an ABI handle (section 8.1). A module's build sets
 its `data_base` and `table_base` (within the windows and table ranges of ABI sections 2.2 and 2.3), its
 `majors`, its `slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget belongs to its
-build, set from the build's own runs). None of these can be checked against the kit at `interfaces-v58`,
+build, set from the build's own runs). None of these can be checked against the kit at `interfaces-v61`,
 which has no pathfinding entry; the entry the gate will hold is the one ozgb/byte-tactics-moddable#1206 adds.
 
 - `name` and `interface`: `pathfinding`.
@@ -764,5 +764,5 @@ records.
 
 ## 8. Kit version
 
-Kit `interfaces-v58` and `reference-traces-v53`, the versions the gate judges against. Interface
+Kit `interfaces-v61` and `reference-traces-v53`, the versions the gate judges against. Interface
 `pathfinding` 4.1.
