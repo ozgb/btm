@@ -37,103 +37,77 @@ inside the tick, and nothing in the tick writes it.
 
 ### The engine's slots
 
-For this milestone, the slots the kit's replay schema marks load class are the engine's: the engine's native code
-runs them, and the module reads what they build in the block (ozgb/btm#43, which moves them into the modules
-later). For mission these are `SetMissionType`, `FreeOtaEnumCacheAndMission`, `AdvanceMission`, `LoadCampaign`,
-`LoadMissionByName`, `RefreshMapList`, `SelectMission`, `SelectSchema` and `SetMissionUnitPosition`. The module
-doesn't export them. Section 4 still states what each leaves in the record, since that is the block data the
-module's slots read, and the scenario traces judge it (section 3).
+The kit's manifest entry for mission (`wasm/modules.json`, `modules`, the entry named `mission`) lists 22 slots
+under `engine`. By ABI section 6, "Engine slots", each stays in the engine: the host calls the engine's native slot,
+the module does not export it, and the module reads what it builds in the block. They are the 9 the entry gives as
+"load class", `SetMissionType`, `FreeOtaEnumCacheAndMission`, `AdvanceMission`, `LoadCampaign`,
+`LoadMissionByName`, `RefreshMapList`, `SelectMission`, `SelectSchema` and `SetMissionUnitPosition`, and 13
+queries the entry gives as queries no match makes, which serve the menus, the map list and the campaign:
+`GetCampaignName`, `MissionExists`, `ComputeMapChecksum`, `GetTerrainLength`, `CountMissions`,
+`GetCampaignMissionName`, `GetBriefing`, `GetDescription`, `GetPlanet`, `GetTerrainSizeTier`, `GetTranslatedName`,
+`GetMemory` and `GetNumPlayers`. ABI section 9.3, "What stays in the engine", names `GetCampaignMissionName` among
+them: its localised key needs the translation table's language prefix, which no import gives. ozgb/btm#43 moves
+the engine's slots into the modules later.
+
+Section 4 still states what each engine slot does, since that is the block data the module's slots read, and the
+scenario traces judge it (section 3).
 
 ### The manifest entry
 
-The kit's manifest (`wasm/modules.json`) has no entry and no `signatures.mission` for this module, only its
-interface major, 2 (`majors.mission`). This section gives the entry for the module's 25 slots. It is exact for 24
-of them. `GetCampaignMissionName` needs one value no import of the kit gives ("Gaps of the kit", below). The kit's
-replay schema lists no imports for mission (`subsystems.mission.header.imports`) because no recorded call makes
-one; the imports below are those of the unrecorded queries.
+The kit's entry for mission is the module's entry, and this spec follows it:
 
-- `name` and `interface`: `mission`.
-- `exports`, in the header's slot order: `GetGameType`, `GetNameSlot`, `GetCampaignName`, `GetMissionIndex`,
-  `GetMissionName`, `GetStartPosition`, `MissionExists`, `ComputeMapChecksum`, `GetTerrainLength`,
-  `CountMissions`, `GetCampaignMissionName`, `CountStartPositions`, `GetBriefing`, `GetDescription`, `GetPlanet`,
-  `GetTerrainSizeTier`, `GetTranslatedName`, `HasMissionName`, `GetMissionParams`, `CountMissionUnits`,
-  `GetMissionUnit`, `CountMissionFeatures`, `GetMissionFeature`, `GetMemory`, `GetNumPlayers`.
+- `name` and `interface`: `mission`. `majors`: `mission` 2.
+- `exports`, in the header's slot order without the engine's slots (ABI 4.2): `GetGameType`, `GetNameSlot`,
+  `GetMissionIndex`, `GetMissionName`, `GetStartPosition`, `CountStartPositions`, `HasMissionName`,
+  `GetMissionParams`, `CountMissionUnits`, `GetMissionUnit`, `CountMissionFeatures`, `GetMissionFeature`.
 - `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI 8.2). The module reads `g_game` and
   `g_blockBase` only.
-- `majors`: `mission` 2, `files` 3 and `services` 4.
-- `data_base`, `table_base`, `fuel_budget` and `size_budget`: the build picks them (ABI 2, 11.1 and 11.3). The
-  window must not overlap another module's window, nor its table range another module's range.
-- Slot kinds. A text a slot returns points into the record, so it is a `block` result: the record's address
-  plus the field's offset, or 0 for "none".
+- `data_base` 655360 and `table_base` 496: the module's window is the `window` bytes (32768, the manifest's top-level
+  `window`) from 655360, and its table range the 32 entries (`table_slots`) from 496 (ABI 2).
+- `imports`: none (`{}`). No slot of the module calls the engine.
+- Slot kinds (the entry's `slots`, also `signatures.mission`):
 
 | Slot | Kinds |
 | --- | --- |
-| `GetGameType`, `GetMissionIndex`, `ComputeMapChecksum`, `GetTerrainLength`, `CountMissions`, `CountStartPositions`, `GetTerrainSizeTier`, `HasMissionName`, `CountMissionUnits`, `CountMissionFeatures` | `[] -> int` |
-| `GetNameSlot` | `[int] -> block` |
-| `GetCampaignName`, `GetMissionName`, `GetBriefing`, `GetDescription`, `GetPlanet`, `GetTranslatedName`, `GetMemory`, `GetNumPlayers` | `[] -> block` |
-| `MissionExists` | `[int] -> int` |
+| `GetGameType`, `GetMissionIndex`, `CountStartPositions`, `HasMissionName`, `CountMissionUnits`, `CountMissionFeatures` | `[] -> int` |
+| `GetNameSlot` | `[int] -> linear` |
+| `GetMissionName` | `[] -> linear` |
 | `GetStartPosition` | `[linear, int] -> int` (the `Vec3` out, the id) |
-| `GetCampaignMissionName` | `[int, linear, int] -> int` |
 | `GetMissionParams` | `[linear] -> void` |
 | `GetMissionUnit`, `GetMissionFeature` | `[int, linear] -> int` |
 
-`HasMissionName` returns 0 or 1.
+A text a slot returns points into the record, in the block: a `linear` address, the record's address plus the
+field's offset, or 0 for "none". `HasMissionName` returns 0 or 1.
 
-- Imports, every one listed and nothing else. The slots not named in the table make none.
-
-| Import | Kinds | Used for |
-| --- | --- | --- |
-| `services.TdfFile_Construct`, `services.TdfFile_Destruct` | `[linear] -> void` | the module's own parsed copy of the campaign file (`MissionExists`, `CountMissions`, `GetCampaignMissionName`) |
-| `services.TdfFile_LoadFile` | `[linear, linear] -> int` | loading it from `names[0]` |
-| `services.TdfFile_SelectRecord` | `[linear, linear] -> int` | its mission records |
-| `services.TdfRecord_GetFieldString` | `[handle, linear, linear, int, linear] -> int` | the localised `missionname` (`GetCampaignMissionName`) |
-| `files.OpenRead` | `[linear] -> handle` | the terrain file (`ComputeMapChecksum`); 0 when it doesn't open |
-| `files.Read` | `[handle, linear, int] -> int` | its header, plot and features |
-| `files.Seek` | `[handle, int] -> int` | the offsets of the plot and the features |
-| `files.Close` | `[handle] -> int` | closing it |
-
-The recordings hold no call of these slots, so their import order isn't compared; section 4 gives what each reads.
-
-- Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`.
+- The kit's entry has no `fuel_budget` or `size_budget` (ABI 4.2). A module built from this spec meters itself by
+  rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`; its budgets come with a later entry.
 - Hooks: every slot of `interfaces/mission.h` says "Hooks: none", so the module raises none.
 
 ### What the engine's slots need
 
 The engine's slots reach these engine calls. All but items 1 and 2 are calls that no import of the kit's
-`interfaces/services.h` (version 4.1) or of an interface offers. ozgb/btm#43 adds them when it moves the slots into the module. The list is for that
-issue: the module of this spec exports none of the engine's slots, and imports only what "The manifest entry"
-lists.
+`interfaces/services.h` (version 4.2) or of an interface offers. The list is for ozgb/btm#43, which moves the slots
+into the module: the module of this spec exports none of them and imports nothing.
 
 1. **Allocation in the block:** the record itself, the units and their strings, the start position rules, the
-   features and the briefing's text; and their release, with the release of the conditions object players made. The block's allocations are zeroed.
-   `services.SimAlloc`, `services.SimAllocTagged` and `services.SimFree` (services 4.1) offer these.
+   features and the briefing's text; and their release, with the release of the conditions object players made.
+   The block's allocations are zeroed. `services.SimAlloc`, `services.SimAllocTagged` and `services.SimFree`
+   offer these.
 2. **Files by name:** a file's length (0 for a missing file), whether it opens for reading, and reading its
-   bytes at an offset. `interfaces/files.h` offers these (`LengthByName`, `OpenRead`, `ReadAt`).
+   bytes at an offset. `interfaces/files.h` offers these (`LengthByName`, `OpenRead`, `Read`, `Seek`, `ReadAt`).
 3. **The parser's records beyond the imports:** unloading a file, resetting its current record to none,
    counting and indexing the sub-records of a record, finding a sub-record by name, setting the current record
    to a record found earlier, the checksum the parser keeps for a record's text, and a parsed file kept between
    calls (the record's `list`, while ABI 8.1 makes handles last one outermost call).
 4. **The language:** the player's preferred language (none, or a name such as `english`), the language prefix the
-   translation table uses for localised keys, the translation of a key, and the key whose translation equals a
-   text.
+   translation table uses for localised keys (the name of the language the translations were loaded for), the
+   translation of a key, and the key whose translation equals a text.
 5. **A message box** with the caption `Error`, shown on top of the game window.
 6. **The front end's list of maps** (built for skirmish or for multiplayer) and the release of its map cache.
 7. **Publishing to wind_meteors from the engine's outbox:** `WIND_METEORS_ENABLE`, `WIND_METEORS_DISABLE` and
-   `WIND_METEORS_PARAMS`. `services.Emit` publishes to the module's own outbox only (ABI 9.3), and
-   `interfaces/mission.h` has no effects.
+   `WIND_METEORS_PARAMS`. `interfaces/mission.h` has no effects, and its entry no `publishes`.
 8. **The skirmish options:** `Game.options` points at a table the kit's `layout.json` doesn't describe; the load
    reads each player slot's controller from it (section 4, `SelectSchema`).
-
-### Gaps of the kit
-
-Each mission record a campaign query selects takes one handle, and so does the campaign file's root.
-`CountMissions` and `MissionExists` walk every mission record, so on a campaign with more than 31 of them they go
-past ABI 8.1's 32 handles in one call, a fatal error the engine's own slots don't have. `GetCampaignMissionName` takes 2 at most. The kit offers no way to release a handle within a call.
-
-`GetCampaignMissionName` reads the localised key `missionname`: first the key made of the translation table's
-language prefix followed by `missionname`, then `missionname` itself (gap 4 of the list above). No import gives the prefix
-(ozgb/byte-tactics-moddable#1206). The prefix is the name of the language the game's translations were loaded
-for, such as `english`.
 
 ### Arguments outside the block
 
@@ -208,7 +182,7 @@ hint, 5 the glamour picture, 6 the use-only unit list, 7 the AI profile, 8 the g
 ### Read
 
 `Game.numPlayers` (unsigned short), `Game.difficulty` (int), `Game.table_2c28` (int[10]) and `Game.options`
-(section 2, gap 8), by `SelectSchema` and the load.
+(section 2, "What the engine's slots need", item 8), by `SelectSchema` and the load.
 
 ### Between ticks
 
@@ -222,7 +196,7 @@ record at tick 1 (`docs/trace-format.md`, section 8.20, and the tables `MissionD
 - `unitCount`, `ruleCount` and `featureCount`, and every unit, rule and feature, with their strings.
 
 The trace schema is the authority on the rest, which isn't hashed (`minWindSpeed` and `maxWindSpeed` among it: the
-trace hashes their copies in `Game`). A query slot changes nothing, but `ComputeMapChecksum` sets `tntChecksum`.
+trace hashes their copies in `Game`). The module's slots change nothing; of the engine's queries, `ComputeMapChecksum` sets `tntChecksum`.
 
 ## 4. Behaviour
 
@@ -237,6 +211,10 @@ address of a field" is the record's address (`g_blockBase` plus `Game.net`) plus
 `layout.json`. A `Ref` given out as an address is `g_blockBase` plus its value, and 0 when it is null.
 
 ### The queries
+
+The module's are `GetGameType`, `GetNameSlot`, `GetMissionIndex`, `GetMissionName`, `HasMissionName`,
+`CountStartPositions`, `CountMissionUnits` and `CountMissionFeatures`; the others of this table are the engine's
+(section 2). A text result is given as the field's address (`linear`).
 
 | Slot | Result |
 | --- | --- |
@@ -303,7 +281,7 @@ briefing and map list are released, and then the record.
 
 ### `FreeOtaEnumCacheAndMission()`
 
-The front end's map cache is released (section 2, gap 6), the record is freed as above, and `Game.net` becomes
+The front end's map cache is released (section 2, "What the engine's slots need", item 6), the record is freed as above, and `Game.net` becomes
 null.
 
 ### File names
@@ -338,23 +316,6 @@ A record of a type other than 1 is given a non-empty campaign by no caller.
 2, ... that exist before the first missing one. A lookup of a mission record by the engine's slots leaves it as
 `list`'s current record; nothing else reads that.
 
-The module's `MissionExists`, `CountMissions` and `GetCampaignMissionName` don't use `list`: its record words are
-handles from an earlier call, which ABI 8.1 makes invalid. Each call parses the campaign file again, in a
-`TdfFile` *F* of its own. Its imports, in order:
-
-- When `campaign` is empty (and, for `GetCampaignMissionName`, when `size` is below 1): none.
-- Otherwise `services.TdfFile_Construct(F)`, then `services.TdfFile_LoadFile(F, names[0])` (`names[0]` is the file
-  `list` was loaded from). When that gives 0, the file has no mission records: `services.TdfFile_Destruct(F)`
-  follows at once.
-- Each lookup of mission record *n* is `services.TdfFile_SelectRecord(F, "MISSION<n>")`, with *n* in decimal (a
-  minus sign before a negative one), made with *F*'s current record word (byte offset 4) set to 0 first, the null
-  handle, so that the lookup is among the top-level records (ABI 9.3).
-- `CountMissions` and `MissionExists` look up records 0, 1, 2, ... until a lookup gives 0, whatever `index` is.
-  `GetCampaignMissionName` looks up record `index` only, then reads its name (below).
-- `services.TdfFile_Destruct(F)` last.
-
-The results are those of the table below; `list` is left as it was.
-
 | Slot | Result | Writes |
 | --- | --- | --- |
 | `CountMissions()` | the campaign's count | none |
@@ -368,16 +329,11 @@ The results are those of the table below; `list` is left as it was.
 | --- | --- | --- |
 | `size` is below 1, or `campaign` is empty | unchanged | 0 |
 | Mission record `index` is missing | unchanged | 0 |
-| It has the localised key `missionname` | what `services.TdfRecord_GetFieldString` writes for that key with `size` (the key's text, cut to `size` − 1 bytes, padded with zero bytes up to `out[size − 1]`, which is 0: all `size` bytes are written) | 1 |
+| It has the localised key `missionname` | the key's text, cut to `size` − 1 bytes, padded with zero bytes up to `out[size − 1]`, which is 0: all `size` bytes are written | 1 |
 | It hasn't | the first `size` − 1 bytes of `Error -- Unnamed Mission`, padded with zero bytes to `size` − 1, then a 0 at `out[size − 1]`: all `size` bytes are written | 1 |
 
 **A localised key** *k* is read as the key made of the translation table's language prefix followed by *k*, and,
-when the record hasn't that key, as *k* itself (section 2, gap 4). The default text is empty.
-
-The module's `GetCampaignMissionName` reads it, after the lookup of mission record `index` gives 1, with
-`services.TdfRecord_GetFieldString(current, out, key, size, "")`: *current* is *F*'s current record word, and the key
-is the prefixed one, then, when that gives 0, `missionname`. Either call may write `out`. When both give 0, the
-fallback row's bytes are written over it.
+when the record hasn't that key, as *k* itself (section 2, "What the engine's slots need", item 4). The default text is empty.
 
 ### `LoadMissionByName(name)`
 
@@ -400,7 +356,7 @@ translation is its own translation. In the first case, a `name` of 200 bytes or 
 
 - When `multi` isn't 0, `multiplayer` is 0 and `mapList` isn't 0: the list is released and `mapList` becomes 0.
 - When `mapList` is 0 (then): the front end builds its list of maps for multiplayer when `multiplayer` isn't 0,
-  for skirmish otherwise (section 2, gap 6); `mapList` points at it (its maps' names, each NUL-terminated, one
+  for skirmish otherwise (section 2, "What the engine's slots need", item 6); `mapList` points at it (its maps' names, each NUL-terminated, one
   after the other) and `mapCount` becomes the number of maps.
 - Then the record ends as `LoadMissionByName` with the list's first name leaves it (Q6); that result is ignored.
 - `multi` becomes `multiplayer`.
@@ -434,14 +390,14 @@ in the module's memory.
 | 2, 3 | as above, and `Maps\<m>.OTA` loads | `exists` = 0; `missionName` = *m*; slot 1 is named from (`Maps`, *m*, `TNT`) | continue |
 | 0, other | | | 0 |
 
-The texts are read into 256 bytes. Each message is a message box (section 2, gap 5).
+The texts are read into 256 bytes. Each message is a message box (section 2, "What the engine's slots need", item 5).
 
 **The header.** When the map file has no top-level `GlobalHeader` record: message `No GlobalHeader block in mission
 file!`, result 0. Otherwise, from that record ("the header"):
 
 | Writes | From the header |
 | --- | --- |
-| `headerChecksum` | the checksum the parser keeps for the record (section 2, gap 3) |
+| `headerChecksum` | the checksum the parser keeps for the record (section 2, "What the engine's slots need", item 3) |
 | slot 2, then `briefing` | localised `brief` → slot 2 from (`camps\briefs`, text, `TXT`); then `briefing` becomes a copy of that file's bytes with a 0 after them, or null when the slot is empty or the file's length is 0 |
 | slot 3 | localised `narration` → (`camps\briefs`, text, `WAV`) |
 | slot 4 | localised `missionhint` → (`camps\hints`, text, `TXT`) |
@@ -484,7 +440,7 @@ schema's `MeteorWeapon` read into 32 bytes, default empty.
 | empty | `WIND_METEORS_DISABLE` is published, then `wind_meteors.LoadMeteorDefaults(params)` (Q2) |
 
 Then `WIND_METEORS_PARAMS` is published with the params. The three are published from the engine's outbox (section
-2, gap 7), and wind_meteors receives each at once.
+2, "What the engine's slots need", item 7), and wind_meteors receives each at once.
 
 **The tables** come from the record named by the schema's name under the top-level `globalheader` record (the
 names are matched as the parser matches them). When either is missing, the tables stay empty and the load still
@@ -530,7 +486,7 @@ The *names* to look for, in order:
 
 *P*, the players of the match: `Game.numPlayers`, then for type 3 one more than the highest *i* (0 to 9) whose
 `Game.table_2c28[i]` is neither −1 nor 0, and for type 2 one more than the highest *i* whose skirmish options'
-player *i* has a controller that isn't 0 (section 2, gap 8). With no such *i*, *P* stays `Game.numPlayers`.
+player *i* has a controller that isn't 0 (section 2, "What the engine's slots need", item 8). With no such *i*, *P* stays `Game.numPlayers`.
 
 **Schema *n*** is the record named `Schema <n>` (*n* in decimal, from 0) under the top-level `GlobalHeader`. Each
 lookup starts from the top of the file; when `GlobalHeader` is missing, `services.FatalError("Very bad news!  No
@@ -559,13 +515,9 @@ the same result.
 
 With the header's 32-bit fields *w* at byte 4, *h* at byte 8, *p* at byte 16, *n* at byte 28 and *o* at byte 32:
 the plot is the *w* × *h* × 4 bytes at offset *p* of the file, and the features the *n* × 132 bytes at offset *o*
-(none when that size isn't above 0). K is section 5's checksum. The file is opened with `files.OpenRead(names[1])`
-(0 is "doesn't open"). The header is the first 64 bytes `files.Read` gives after the open; the plot and the
-features are read with `files.Read` after `files.Seek` to their offsets. A read may be split into parts of any
-size: K depends only on the bytes and their positions. The file is closed with `files.Close` once it is open,
-on every outcome. A file shorter than its header says, a *w* × *h* × 4 outside 0 to 2^31 − 1, or an *n* × 132 above 2^31 − 1, is
-undefined. The slot runs outside the tick, from the lobby, so no tick's fuel includes it. `headerChecksum` is the engine's
-(section 3); the module only reads it. `names[1]` is never empty when the engine calls this slot.
+(none when that size isn't above 0). K is section 5's checksum. The header is the file's first 64 bytes. A file
+shorter than its header says, a *w* × *h* × 4 outside 0 to 2^31 − 1, or an *n* × 132 above 2^31 − 1, is undefined.
+`names[1]` is never empty when the engine calls this slot.
 
 ## 5. Exactness
 
@@ -654,5 +606,5 @@ leaves in the record (section 3).
 
 ## 8. Kit version
 
-Kit `interfaces-v61` (ozgb/byte-tactics-moddable f6b83002b) and `reference-traces-v53` (27e198291), the versions
-the gate judges against. Services 4.1. Interface `mission` 2.0.
+Kit `interfaces-v65` (ozgb/byte-tactics-moddable d577bfcb6) and `reference-traces-v54` (25f3a49bc), the versions
+the gate judges against. Services 4.2. Interface `mission` 2.0.
