@@ -29,19 +29,37 @@ imports (section 9), interface majors and adapters (section 10), fuel (section 1
 and errors and traps (section 13). The core gate's `loader` and `fuel` groups (`docs/core-gate.md`) judge
 sections 5.2, 11 and 13 on the fixtures of `reference/core/loader/` and `reference/core/fuel/`. When a manifest
 holds more than one fault, the loader reports the first in the order of `docs/core-gate.md`, "loader and fuel"
-("Which error comes first").
+("Which error comes first"): `stack_size` after the four required numbers (after `table_slots`) and before their
+ranges, and in each module entry `fuel_budget` and then `size_budget` after `table_base` and before `exports`.
 
 The numbers a manifest takes are `docs/module-abi.md`, section 4.1: a non-negative integer of at most 2147483647,
-and a number with a fraction or an exponent makes the manifest invalid JSON. Which modules each class of error
-names, the class `table` of a call through an index at or past `table_size`, and how a pair of faults is ordered
-are `docs/core-gate.md`, "loader and fuel".
+and a number with a fraction or an exponent makes the manifest invalid JSON. `stack_size` and a module entry's
+`size_budget` are refused (`manifest`) when they are not non-negative integers, and a `fuel_budget` when it is
+not an integer from 1 to 2147483647 (section 11.3). A manifest of `memory_pages` 65536 with `block_base`
+2147418112 and a `fuel_budget` of 2147483647 is accepted (vector `manifest_pages_max`); no vector calls `memory` on it,
+and a core must not need 4 GiB of RAM for it (`docs/core-gate.md`, "Known limits"). Which modules each class of
+error names, the class `table` of a call through an index at or past `table_size`, and how a pair of faults is
+ordered are `docs/core-gate.md`, "loader and fuel".
+
+In the `loader` and `fuel` groups the `memory` call defines, beside the memory and the table, one import: the
+name `mix` of the import module `fixture`, of kinds `[[int, int, int], int]`, which returns *a* + 10 *b* + 100 *c* of its arguments in i32
+arithmetic that wraps (`docs/core-gate.md`, "loader and fuel"; vector `host_import`). It is the only import the
+host defines there, so an adapted import (below) resolves against it alone. Every NaN a module's arithmetic
+returns or stores is the canonical one, 0x7fc00000 for an f32, and the words 0 and 0x7ff80000 for an f64
+(`docs/module-abi.md`, section 3.2; vector `nan_canonical`, which judges addition, division and the square root); an f32
+that crosses the boundary keeps its 32 bits, and a module must not let a result depend on a NaN's bits.
+
+**Adapters** (`docs/module-abi.md`, section 10.2) let a module built against an older major load: the loader
+judges them from the entry's `slots` and `imports` and the manifest's `signatures` alone, so a refusal does not
+depend on what the module exports or imports. Each refusal is a `manifest` error at
+`load` that names no module. The forms they take and every refusal are `docs/core-gate.md`, "Adapters".
 
 ### The services
 
 A module imports two kinds of group (`docs/module-abi.md`, sections 9.1 to 9.3): interface groups, each a slot
 of another subsystem's interface under its name (`weapons.FindWeaponByName`), which the core defines by calling
 that subsystem's slot of the same name (section 9.2); and the `services` group of `interfaces/services.h`,
-version 4.0. The core defines every import of the services group, with the kinds of `signatures.services` of the manifest and the behaviour
+version 4.2. The core defines every import of the services group, with the kinds of `signatures.services` of the manifest and the behaviour
 of `docs/module-abi.md`, section 9.3:
 
 | Import | What the core does |
@@ -50,7 +68,17 @@ of `docs/module-abi.md`, section 9.3:
 | `FatalError` | ends the run with the message once the call has unwound (`docs/module-abi.md`, section 13) |
 | `BuildDataPath`, `TdfFile_Construct`, `TdfFile_Destruct`, `TdfFile_LoadFile`, `TdfFile_SelectRecord`, `TdfRecord_GetFieldInt`, `TdfRecord_GetFieldDouble`, `TdfRecord_GetFieldString` | reads the game data through the files service (`interfaces/files.h`, version 3.0) and hands the records out as handles |
 | `HapiBank_OpenAccount`, `HapiBank_SetIntegerItem`, `HapiBank_GetIntegerItem` | a saved-game bank's items, as handles; used only by save and load, which are outside the contract |
-| `Emit` | puts an effect in the calling module's outbox, after the checks of section 9.3 (section 4.2 below) |
+| `SimAlloc`, `SimAllocTagged`, `SimFree` | allocations in the state block, zeroed and 8-byte aligned, that last until they are freed |
+| `RecordSimEvent`, `SimCaptureAlloc` | the sim event queue and the radar arena of `specs/engine-core.md`, section 4.5 |
+| `GetGafFrame`, `InitGafSequence`, `StepGafSequence` | the frames of a frame table, load data outside the block (`docs/module-abi.md`, section 7.1), and the sequence cursors in the block that step through them |
+| `GetSlotDpid`, `FindSlotByDpid` | the network ids of the game record's player slots |
+| `Emit` | puts an effect in the calling module's outbox (section 4.2 below), after the checks of section 9.3 in its order: a pointer outside the module memory, a size outside 4 to 128 bytes, an effect that runs past the module memory, a kind not in the entry's `publishes` table, a size other than that kind's; then the kind's hook (wind_meteors' SPAWN: the weapon slot is one of the 256 of `Game.weapons` in `layout.json`, 0 to 255) |
+
+A malformed argument to one of the services of minors 1 and 2 changes nothing and does not trap: the call returns
+0 (`-1` for `GetSlotDpid`, `10` for `FindSlotByDpid`) and writes nothing, for the cases section 9.3 lists. An
+import that refuses a call traps with section 13's text, `import <name>: ` and its cause, `Emit`'s five causes and
+its hook's among them. `pointer argument <n>` counts the import's arguments from 0. Each refusal vector holds one
+fault, so the order between two faults of one call is not judged.
 
 The header comments give each import's result, and the recordings carry every call a recorded slot makes, with
 its arguments and result (`docs/replay-format.md`, "Services").
@@ -134,6 +162,21 @@ taken out of the recording, and the core writes them for each call, a `w` line f
 whose value after the call differs from its last known value (`docs/replay-format.md`, "Lines"), then the closing
 lines (`docs/core-gate.md`, "host").
 
+- **The module** is the `replay` call's second argument, a path like every file a call names: `module.wasm`, the
+  core's wind_meteors module, for the recordings of `tests/replay/wind_meteors/`, and a fixture module beside the
+  recording, `host/wind_meteors_<vector>.wasm`, for each refusal vector (`docs/core-gate.md`, "The refusal
+  vectors"). A fixture is loaded as the wind_meteors module of the game manifest, the kit's `wasm/modules.json`
+  (its entry gives the data and table bases, `publishes`, the majors and the fuel budget). No call names that
+  manifest, so the core carries it in itself. One instance of the module serves every `call` of a recording, so a static
+  the module keeps lasts from one call to the next, and the handle table is cleared after each.
+- **A text out with a `size`** (`TdfRecord_GetFieldString`'s `dst`) is written as at most *size* - 1 bytes of the
+  recorded text and then a 0, so a text longer than the buffer is cut (`docs/replay-format.md`, "Services";
+  vector `import_string_cut`).
+- **An error that ends the replay** is the whole value of the `replay` call, in place of its lines: a trap or running out of fuel, an error of the
+  loader classes; an import's refusal, `{"error": "import", "modules": ["wind_meteors"], "message": TEXT}`, TEXT
+  section 13's text from `import ` to the end of its line; and a full handle table,
+  `{"error": "glue", "modules": ["wind_meteors"], "message": "wind_meteors: the handle table is full"}`.
+
 ## 5. Exactness
 
 - **Argument kinds.** An `f32` crosses the boundary as its 32 bits, unchanged; a narrow integer argument or
@@ -148,7 +191,10 @@ lines (`docs/core-gate.md`, "host").
   module whose manifest entry has no `fuel_budget` is never set: its counter starts at 9223372036854775807 and
   only its own burning lowers it (`docs/core-gate.md`, "loader and fuel").
 - **Handles.** An opaque u32, index plus 1 into a table of 32 that the core clears when the outermost call
-  returns (`docs/module-abi.md`, section 8.1).
+  returns (`docs/module-abi.md`, section 8.1): 32 handles in one outermost call are numbered 1 to 32, and a 33rd
+  is the glue error of a full table (vectors `handles_32`, `handles_full`). Handle 0 is `null handle`, and a handle above
+  the number issued in this outermost call is `unknown handle <n>`: a handle kept from an earlier call is garbage,
+  and is unknown when the current call has issued fewer (`import_stale_handle`).
 
 ## 6. Quirks
 
@@ -175,11 +221,13 @@ All from the kit's `reference/core/`.
    five closing lines of what the slot wrote through its argument, `o params.weapon "Meteor"` up to
    `o params.interval f32:0x42700000`.
 
-**Not covered by a vector:** a module that imports a service (the loader's fixtures import only the memory and
-the table), an adapter (`docs/module-abi.md`, section 10), the hidden-state check, a `StateWriter`, the routes
-and the scheduler's order. The scenario mode, and the module gate of each module, judge them.
+**Not covered by a vector:** the two import refusals of a service's own result (`returned a buffer other than
+the one it was given`, `returned a weapon outside the sim block`: a replay answers each import from its
+recording), the glue errors of a slot (`slot <name>: ...`), the services a module imports beyond what the
+recordings call, `memory` at 65536 pages, the hidden-state check, a `StateWriter`, the routes and the scheduler's
+order (`docs/core-gate.md`, "Known limits"). The scenario mode, and the module gate of each module, judge them.
 
 ## 8. Kit version
 
-Kit `interfaces-v59` and `reference-traces-v53`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+Kit `interfaces-v64` and `reference-traces-v54`. Interfaces `services` 4.2, `rand_stream` 1.0, `state_writer`
 1.0, `sim_events` 1.0 and `files` 3.0.

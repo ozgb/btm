@@ -291,7 +291,9 @@ The README's "Rules" states what every record follows: the sine table, the scale
 matrix and its application, the rotation of a point, the angle of a vector, `hypot`, `acos`, the one scanner,
 multiplication and rounding that `float_text` and `double_text` share ("Text to a number"), the conversions of
 `sprintf` (`%f` of an infinity or a NaN included) and those of `sscanf`, the digits of `_itoa`, and how every
-string and character entry reads a byte from 0x80 to 0xff ("Bytes above 127").
+string and character entry reads a byte from 0x80 to 0xff ("Bytes above 127"). A `sprintf` width or precision
+above 4096 and a `shuffle` of more than 2^24 elements are in no record, and a core may refuse them (the README,
+"Left out").
 
 ### 4.8 Failure
 
@@ -300,8 +302,8 @@ The run ends with an error, the same way on every machine, when:
 | Cause | When | How it ends |
 | --- | --- | --- |
 | a full sim event queue | an event of a test-mode run does not fit (section 5) | a fatal error that says the queue is full; in the core gate, the value `"full"` |
-| a full radar arena | a snapshot of a test-mode run does not fit (`docs/sim-events.md`, "Radar events") | a fatal error that says the arena is full; no core gate group calls the arena |
-| a trap | a module traps, or an import refuses a call (`docs/module-abi.md`, section 13) | a fatal error naming the module and the tick; in the core gate, an error of the classes of `docs/core-gate.md`, "loader and fuel" |
+| a full radar arena | a snapshot of a test-mode run does not fit (`docs/sim-events.md`, "Radar events") | a fatal error that says the arena is full; no core gate group calls the arena, and a core may leave it out until los_radar is a module (`docs/core-gate.md`, "Known limits") |
+| a trap | a module traps, or an import refuses a call (`docs/module-abi.md`, section 13) | a fatal error naming the module and the tick; in the core gate, an error of the classes of `docs/core-gate.md`, "loader and fuel", and in the `host` group an import's refusal or a full handle table as an `import` or `glue` error with section 13's text (`specs/engine-core-transition.md`, section 4.4) |
 | fuel run out | a module burns more than its budget in one tick (`docs/module-abi.md`, section 11) | a fatal error naming the module, the tick and the budget; in the core gate, `out_of_fuel` |
 | a start-up refusal | the loader refuses the manifest or a module (`docs/module-abi.md`, section 5.2) | a fatal error before the match; in the core gate, the refusal's class |
 
@@ -342,7 +344,12 @@ details of how the core and its modules meet.
 The hash, the pointer IDs, the walk of each section and the rules of the hashed bytes are
 `docs/trace-format.md`, sections 3 to 8 and 11; `tools/tracerehash.py` is a second implementation of every hash
 from a dump. The core gate's `hash` group recomputes every row of a dump, the phase rows and `world` as well as
-`tick`, so it judges the hash apart from the logic.
+`tick`, so it judges the hash apart from the logic. Its `rows` call gives the rows by tick and then in the row
+order of `docs/trace-format.md`, section 2 (`units` to `meteors`, `world` and `tick`), whatever the order of the
+dump's blocks (`docs/core-gate.md`, "hash").
+A goal of none of the known kinds is class 6, with no fields (section 8.10); a dump that holds an order effect of
+a class above 5 or a mission condition of class 0 fails the run and has no hash (section 11); no vector of
+the `hash` group gives such a dump.
 
 A dump can't carry a string that holds the byte 0x0a (`docs/trace-format.md`, section 8.19), and no vector of the
 `hash` group holds one, so the gate never judges one (`docs/core-gate.md`, "hash"). Which lines of a dump a reader
@@ -464,7 +471,7 @@ a run and capture are judged only by the scenario mode.
 
 ## 8. Kit version
 
-Kit `interfaces-v59` and `reference-traces-v53`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+Kit `interfaces-v64` and `reference-traces-v54`. Interfaces `services` 4.2, `rand_stream` 1.0, `state_writer`
 1.0, `sim_events` 1.0, `files` 3.0, `players` 5.4, `wind_meteors` 3.1, `map` 9.2, `units` 7.2,
 `features` 5.1 and `view` 2.1.
 
