@@ -101,8 +101,8 @@ The `short` argument `type` of `CanBuildAt` arrives sign-extended, and the `unsi
 | `files.BankWriteBox` | `[handle, linear, int] -> int` | saving a plot map |
 | `services.RandomInt` | `[int] -> int` | the reclaim pick's draws |
 | `services.Emit` | `[linear, int] -> void` | publishing CELLS_CHANGED and CELL_HEIGHTS |
-| the allocation service, `SimAlloc` | `[int] -> linear` | the pass map words, the scratch block of `BuildAllPassMaps`, the reclaim lists |
-| the free service, `SimFree` | `[linear] -> void` | the old pass map words, the scratch block, the reclaim lists |
+| `SimAlloc` of the `services` group (services 4.1) | `[int] -> linear` | the pass map words, the scratch block of `BuildAllPassMaps`, the reclaim lists |
+| `SimFree` of the `services` group (services 4.1) | `[linear] -> void` | the old pass map words, the scratch block, the reclaim lists |
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`.
   The budget is ten times the most fuel any gate tick burns (ABI 11.3), which the build measures.
@@ -123,6 +123,8 @@ recordings. These are gaps in the kit, not in the module:
   fields aren't recorded). The ABI's import for it is `services.Emit` (ABI 9.3). `Emit` publishes only kinds of the
   entry's own interface, and CELL_HEIGHTS (132) is a kind of `interfaces/los_radar.h`, so the host's `publishes` check
   refuses it until the ABI lets map publish it.
+  The replay compares only the size of each publish (20 for CELL_HEIGHTS, 32 for CELLS_CHANGED) and its order
+  among the imports; the payload's fields (section 4) are checked only by the scenario traces.
 - **The plot map imports** (ozgb/byte-tactics-moddable#1206) are `files` imports (`interfaces/files.h`, files 3.0);
   the manifest has no signatures for them yet.
 - **The reclaim pick's comment** (ozgb/byte-tactics-moddable#1206). The comment on
@@ -203,7 +205,7 @@ under other names in `Game`. The two namings are the same bytes:
 
 | `Grid2` field | The same bytes in `Game` | Type | Meaning |
 | --- | --- | --- | --- |
-| `cells` | `Game.cells_1429f` | `Ref<SpatialBucket>` | the first bucket of the grid; 0 when there is none |
+| `cells` | `Game.cells_1429f` | `Ref<struct FogCell>` in `layout.json` (`Ref<SpatialBucket>` in `Game`) | the first bucket of the grid; 0 when there is none |
 | `width` | `Game.width_142a3` | unsigned int | buckets in a row, *GW* below |
 | `height` | `Game.height_142a7` | unsigned int | rows of buckets, *GH* below |
 | `count` | `Game.pad_142ab` | int | the number of buckets allocated, *N* below |
@@ -244,7 +246,10 @@ written by `Apply`; `progress_38d73` (unsigned char), written by `BuildAllPassMa
 - `Game`: `width`, `height` (int, the map in cells), `cells`, `units` (the unit table, `Unit` records of 280 bytes, the
   unit of id *n* at index *n*), `unitsEnd` (the last unit of the table), `ticks` (int), `baseX`, `baseY` (int, the map
   in world units), `seaLevel`, `featureCount` (int), `features` (`Feature` records of 256 bytes), `visibilityMask`
-  (one 16-bit word per element), `playerIndex` (unsigned char), `mapFlags` (only map flag 2).
+  (one 16-bit word per element), `playerIndex` (unsigned char), `mapFlags` (only the bit of mask 2, map flag 2).
+- `Game.poolCount` (unsigned 16-bit), the number of unit slots in the table (`Game.unitsEnd` is the slot at index
+  `poolCount` − 1). The recordings read it, and every `Unit#N.motion`, in each call that can walk the units; the behaviour reads only the units section 4 names (for `BuildAllPassMaps`, the
+  motion of a unit that holds a cell).
 - `Cell`: `unit`, `unit2` (unsigned 16-bit), `height`, `high`, `low`, `metal` (unsigned bytes), `feature` (unsigned 16-bit),
   `offsetY`, `offsetX` (unsigned bytes, at offsets 10 and 11, read only on a cell whose `feature` is 0xfffe), `flags`
   (bit 1, and `plotFeature4`).
@@ -594,7 +599,7 @@ Outcome 1.
 
 | `Unit.flags` | Each cell | Imports |
 | --- | --- | --- |
-| structure bit set | if yard map byte k has the unit's yard bit: a take of the cell's `Cell.unit` by the unit. Whatever the take did: if yard map byte k has bit 0x01, `Cell.flags` gets bit 1 (OR 2). A cell whose byte lacks the yard bit keeps its `Cell.unit` (Q10). | a CELL_HEIGHTS publish over (x − 1, y − 1) and (w + 2, h + 2), then a rebuild and report of every defined class over (`Unit.cell`, `Unit.footprint`), cause 2 |
+| structure bit set | if yard map byte k has the unit's yard bit: a take of the cell's `Cell.unit` by the unit. Whether or not byte k has the yard bit, and whatever the take did: if yard map byte k has bit 0x01, `Cell.flags` gets bit 1 (OR 2). A cell whose byte lacks the yard bit keeps its `Cell.unit` (Q10). | a CELL_HEIGHTS publish over (x − 1, y − 1) and (w + 2, h + 2), then a rebuild and report of every defined class over (`Unit.cell`, `Unit.footprint`), cause 2 |
 | structure bit clear, layer 1 | a take of `Cell.unit` | none |
 | structure bit clear, layer 2 | a take of `Cell.unit2` | none |
 | structure bit clear, layer 0 or 3 | nothing | none |
@@ -675,7 +680,7 @@ Imports: the `los_radar.GetMapCell` imports of the re-claim in its order, then t
 Imports: the one `los_radar.GetMapCell` of the claim, then the reports.
 
 With `skipEmptyYardmap` 0 (3.1c) and a null yard map, an outcome whose bounds test passes reads the yard map through a
-null offset. That case is undefined: the reference faults (`docs/scenario-format.md`, `quirks_reach`,
+null offset. That case isn't defined by this spec (`docs/scenario-format.md`, `quirks_reach`,
 `units.skip-empty-yardmap`). The bounds test failing still gives outcome 0.
 
 #### `MAP_BUCKET_UNLINK` (165)
@@ -1076,8 +1081,7 @@ Writes:
 - `lastTick` of class k becomes *s*.
 - The rebuilds listed below, each with the window *s*.
 - The unit's stamp is *p* again at the end of the call. During the call it is `Game.ticks`: every pass value this call
-  computes for a cell that holds the unit takes `Game.ticks` as the unit's stamp, so those cells are never stale here,
-  and a synchronous subscriber of the reports reads `Game.ticks` in `UnitMotion.pathLockStamp` (Q27).
+  computes for a cell that holds the unit takes `Game.ticks` as the unit's stamp, and a synchronous subscriber of the reports reads `Game.ticks` in `UnitMotion.pathLockStamp` (Q27).
 
 The rebuilds and reports, in this order, each report right after its own rebuild and before the next rebuild (the route
 to pathfinding is synchronous, `docs/schedule.md`):
@@ -1201,9 +1205,7 @@ Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing i
   the words take *n* × 4 bytes. The scratch size *S* is `width` + *fx* when `width` + *fx* > *fz* + `height`, else
   *fz* + `height`, with *fx*, *fz* sign-extended and the sums and the comparison unsigned 32-bit; the scratch block is
   *S* + 3 bytes.
-- **X23, progress.** `Game.progress_38d73` is also written after each defined class: with *d* the number of
-  defined classes done so far (1, 2, ...), it becomes ⌊(100 + 100 × *d*) / `count`⌋, a signed 32-bit division
-  truncating toward zero, stored as its low byte. Only the final 100 is seen at the end of the call.
+- **X23, progress.** `Game.progress_38d73` is 100 at the end of the call.
 - **X24, placement comparisons.** The bounds tests, *sea* − `maxwaterdepth`, *sea* − `minwaterdepth`,
   *H* − *L*, *d* and `Cell.high` − `Cell.low` are signed 32-bit (a cell with `high` < `low` gives a negative
   difference, which passes a slope test). *K* > *G* is between unsigned bytes. `Cell.unit` against the type id compares
@@ -1251,7 +1253,7 @@ Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing i
   7) with its low three bits cleared, at 32 bits. The buckets are packed, 10 bytes each, with no padding between them.
 - **X40, *a* and *b*.** All comparisons are of unsigned bytes. The map's cells are read in their order in
   `Game.cells`. The bucket number ⌊*cy* / 8⌋ × *GW* + ⌊*cx* / 8⌋ isn't clipped: a map wider than 8 × *GW* cells would
-  reach the next row's buckets. On every gate map `Game.width` × 16 = `Game.baseX`, so it stays inside.
+  reach the next row's buckets.
 - **X41, the feature plot byte.** The byte saved is ((`plotFeature` of the even cell) × 16 + (`plotFeature`
   of the odd cell mod 16)) mod 256, which is the same as the formula with `plotFeature4`. A load writes ⌊*v* / 16⌋ and
   *v* mod 16 of the unsigned byte *v*.
@@ -1312,8 +1314,8 @@ Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing i
 - **Q20.** `CanPlaceFootprintAt` answers 1, without looking at any cell, when the site's visibility word lacks the
   unit's player bit.
 - **Q21.** The *y* of a reclaim scan point, which `los_radar.GetMapCellAtPosition` is given and the picked
-  position's `Vec3` receives, isn't set by 3.1c. The trace leaves a reclaim order's `pos.y` out (`docs/view.md`,
-  "Orders"). An implementation may use any value.
+  position's `Vec3` receives, isn't specified: no recording calls the pick, and the trace leaves a reclaim order's
+  `pos.y` out (`docs/view.md`, "Orders"). An implementation may use any value.
 - **Q22.** The reclaim lists hold ⌊*w*² / 256⌋ entries, which is 0 when `range` is below 16 × 65536. A scan with
   more qualifying features than that writes 16-byte entries past the end of its allocation. The lists still behave as
   if they had no limit: the pick reads the entries written. What the block bytes after a list's allocation hold
@@ -1325,7 +1327,8 @@ Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing i
 - **Q25.** When the grid is one bucket wide or one bucket tall, every bucket's *b* is 0, whatever the heights.
 - **Q26.** `FreeBuckets` leaves `Grid2.widthFixed` and `Grid2.heightFixed` as they were.
 - **Q27.** `RefreshMovedUnits` doesn't keep the unit's stamp at `Game.ticks`: the stamp is `Game.ticks` only while
-  the call runs (its rebuilds count the unit's own cells as current), and the call ends with the stamp it started with.
+  the call runs (the pass values of the cells the unit holds use `Game.ticks` as its stamp), and the call ends with
+  the stamp it started with.
 
 ## 7. Examples
 
@@ -1525,9 +1528,9 @@ against recorded bucket bytes. The map of `tests/replay/map/orders-air-repair.tx
 - Bucket 0: *flags* 1 + 4 = 5; bucket 27: 1 + 8 = 9; bucket 363 (x 27, z 12): 2 + 8 = 10.
 - Bucket 61 (x 5, z 2): *a* 1, and *b* 42, from a neighbour. Bucket 63 (x 7, z 2): *a* 211, *b* 231. Bucket 91 (x 7,
   z 3): *a* 231, *b* 231.
-- The movement recordings of the same map read 25 bucket records as `SpatialBucket#N.bytes` (bytes 0 to 5: *a*, *b*,
-  *flags*). All 25 match: for example `tests/replay/movement/orders-air.txt`, `SpatialBucket#63.bytes
-  x:d3e700000000` (*a* 0xd3 = 211, *b* 0xe7 = 231, *flags* 0), and `SpatialBucket#61.bytes x:012a00000000`.
+- The movement recordings of the same map read 25 bucket lines (18 distinct buckets) as
+  `SpatialBucket#N.bytes` (bytes 0 to 5: *a*, *b*, *flags*). All 25 lines match: for example
+  `tests/replay/movement/orders-air.txt`, `SpatialBucket#63.bytes x:d3e700000000` (*a* 0xd3 = 211, *b* 0xe7 = 231, *flags* 0), and `SpatialBucket#61.bytes x:012a00000000`.
 
 **A 3 × 2 grid.** Not from a recording: worked from the definitions. `Game.baseX` 320 and `Game.baseY` 200 give *GW* =
 3, *GH* = 2, *N* = 8. With `Game.seaLevel` 3 and cell heights whose bucket maxima are 49, 49, 200 / 48, 49, 49, the *a*
