@@ -43,15 +43,15 @@ extern "C" {
 }
 
 #[no_mangle]
-pub static mut g_game: u32 = 0;
+pub static mut g_game: u32 = 1;
 #[no_mangle]
-pub static mut g_simGlobals: u32 = 0;
+pub static mut g_simGlobals: u32 = 1;
 #[no_mangle]
-pub static mut g_extTdf: u32 = 0;
+pub static mut g_extTdf: u32 = 1;
 #[no_mangle]
-pub static mut g_blockBase: u32 = 0;
+pub static mut g_blockBase: u32 = 1;
 #[no_mangle]
-pub static mut g_region: u32 = 0;
+pub static mut g_region: u32 = 1;
 
 
 static NEVER: u32 = 0;
@@ -1041,9 +1041,7 @@ pub extern "C" fn RegionSize(map: u32) -> u32 {
 }
 
 #[no_mangle]
-pub extern "C" fn Init(map: u32, reg_arg: u32, _size: u32) {
-    let gr = region();
-    let reg = if gr != 0 { gr } else { reg_arg };
+pub extern "C" fn Init(map: u32, reg: u32, _size: u32) {
     let (w, h, s) = (r32(map), r32(map + 4), r32(map + 8));
     let l = layout(w, h, s);
     let p = Pf { b: reg };
