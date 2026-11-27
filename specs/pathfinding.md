@@ -172,7 +172,7 @@ A *reference* stored in the region is a block offset: *R* plus the offset in the
 | 40 | `cellCount` | i32 | *C* |
 | 44 | `dirty` | u32 | reference to the dirty words |
 | 48, 50 | `start_x`, `start_y` | i16 | the start cell of the search |
-| 52 | `found` | `Point16` | the cell at which the last search that found a route ended |
+| 52, 54 | `found_x`, `found_y` | i16 | the cell at which the last search that found a route ended |
 | 56, 60 | `goalX`, `goalY` | i32 | the aim cell of the search |
 | 64 | `probe` | i32 | the probe's result |
 | 68 | `range` | i32 | the turn range of the next expansion: 4, then 2 |
@@ -241,7 +241,11 @@ count (24), and 64 points (28: *x*, *y*, i16 each, in world units).
 
 ### Read
 
-- `Game.pathfinder` (above). The module reads no other field of the block outside its region.
+- `Game.pathfinder` (above).
+- `Game.width` and `Game.height` (signed 32-bit), at `Init`: the grid's size (below). The recordings give
+  them as `r Game.width 224` and `r Game.height 102`, equal to `map.width` and `map.height`.
+
+The module reads no other field of the block outside its region.
 
 ### Between ticks
 
@@ -324,12 +328,11 @@ The items 0 to `count` − 1 hold a binary heap: item *i*'s children are items 2
 
 - **Sift up** from item *i*: when *i* is 0, nothing. Otherwise let *n* be the node of item *i*. While *i* > 0
   and *n*'s `f` is strictly below that of the node of the parent item (*i* − 1) / 2, the parent's node is
-  placed at *i* and *i* becomes the parent. When at least one node moved, *n* is then placed at the final
-  *i*; when none moved, nothing is written.
+  placed at *i* and *i* becomes the parent. *n* is then placed at the final *i*.
 - **Sift down** from item *i*: let *n* be its node. Repeat: if the right child exists (2*i* + 2 < `count`),
   the child is the right one when its `f` is strictly below the left one's, else the left one; if only the
   left child exists, it is the child; if none, stop. When the child's `f` ≥ *n*'s `f`, stop; otherwise the
-  child's node is placed at *i* and *i* becomes the child. At the end *n* is placed at *i* (always written).
+  child's node is placed at *i* and *i* becomes the child. At the end *n* is placed at *i*.
 - **Remove** node *k* (at item *j* = its `index`): node *k*'s `index` becomes `freeHead` and `freeHead`
   becomes *k*; `count` goes down by 1; then, when *j* < `count`, the node of item `count` is placed at *j*
   and sifted down from *j*.
@@ -385,7 +388,9 @@ greedy walk takes from (*x*, *y*): along the row first, then along the column.
 
 ### The expansion
 
-To *expand* a node taken from the open list, with data (*x*, *y*, *g*, …, steps *s*) in cell *c*: the
+To *expand* a node taken from the open list, with data (*x*, *y*, *g*, …, steps *s*) in cell *c*, these
+values being the node's as they were when it was taken (the node itself stays in item 0, and the
+expansion's first push overwrites it, while every neighbour still uses the values of the take): the
 cell's flags become 2 (closed). Then for each *t* from −`range` to `range`, in that order, with *u* = *t*
 mod 8 (the *turn*), the neighbour in direction *e* = (*c*'s dir + *u*) mod 8 is considered, *c*'s dir read
 at that moment:
@@ -408,7 +413,7 @@ With `range` 4 the turns run from 4 up to 7, then from 0 up to 4: the reverse di
 
 ### The route
 
-When the node taken is in a goal cell, the search has found its route. `found` becomes that
+When the node taken is in a goal cell, the search has found its route. `found_x`, `found_y` become that
 cell. The route is traced back from it: with *dir* the found cell's dir (read as signed 8-bit), the list
 starts with the found cell; at each cell *k* from the found cell, until the start cell: when *k*'s dir
 differs from *dir*, *dir* becomes *k*'s dir and *k* is added to the list; then *k* moves back one step,
@@ -433,7 +438,9 @@ With *w*, *h*, *s* from `map` and *R* the region's offset, the region (zero on e
   the eight offsets as section 3 gives them; *first free* 1; every other field of the settings 0, but
   `playerBudgetCap`;
 - each request entry *e* from 1 to *P* − 1 gets *next by requester* *e* + 1 (entry *P* keeps 0);
-- the head: `freeHead` −1; `width` *w*, `height` *h*, `cellCount` *C*; `cells` and `dirty` their
+- the head: `freeHead` −1; `width` `Game.width`, `height` `Game.height`, and `cellCount` their product
+  rounded up to a multiple of 8 (in the recordings these are *w*, *h* and *C*: the grid's size is the
+  game's, while the layout of the parts follows `map`); `cells` and `dirty` their
   references; `stepsPerTick` the result of `pathworld.SearchStepLimit()`, or 0x535 (1333) when it is 0;
   `baseScale` 0x18000; then for each player *p* from 0 to 9, `playerBudgetCap`[*p*] 0x18000 and
   `cursor`[*p*] the result of `pathworld.FirstUnit(p)`; every other byte of the head 0;
@@ -518,7 +525,7 @@ that fails (no entry: no import). When it starts:
 4. `pathworld.BeginSearch(object)`.
 5. `turnCost` and `stepCost` become their values (section 3).
 6. The cells' flags are cleared: for each dirty word with any bit set, the word becomes 0 and each cell
-   its set bits name gets flags 0 (dir and node kept), except that a cell numbered *C* or more is skipped.
+   its set bits name gets flags 0 (dir and node kept).
 7. Each goal cell of the goal area, in its order, is marked as a goal. Among them, the first with the
    smallest (`start_x` − *x*)² + (`start_y` − *y*)² gives `goalX`, `goalY` (when there are none, they keep
    their values).
