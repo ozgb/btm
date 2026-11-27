@@ -173,7 +173,7 @@ Features keeps no region of its own. Its state is view state in the block, hashe
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `Cell.feature` | u16 | on a feature's origin cell, the feature type's number (an index of `Game.features`); 0xffff for no feature, 0xfffe for a cell that another cell's feature covers, 0xfffc for the marker the map loader places; the values 0xfffb to 0xffff are markers, not numbers (feature number 0xfffb) |
+| `Cell.feature` | u16 | on a feature's origin cell, the feature type's number (an index of `Game.features`); 0xffff for no feature, 0xfffe for a cell that another cell's feature covers, 0xfffd for a border cell that the map's load leaves with no feature (the recordings hold many), 0xfffc for what a placement of type 0xfffc writes (D9); the values 0xfffb to 0xffff are markers, not numbers (feature number 0xfffb) |
 | `Cell.spot` | u16 | on an origin cell whose spot flag (`Cell.flag0`) is set, the spot's index; on an origin cell without it, the damage the feature has taken (D14); on a covered cell, the two bytes `Cell.offsetY` (low byte) and `Cell.offsetX` (high byte), the distance from the origin in rows and columns |
 | `Cell.flags` | u8 | bit 0 (`Cell.flag0`): the origin cell holds a spot; bits 3 to 6 (`Cell.owner`): the player that owns the feature, 10 for none. Features writes these bits only; bits 1, 2 and 7 are map's and stay as they are |
 | `Game.pool` (`Pool`) | | `entries` (a block offset: the 2048 spots), `usedHead`, `restHead`, `freeHead`: the spot at the head of each list, or -1 |
@@ -212,13 +212,14 @@ left there (Q3, Q4, Q5).
 | `Game.weapons` | the 256 weapon definitions, `WeaponDef`, 277 bytes each: `damage` (u16) and `fireStarter` (u8) |
 | `Game.ticks` | the tick |
 | `Game.uiOptionFlags` | bit 3 (value 8): features can be damaged |
-| `Game.playerIndex`, `Game.players` | this machine's player, and `Player.info` (a block offset) of each player: `PlayerInfo.flags_97` bit 0 (`host`) |
+| `Game.playerIndex`, `Game.players` | this machine's player, and `Player.info` (a block offset, never 0 for this machine's player) of each player: `PlayerInfo.host` (bit 0 of the word at `flags_97`) |
 | `Game.windX`, `Game.windZ` | the wind, signed |
 | `Game.seaLevel` | u8, the sea level in world units |
 | `Game.gravity` | int |
 | `Cell.unit` | the unit on a cell, 0 for none (map's) |
 | `Cell.height` | u8, the cell's height (map's) |
 | `Unit.playerIndex` | u8, the reclaiming unit's player |
+| `Game.units`, `Game.unitsEnd` | block offsets: the unit table's first unit and its end, units of 280 bytes (`Unit`) |
 
 The fields of a feature type (`Feature`, by `layout.json`) that the slots read: `footprint` (two signed 16-bit numbers,
 x then z), `object` (the address of the type's model, load data, or 0), `seqburn`, `seqburnshad`, `seqdie`,
@@ -270,8 +271,9 @@ taken.
 **D4. Moving spot i to a list** (used, rest or free; "the list's head" is `Pool.usedHead`, `restHead` or
 `freeHead`). Spot i leaves the list it is on: the spot that was its `next` (when not -1) gets i's old `prev` as its
 `prev`, the spot that was its `prev` (when not -1) gets i's old `next` as its `next`, and when i was the head of its
-list that head becomes i's old `prev`. Spot i becomes the head of the target list: its `next` is -1, its `prev` is the
-target's old head (read after i left its list, -1 for an empty list), and that spot, when not -1, gets `next` i.
+list (one of the three heads equals i) that head becomes i's old `prev`. Spot i becomes the head of the target
+list: its `next` is -1, its `prev` is the target's old head (read after i left its list, -1 for an empty list), and
+that spot, when not -1, gets `next` i.
 
 **D5. Taking a spot.** When `freeHead` is -1 the pool is full and nothing is written. Otherwise the spot i at
 `freeHead` is moved to the used list (D4) and its bit 0 of `flags` is cleared; its other bytes are left as they are.
@@ -356,12 +358,13 @@ its type. The new type v is `T.reclamate` when r is 1, otherwise `T.dead`.
 
 When `c.Cell.flag0` is set, s is the spot `c.Cell.spot`: when bit 1 (`reclaimed`) of `s.flags` is set, v is
 `T.reclamate` whatever r is (Q5). The placement's position is the three words of `s.pos` and its rotation `s.rot`,
-read after the remove; for a sprite spot these are the bytes of its cursors (Q4). The placement is made even when the
-remove gave 0 (Q6).
+read after the remove; for a sprite spot these are the bytes of its cursors (Q4). When the remove gave 0 (an
+indestructible feature), the placement is still made, and is refused unless v is 0xffff or 0xfffc (Q6).
 
 **D13. Burning out the spot s.** c is the cell from `GetMapCell(s.x, s.z)`. When c is 0 nothing more happens.
 Otherwise a plain remove of c (D8), then, when the burnt type `Game.features[s.feature].burnt` is not 0xffff, a
-placement of it on c with no position, no rotation and owner 10 (D9), even when the remove gave 0 (Q6).
+placement of it on c with no position, no rotation and owner 10 (D9); when the remove gave 0 that placement is refused
+unless the type is 0xfffc (Q6).
 
 **D14. A hit on the cell (x, z) by weapon w** (`Game.weapons`[w]), where c is the cell at (x, z) (D1, no import) and T
 its type. The result is 1 when the hit killed the feature.
@@ -370,7 +373,7 @@ its type. The result is 1 when the hit killed the feature.
 | --- | --- | --- | --- |
 | bit 3 of `Game.uiOptionFlags` is clear | none | nothing | 0 |
 | `c.Cell.feature` is 0xfffb or more, or T has the indestructible bit | none | nothing | 0 |
-| `GetGameType` is 3 and the `host` bit of this machine's player (`Game.players[Game.playerIndex]`) is clear | `mission.GetGameType`; `network.SendFeatureHit(address of the weapon definition, x, z)` | nothing | 0 |
+| `GetGameType` is 3 and `PlayerInfo.host` of this machine's player (`Game.players[Game.playerIndex]`) is clear | `mission.GetGameType`; `network.SendFeatureHit(address of the weapon definition, x, z)` | nothing | 0 |
 | T has the flamable bit, the weapon's `fireStarter` is not 0, and `c.Cell.flag0` is clear | `GetGameType`; those of lighting (x, z) (D10) | D10's | 0 |
 | `c.Cell.flag0` is set and T is a sprite type | `GetGameType` | nothing | 0 |
 | `c.Cell.flag0` is set, and the spot s = `c.Cell.spot` has (`s.x`, `s.z`) other than (x, z) | `GetGameType` | nothing | 0 |
@@ -395,8 +398,8 @@ d's origin (D2). There is no type when d is 0, when `d.Cell.feature` is below 0x
 | otherwise | INCOME (energy); INCOME (metal); those of felling (x, z) with r = 1 (D11); `mission.GetGameType`; when it is 3, `network.SendFeatureReclaimed(address of u, x, z)` | D11's | 1 |
 
 The two INCOMEs are `EconomyIncome` payloads (24 bytes) of kind 4 (economy's INCOME), player `u.Unit.playerIndex`,
-unit u's block offset, and: resources 1, energy `T.energy`, metal 0.0; then resources 2, energy 0.0, metal `T.metal`.
-The floats are copied bit for bit.
+unit u's block offset (the unit's own account, not 0), and: resources 1, energy `T.energy`, metal 0.0; then resources
+2, energy 0.0, metal `T.metal`. The floats are copied bit for bit.
 
 **D16. Updating spot i.** s is spot i and T = `Game.features[s.feature]`. The result is `s.prev` as it was before the
 update.
@@ -408,9 +411,12 @@ update.
 | sprite spot, `used` set (burning) | the smoke when `Game.ticks` (unsigned) is a multiple of 3; `StepGafSequence(s.anim)`; `StepGafSequence(s.shadow)` when `hasShadow` is set; then: when `s.anim.src` is 0, those of burning out (D13); else when `timer` is above 0 and `noSend` is clear, and `timer` - 1 is 0, those of the spread (D17) | when `s.anim.src` is 0: D13's; else when `timer` is above 0 and `noSend` is clear: `timer` drops by 1, and at 0 D17's |
 | sprite spot, `used` clear (dying) | `StepGafSequence(s.anim)`; `StepGafSequence(s.shadow)` when `hasShadow` is set; when `s.anim.src` is then 0, those of replacing (`s.x`, `s.z`) with r = 0 (D12) | the cursors; D12's |
 
+The results of `StepGafSequence` are ignored.
+
 **The smoke:** the footprint centre of (`s.x`, `s.z`) for T (D3); `GetGafFrame(s.anim.src, s.anim.index)`, the current
-frame f; two `GameRand(0)` draws; then `RecordSimEvent(28, 0, [x, y, z, 5], 4)` (`SIM_EVENT_WHITE_SMOKE`), with x and
-y moved as section 5, "The smoke", gives.
+frame f, which is never 0 (a burning spot's `anim.src` is not 0 when its smoke is made, and its `index` is below the
+table's count); two `GameRand(0)` draws; then `RecordSimEvent(28, 0, [x, y, z, 5], 4)` (`SIM_EVENT_WHITE_SMOKE`),
+with x and y moved as section 5, "The smoke", gives.
 
 **D17. The spread from a burning spot s of type T at (cx, cz).**
 
@@ -481,7 +487,7 @@ number. p is the cell from `GetMapCell(x, z)`.
 | Case | Imports | Written | Result |
 | --- | --- | --- | --- |
 | p is 0 | `GetMapCell` | nothing | 0xffff |
-| `p.Cell.feature` is 0xfffe | `GetMapCell(x, z)`, then `GetMapCell` of (x - `offsetX`, z - `offsetY`), each kept to signed 16 bits; that cell then stands for p in the two rows below (it is never 0: a covered cell's origin is on the map) | | |
+| `p.Cell.feature` is 0xfffe | two in all: `GetMapCell(x, z)`, which gave p, then `GetMapCell` of (x - `offsetX`, z - `offsetY`), each kept to signed 16 bits; that cell then stands for p in the two rows below (it is never 0: a covered cell's origin is on the map) | | |
 | `p.Cell.feature` is 0xfffb or more | as above | nothing | 0xffff |
 | otherwise | as above | `cell`, when not 0, becomes the position of p (the shifted position, or the moved one); `size`, when not 0, becomes `Game.features[p.Cell.feature].footprint` | `p.Cell.feature` |
 
@@ -502,7 +508,7 @@ them.
 | PLACE 32 | `x` from 0 to `Game.width` - 1, `z` from 0 to `Game.height` - 1; `feature` below `Game.featureCount`, or 0xffff, or 0xfffc; `owner` from 0 to 10 | placing `feature` (its low 16 bits) on the cell at (`x`, `z`) (D1), with the position `pos` when `flags` has `FEATURES_HAS_POS` (1) and none otherwise, the rotation of the low 16 bits of each `rot` word when `flags` has `FEATURES_HAS_ROT` (2) and none otherwise, and `owner` (D9). When a spot was placed and `flags` has `FEATURES_SINK` (4): the spot's `vel.y` becomes -11468 and its `vel.z` 0; `vel.x` stays (Q3) | 1 when a spot was placed, 0 otherwise (Q12) |
 | REMOVE 33 | `x`, `z` on the map, as for PLACE | removing the feature of the cell at (`x`, `z`) (D8), forced when `force` is not 0 and plain when it is 0 | D8's result |
 | DAMAGE 34 | `x`, `z` on the map; `weapon` from 0 to 255 | the hit on (`x`, `z`) by `weapon` (D14) | D14's result |
-| RECLAIM 35 | `unit` the block offset of a unit of the unit table (not 0) | the reclaim by that unit at (`pos[0]`, `pos[1]`, `pos[2]`) (D15) | D15's result |
+| RECLAIM 35 | `unit` not 0, at least `Game.units`, below `Game.unitsEnd`, and a multiple of 280 bytes from `Game.units` | the reclaim by that unit at (`pos[0]`, `pos[1]`, `pos[2]`) (D15) | D15's result |
 | REMOVE_ALL 36 | none | for each cell of `Game.cells` in index order whose `Cell.feature` is below 0xfffb or is 0xfffe, as the cell is when it is visited: a forced remove of that cell (D8) | 1 |
 
 ### `Place(place)`
@@ -673,7 +679,10 @@ feature or a feature with its spot flag), a PLACE of a sprite type, the removes 
 placement, a refused or forced plain REMOVE, a DAMAGE that lights a feature, that damages a model or that is sent in
 game type 3, a RECLAIM that is refused or that fells a model, a burning spot (the smoke, the burn out, the spread and
 the fire's damage), the end of a dying animation (D12), a falling model, a seed that lands, a geothermal placement, a
-full pool, and an animated type (`AnimateFeatureType` with the animating bit).
+full pool, an animated type (`AnimateFeatureType` with the animating bit), `GetCellFeature` on a covered cell or a
+marker (the recorded results are 65535 and 1), `FindFeatureAtPos` on a covered cell, a marker or off the map, an
+`Apply` with a size below its kind's payload, an unknown kind or an event outside the limits, and the overlays of Q3,
+Q4 and Q5 (the recordings name the overlaid fields one by one).
 
 ## 8. Kit version
 
