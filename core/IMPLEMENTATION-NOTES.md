@@ -153,4 +153,4 @@ no vector is near the limit); 13 done in `events.rs` (`repeat` in play mode adds
 than 0 or 1 is undefined by `rand_stream.h`; it draws from main); 17 (`gate.py` has no `runtime` group because `reference/core/` has none;
 `runtime_check.py` covers it).
 
-Verdicts, session 5: local gate equal on every group but `files`; runtime check and host check equal. Verdict of the submission: see below.
+Verdicts, session 5: local gate equal on every group but `files`; runtime check and host check equal. Verdict of req1 (this session): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
