@@ -110,6 +110,10 @@ pub struct State {
     entries: VecDeque<Entry>,
     mismatch: Option<String>,
     block_base: u64,
+    /// the labels of the handles issued in this outermost call, handle n being entry n - 1 (docs/module-abi.md, 8.1)
+    handles: Vec<String>,
+    /// the refusal that ended the call: its class (`import` or `glue`) and text
+    refusal: Option<(&'static str, String)>,
 }
 
 fn unescape(s: &str) -> Vec<u8> {
@@ -412,25 +416,75 @@ fn read_cstr(mem: &[u8], a: usize) -> Vec<u8> {
     v
 }
 
-fn apply_outs(caller: &mut Caller<'_, State>, e: &Entry, ptrs: &[u32]) -> Result<(), wasmi::Error> {
+/// The handle of a recorded object (`rec#2`), issued by first use in the outermost call; 0 for null.
+fn issue(st: &mut State, label: &str) -> Result<u32, wasmi::Error> {
+    if label == "null" {
+        return Ok(0);
+    }
+    if let Some(i) = st.handles.iter().position(|h| h == label) {
+        return Ok(i as u32 + 1);
+    }
+    if st.handles.len() >= 32 {
+        return Result::Err(refuse(st, "glue", format!("{}: the handle table is full", MODULE)));
+    }
+    st.handles.push(label.to_string());
+    Ok(st.handles.len() as u32)
+}
+
+/// Records the refusal that ends the replay and makes the trap that unwinds the call.
+fn refuse(st: &mut State, class: &'static str, text: String) -> wasmi::Error {
+    st.refusal = Some((class, text.clone()));
+    wasmi::Error::new(text)
+}
+
+/// The refusal of an import's `linear` arguments outside the memory (docs/module-abi.md, 7.2); `ptrs` are (index, value).
+fn check_ptrs(c: &mut Caller<'_, State>, name: &str, ptrs: &[(usize, i32)]) -> Result<(), wasmi::Error> {
+    let len = c.data().mem.map(|m| m.data(&*c).len()).unwrap_or(0);
+    for (i, v) in ptrs {
+        if (*v as u32 as usize) >= len {
+            let text = format!("import {}: pointer argument {} is outside the module memory", name, i);
+            return Result::Err(refuse(c.data_mut(), "import", text));
+        }
+    }
+    Ok(())
+}
+
+/// The refusal of a handle argument: null, or above the number issued in this outermost call.
+fn check_handle(c: &mut Caller<'_, State>, name: &str, h: i32) -> Result<(), wasmi::Error> {
+    let st = c.data_mut();
+    if h == 0 {
+        return Result::Err(refuse(st, "import", format!("import {}: null handle", name)));
+    }
+    if h < 0 || h as usize > st.handles.len() {
+        return Result::Err(refuse(st, "import", format!("import {}: unknown handle {}", name, h as u32)));
+    }
+    Ok(())
+}
+
+fn apply_outs(caller: &mut Caller<'_, State>, e: &Entry, ptrs: &[u32], size: Option<usize>) -> Result<(), wasmi::Error> {
     let mem = caller.data().mem.unwrap();
-    let (m, st) = mem.data_and_store_mut(&mut *caller);
     for (n, v) in &e.outs {
-        if let Some(rest) = n.strip_prefix("file#") {
-            let _ = rest;
+        if n.starts_with("file#") {
             let which = if n.ends_with(".root") { 0 } else if n.ends_with(".current") { 4 } else { continue };
-            let h = v.strip_prefix("rec#").and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
+            let h = issue(caller.data_mut(), v)?;
+            let (m, _) = mem.data_and_store_mut(&mut *caller);
             let a = ptrs.first().copied().unwrap_or(0) as usize + which;
             if a + 4 > m.len() {
-                return Result::Err(wasmi::Error::new("import TdfFile_LoadFile: pointer argument 0 is outside the module memory"));
+                continue;
             }
             m[a..a + 4].copy_from_slice(&h.to_le_bytes());
-        } else if n == "dst" {
+            continue;
+        }
+        let (m, st) = mem.data_and_store_mut(&mut *caller);
+        if n == "dst" {
             let a = ptrs.get(1).copied().unwrap_or(0) as usize;
             let mut b = unescape(v);
+            if let Some(sz) = size {
+                b.truncate(sz.saturating_sub(1));
+            }
             b.push(0);
             if a + b.len() > m.len() {
-                return Result::Err(wasmi::Error::new("import TdfRecord_GetFieldString: the buffer runs past the module memory"));
+                continue;
             }
             m[a..a + b.len()].copy_from_slice(&b);
         } else if let Some(rest) = n.strip_prefix("weapondef#") {
@@ -497,131 +551,148 @@ fn define_services(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
             None => v as i32,
         }
     })?;
-    linker.func_wrap("services", "FatalError", |c: Caller<'_, State>, msg: i32| -> Result<(), wasmi::Error> {
+    linker.func_wrap("services", "FatalError", |mut c: Caller<'_, State>, msg: i32| -> Result<(), wasmi::Error> {
+        check_ptrs(&mut c, "FatalError", &[(0, msg)])?;
         let mem = c.data().mem.unwrap();
         let m = mem.data(&c);
-        let a = msg as u32 as usize;
-        if a >= m.len() {
-            return Result::Err(wasmi::Error::new("import FatalError: pointer argument 0 is outside the module memory"));
-        }
-        let text = String::from_utf8_lossy(&read_cstr(m, a)).into_owned();
+        let text = String::from_utf8_lossy(&read_cstr(m, msg as u32 as usize)).into_owned();
         Result::Err(wasmi::Error::new(text))
     })?;
-    linker.func_wrap("services", "BuildDataPath", |mut c: Caller<'_, State>, buf: i32, _d: i32, _n: i32, _e: i32| -> Result<i32, wasmi::Error> {
+    linker.func_wrap("services", "BuildDataPath", |mut c: Caller<'_, State>, buf: i32, d: i32, n: i32, x: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "BuildDataPath", &[(0, buf), (1, d), (2, n), (3, x)])?;
         let e = next_entry(&mut c, "services.BuildDataPath");
         let mem = c.data().mem.unwrap();
         let m = mem.data_mut(&mut c);
         let a = buf as u32 as usize;
-        if a >= m.len() {
-            return Result::Err(wasmi::Error::new("import BuildDataPath: pointer argument 0 is outside the module memory"));
-        }
         if let Some(Entry { result: Some(r), .. }) = &e {
             let mut b = unescape(r);
             b.push(0);
-            if a + b.len() > m.len() {
-                return Result::Err(wasmi::Error::new("import BuildDataPath: the buffer runs past the module memory"));
+            if a + b.len() <= m.len() {
+                m[a..a + b.len()].copy_from_slice(&b);
             }
-            m[a..a + b.len()].copy_from_slice(&b);
         }
         Ok(buf)
     })?;
     linker.func_wrap("services", "TdfFile_Construct", |mut c: Caller<'_, State>, file: i32| -> Result<(), wasmi::Error> {
+        check_ptrs(&mut c, "TdfFile_Construct", &[(0, file)])?;
         let _ = next_entry(&mut c, "services.TdfFile_Construct");
         let mem = c.data().mem.unwrap();
         let m = mem.data_mut(&mut c);
         let a = file as u32 as usize;
-        if a.saturating_add(12) > m.len() {
-            return Result::Err(wasmi::Error::new("import TdfFile_Construct: pointer argument 0 is outside the module memory"));
-        }
-        m[a..a + 12].fill(0);
+        let end = (a + 12).min(m.len());
+        m[a..end].fill(0);
         Ok(())
     })?;
-    linker.func_wrap("services", "TdfFile_Destruct", |mut c: Caller<'_, State>, _file: i32| {
+    linker.func_wrap("services", "TdfFile_Destruct", |mut c: Caller<'_, State>, file: i32| -> Result<(), wasmi::Error> {
+        check_ptrs(&mut c, "TdfFile_Destruct", &[(0, file)])?;
         let _ = next_entry(&mut c, "services.TdfFile_Destruct");
+        Ok(())
     })?;
-    linker.func_wrap("services", "TdfFile_LoadFile", |mut c: Caller<'_, State>, file: i32, _p: i32| -> Result<i32, wasmi::Error> {
+    linker.func_wrap("services", "TdfFile_LoadFile", |mut c: Caller<'_, State>, file: i32, p: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "TdfFile_LoadFile", &[(0, file), (1, p)])?;
         let e = next_entry(&mut c, "services.TdfFile_LoadFile");
         if let Some(en) = &e {
-            apply_outs(&mut c, en, &[file as u32])?;
+            apply_outs(&mut c, en, &[file as u32], None)?;
         }
         Ok(result_i32(&e, 0))
     })?;
-    linker.func_wrap("services", "TdfFile_SelectRecord", |mut c: Caller<'_, State>, file: i32, _n: i32| -> Result<i32, wasmi::Error> {
+    linker.func_wrap("services", "TdfFile_SelectRecord", |mut c: Caller<'_, State>, file: i32, n: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "TdfFile_SelectRecord", &[(0, file), (1, n)])?;
         let e = next_entry(&mut c, "services.TdfFile_SelectRecord");
         if let Some(en) = &e {
-            apply_outs(&mut c, en, &[file as u32])?;
+            apply_outs(&mut c, en, &[file as u32], None)?;
         }
         Ok(result_i32(&e, 0))
     })?;
-    linker.func_wrap("services", "TdfRecord_GetFieldInt", |mut c: Caller<'_, State>, _r: i32, _k: i32, _d: i32| -> i32 {
+    linker.func_wrap("services", "TdfRecord_GetFieldInt", |mut c: Caller<'_, State>, r: i32, k: i32, _d: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "TdfRecord_GetFieldInt", &[(1, k)])?;
+        check_handle(&mut c, "TdfRecord_GetFieldInt", r)?;
         let e = next_entry(&mut c, "services.TdfRecord_GetFieldInt");
-        result_i32(&e, 0)
+        Ok(result_i32(&e, 0))
     })?;
-    linker.func_wrap("services", "TdfRecord_GetFieldDouble", |mut c: Caller<'_, State>, _r: i32, _k: i32, _d: f64| -> f64 {
+    linker.func_wrap("services", "TdfRecord_GetFieldDouble", |mut c: Caller<'_, State>, r: i32, k: i32, _d: f64| -> Result<f64, wasmi::Error> {
+        check_ptrs(&mut c, "TdfRecord_GetFieldDouble", &[(1, k)])?;
+        check_handle(&mut c, "TdfRecord_GetFieldDouble", r)?;
         let e = next_entry(&mut c, "services.TdfRecord_GetFieldDouble");
-        match e.and_then(|e| e.result) {
+        Ok(match e.and_then(|e| e.result) {
             Some(r) => f64::from_bits(parse_f64(&r)),
             None => 0.0,
-        }
+        })
     })?;
     linker.func_wrap(
         "services",
         "TdfRecord_GetFieldString",
-        |mut c: Caller<'_, State>, _r: i32, dst: i32, _k: i32, size: i32, _d: i32| -> Result<i32, wasmi::Error> {
-            let e = next_entry(&mut c, "services.TdfRecord_GetFieldString");
+        |mut c: Caller<'_, State>, r: i32, dst: i32, k: i32, size: i32, d: i32| -> Result<i32, wasmi::Error> {
+            let name = "TdfRecord_GetFieldString";
+            check_ptrs(&mut c, name, &[(1, dst), (2, k), (4, d)])?;
+            check_handle(&mut c, name, r)?;
             if size < 1 {
-                return Result::Err(wasmi::Error::new("import TdfRecord_GetFieldString: the buffer size is below 1"));
+                return Result::Err(refuse(c.data_mut(), "import", format!("import {}: the buffer size is below 1", name)));
             }
             let mlen = c.data().mem.map(|m| m.data(&c).len()).unwrap_or(0);
-            if dst < 0 || dst as usize + size as usize > mlen {
-                return Result::Err(wasmi::Error::new("import TdfRecord_GetFieldString: the buffer runs past the module memory"));
+            if dst as u32 as usize + size as usize > mlen {
+                return Result::Err(refuse(c.data_mut(), "import", format!("import {}: the buffer runs past the module memory", name)));
             }
+            let e = next_entry(&mut c, "services.TdfRecord_GetFieldString");
             if let Some(en) = &e {
-                apply_outs(&mut c, en, &[0, dst as u32])?;
+                apply_outs(&mut c, en, &[0, dst as u32], Some(size as usize))?;
             }
             Ok(result_i32(&e, 0))
         },
     )?;
-    linker.func_wrap("services", "HapiBank_OpenAccount", |mut c: Caller<'_, State>, _b: i32, _n: i32| -> i32 {
+    linker.func_wrap("services", "HapiBank_OpenAccount", |mut c: Caller<'_, State>, b: i32, n: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "HapiBank_OpenAccount", &[(1, n)])?;
+        check_handle(&mut c, "HapiBank_OpenAccount", b)?;
         let e = next_entry(&mut c, "services.HapiBank_OpenAccount");
-        result_i32(&e, 0)
+        Ok(result_i32(&e, 0))
     })?;
-    linker.func_wrap("services", "HapiBank_SetIntegerItem", |mut c: Caller<'_, State>, _b: i32, _n: i32, _v: i32| -> i32 {
+    linker.func_wrap("services", "HapiBank_SetIntegerItem", |mut c: Caller<'_, State>, b: i32, n: i32, _v: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "HapiBank_SetIntegerItem", &[(1, n)])?;
+        check_handle(&mut c, "HapiBank_SetIntegerItem", b)?;
         let e = next_entry(&mut c, "services.HapiBank_SetIntegerItem");
-        result_i32(&e, 0)
+        Ok(result_i32(&e, 0))
     })?;
-    linker.func_wrap("services", "HapiBank_GetIntegerItem", |mut c: Caller<'_, State>, _b: i32, _n: i32, _d: i32| -> i32 {
+    linker.func_wrap("services", "HapiBank_GetIntegerItem", |mut c: Caller<'_, State>, b: i32, n: i32, _d: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "HapiBank_GetIntegerItem", &[(1, n)])?;
+        check_handle(&mut c, "HapiBank_GetIntegerItem", b)?;
         let e = next_entry(&mut c, "services.HapiBank_GetIntegerItem");
-        result_i32(&e, 0)
+        Ok(result_i32(&e, 0))
     })?;
     linker.func_wrap("services", "Emit", |mut c: Caller<'_, State>, effect: i32, size: i32| -> Result<(), wasmi::Error> {
-        let _ = next_entry(&mut c, "services.Emit");
+        check_ptrs(&mut c, "Emit", &[(0, effect)])?;
         let mem = c.data().mem.unwrap();
-        let m = mem.data(&c);
         let (a, n) = (effect as u32 as usize, size as u32 as usize);
-        if n < 4 || n > 256 {
-            return Result::Err(wasmi::Error::new("import Emit: the size is outside an effect"));
+        let text = if !(4..=128).contains(&n) {
+            Some("the size is outside an effect")
+        } else if a + n > mem.data(&c).len() {
+            Some("the effect runs past the module memory")
+        } else {
+            let m = mem.data(&c);
+            let kind = i32::from_le_bytes([m[a], m[a + 1], m[a + 2], m[a + 3]]);
+            if kind != 80 {
+                Some("the kind is not in the module's publishes table")
+            } else if n != 36 {
+                Some("the size is not the payload's size of its kind")
+            } else {
+                let weapon = i32::from_le_bytes([m[a + 4], m[a + 5], m[a + 6], m[a + 7]]);
+                if !(0..256).contains(&weapon) {
+                    Some("the weapon slot is outside the table of weapons")
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(t) = text {
+            return Result::Err(refuse(c.data_mut(), "import", format!("import Emit: {}", t)));
         }
-        if a + n > m.len() {
-            return Result::Err(wasmi::Error::new("import Emit: the effect runs past the module memory"));
-        }
-        let kind = i32::from_le_bytes([m[a], m[a + 1], m[a + 2], m[a + 3]]);
-        if kind != 80 {
-            return Result::Err(wasmi::Error::new("import Emit: the kind is not in the module's publishes table"));
-        }
-        if n != 36 {
-            return Result::Err(wasmi::Error::new("import Emit: the size is not the payload's size of its kind"));
-        }
-        let weapon = i32::from_le_bytes([m[a + 4], m[a + 5], m[a + 6], m[a + 7]]);
-        if !(-1..256).contains(&weapon) {
-            return Result::Err(wasmi::Error::new("import Emit: the weapon slot is outside the table of weapons"));
-        }
+        let _ = next_entry(&mut c, "services.Emit");
         Ok(())
     })?;
-    linker.func_wrap("weapons", "FindWeaponByName", |mut c: Caller<'_, State>, _n: i32| -> Result<i32, wasmi::Error> {
+    linker.func_wrap("weapons", "FindWeaponByName", |mut c: Caller<'_, State>, n: i32| -> Result<i32, wasmi::Error> {
+        check_ptrs(&mut c, "FindWeaponByName", &[(0, n)])?;
         let e = next_entry(&mut c, "weapons.FindWeaponByName");
         if let Some(en) = &e {
-            apply_outs(&mut c, en, &[])?;
+            apply_outs(&mut c, en, &[], None)?;
         }
         let bb = c.data().block_base;
         Ok(result_i32(&e, bb))
@@ -642,7 +713,7 @@ fn replay(recording: &str, module_path: &str) -> Result<Vec<Vec<String>>, Err> {
     let mem = rp.l.memory.unwrap();
     rp.l.store.data_mut().mem = Some(mem);
     let wasm = std::fs::read(module_path).map_err(|_| Err::named("compile", MODULE))?;
-    rp.l.load(MODULE, &wasm, define_services)?;
+    rp.l.load(MODULE, &wasm, false, define_services)?;
     let blocks = parse_recording(recording);
     let mut out = Vec::new();
     let mut last_tick: Option<i64> = None;
@@ -718,7 +789,11 @@ fn replay(recording: &str, module_path: &str) -> Result<Vec<Vec<String>>, Err> {
             eprintln!("call {} {} {:?}", c.ticks, c.slot, args);
         }
         let res = rp.l.call(MODULE, &c.slot, &args);
+        rp.l.store.data_mut().handles.clear();
         if let Result::Err(e) = res {
+            if let Some((class, text)) = rp.l.store.data_mut().refusal.take() {
+                return Result::Err(Err { class, modules: vec![MODULE.to_string()], message: Some(text) });
+            }
             return Result::Err(e);
         }
         if rp.l.store.data().mismatch.is_some() {

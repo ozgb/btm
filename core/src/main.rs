@@ -4,6 +4,7 @@ mod events;
 mod hash;
 mod host;
 mod loader;
+mod nan;
 mod rand;
 mod runtime;
 

@@ -9,18 +9,20 @@ use wasmi::{ValType, Engine, Extern, Func, Linker, Memory, MemoryType, Module, R
 pub struct Err {
     pub class: &'static str,
     pub modules: Vec<String>,
+    pub message: Option<String>,
 }
 
 impl Err {
     pub fn new(class: &'static str) -> Err {
-        Err { class, modules: Vec::new() }
+        Err { class, modules: Vec::new(), message: None }
     }
     pub fn named(class: &'static str, name: &str) -> Err {
-        Err { class, modules: vec![name.to_string()] }
+        Err { class, modules: vec![name.to_string()], message: None }
     }
     pub fn json(&self) -> String {
         let names: Vec<String> = self.modules.iter().map(|m| crate::commands::json_str(m)).collect();
-        format!("{{\"error\":\"{}\",\"modules\":[{}]}}", self.class, names.join(","))
+        let msg = self.message.as_ref().map(|m| format!(",\"message\":{}", crate::commands::json_str(m))).unwrap_or_default();
+        format!("{{\"error\":\"{}\",\"modules\":[{}]{}}}", self.class, names.join(","), msg)
     }
 }
 
@@ -80,6 +82,9 @@ pub fn parse_manifest(text: &[u8]) -> Result<Manifest, Err> {
         req[i] = obj.get(*k).and_then(nonneg).ok_or_else(m)?;
     }
     let [memory_pages, table_size, window, table_slots] = req;
+    if let Some(v) = obj.get("stack_size") {
+        nonneg(v).ok_or_else(m)?;
+    }
     if memory_pages == 0 || memory_pages > 65536 || window == 0 {
         return Result::Err(m());
     }
@@ -142,6 +147,16 @@ pub fn parse_manifest(text: &[u8]) -> Result<Manifest, Err> {
             None => return Result::Err(named("module_entry")),
             Some(v) => nonneg(v).ok_or_else(|| Err::new("manifest"))?,
         };
+        let fuel_budget = match eo.get("fuel_budget") {
+            None => None,
+            Some(v) => match nonneg(v) {
+                Some(b) if b >= 1 => Some(b as i64),
+                _ => return Result::Err(Err::new("manifest")),
+            },
+        };
+        if let Some(v) = eo.get("size_budget") {
+            nonneg(v).ok_or_else(|| Err::new("manifest"))?;
+        }
         let exports = match eo.get("exports") {
             None => Vec::new(),
             Some(v) => names(v).ok_or_else(|| named("module_entry"))?,
@@ -153,7 +168,6 @@ pub fn parse_manifest(text: &[u8]) -> Result<Manifest, Err> {
         if modules.iter().any(|p| p.name == name) {
             return Result::Err(named("module_entry"));
         }
-        let fuel_budget = eo.get("fuel_budget").and_then(nonneg).map(|x| x as i64);
         modules.push(Entry { name, data_base, table_base, exports, data, fuel_budget, raw: e.clone() });
     }
     // each module: its window, its reach and its overlaps
@@ -175,7 +189,7 @@ pub fn parse_manifest(text: &[u8]) -> Result<Manifest, Err> {
         for b in &modules[i + 1..] {
             let ov = |x: u64, y: u64, w: u64| x < y + w && y < x + w;
             if ov(a.data_base, b.data_base, window) || ov(a.table_base, b.table_base, table_slots) {
-                return Result::Err(Err { class: "overlap", modules: vec![a.name.clone(), b.name.clone()] });
+                return Result::Err(Err { class: "overlap", modules: vec![a.name.clone(), b.name.clone()], message: None });
             }
         }
     }
@@ -253,7 +267,7 @@ impl<T: 'static> Loader<T> {
     }
 
     /// Loads a module (section 5.1, step 4). `define` adds the host's imports to the linker.
-    pub fn load(&mut self, name: &str, wasm: &[u8], define: impl FnOnce(&mut Linker<T>) -> Result<(), wasmi::Error>) -> Result<(), Err> {
+    pub fn load(&mut self, name: &str, wasm: &[u8], fixture: bool, define: impl FnOnce(&mut Linker<T>) -> Result<(), wasmi::Error>) -> Result<(), Err> {
         let manifest = self.manifest.as_ref().ok_or_else(|| Err::new("manifest"))?;
         let entry = match manifest.modules.iter().find(|e| e.name == name) {
             Some(e) => e,
@@ -266,7 +280,7 @@ impl<T: 'static> Loader<T> {
         if self.modules.contains_key(name) {
             return Result::Err(Err::named("loaded_twice", name));
         }
-        let adapted = check_majors(manifest, entry)?;
+        let (adapted, adapted_imports) = check_majors(manifest, entry, fixture)?;
         let window = manifest.window as usize;
         let (data_base, table_base) = (entry.data_base as usize, entry.table_base as usize);
         let exports = entry.exports.clone();
@@ -279,10 +293,20 @@ impl<T: 'static> Loader<T> {
             let end = (data_base + window).min(bytes.len());
             bytes[data_base.min(end)..end].fill(0);
         }
-        let module = Module::new(&self.engine, wasm).map_err(|_| Err::named("compile", name))?;
+        Module::new(&self.engine, wasm).map_err(|_| Err::named("compile", name))?;
+        let canon = crate::nan::canonicalize(wasm).ok_or_else(|| Err::named("compile", name))?;
+        let module = Module::new(&self.engine, &canon[..]).map_err(|_| Err::named("compile", name))?;
         let mut linker = <Linker<T>>::new(&self.engine);
         linker.define("env", "memory", mem).map_err(|_| Err::named("instantiate", name))?;
         linker.define("env", "__indirect_function_table", table).map_err(|_| Err::named("instantiate", name))?;
+        if fixture {
+            let (iface, imp) = ("fixture", "mix");
+            let func = match adapted_imports.iter().find(|(i, n, _, _)| i == iface && n == imp) {
+                Some((_, _, ad, old)) => adapted_mix(&mut self.store, ad.clone(), old),
+                None => Func::wrap(&mut self.store, |a: i32, b: i32, c: i32| a.wrapping_add(b.wrapping_mul(10)).wrapping_add(c.wrapping_mul(100))),
+            };
+            linker.define(iface, imp, func).map_err(|_| Err::named("instantiate", name))?;
+        }
         define(&mut linker).map_err(|_| Err::named("instantiate", name))?;
         let instance = linker
             .instantiate_and_start(&mut self.store, &module)
@@ -524,11 +548,12 @@ fn find_adapter<'a>(manifest: &'a Manifest, iface: &str, from_major: u64, name: 
 }
 
 /// Checks the interface majors of an entry (section 10.2); returns the adapters of its slots by export name.
-fn check_majors(manifest: &Manifest, entry: &Entry) -> Result<HashMap<String, Adapter>, Err> {
+fn check_majors(manifest: &Manifest, entry: &Entry, fixture: bool) -> Result<(HashMap<String, Adapter>, Vec<AdaptedImport>), Err> {
     let mut slots = HashMap::new();
+    let mut imports = Vec::new();
     let mine = match entry.raw.get("majors") {
         Some(Value::Object(o)) => o,
-        _ => return Ok(slots),
+        _ => return Ok((slots, imports)),
     };
     let theirs = manifest.raw.get("majors").and_then(|v| v.as_object());
     for (iface, m) in mine {
@@ -570,10 +595,42 @@ fn check_majors(manifest: &Manifest, entry: &Entry) -> Result<HashMap<String, Ad
             let ad = build_adapter(spec, caller, callee).ok_or_else(|| Err::new("manifest"))?;
             if is_slot {
                 slots.insert(name, ad);
+            } else {
+                // the host defines `fixture.mix` of three ints alone (docs/core-gate.md)
+                let mix: Sig = (vec!["int".into(); 3], "int".into());
+                if !fixture || iface != "fixture" || name != "mix" || cur != mix {
+                    return Result::Err(Err::new("manifest"));
+                }
+                imports.push((iface.clone(), name, ad, old));
             }
         }
     }
-    Ok(slots)
+    Ok((slots, imports))
+}
+
+type AdaptedImport = (String, String, Adapter, Sig);
+
+/// The host's `fixture.mix` as a module built against an older major calls it: its arguments and result pass the adapter.
+fn adapted_mix<T>(store: &mut Store<T>, ad: Adapter, old: &Sig) -> Func {
+    let vt = |k: &String| if k == "f64" { ValType::F64 } else { ValType::I32 };
+    let params: Vec<ValType> = old.0.iter().map(vt).collect();
+    let results: Vec<ValType> = if old.1 == "void" { vec![] } else { vec![vt(&old.1)] };
+    let ty = wasmi::FuncType::new(params, results);
+    Func::new(store, ty, move |_, args, out| {
+        let get = |i: usize| match args.get(i) {
+            Some(Val::I32(v)) => *v,
+            _ => 0,
+        };
+        let conv: Vec<i32> = ad.args.iter().map(|a| match a { Src::Arg(i) => get(*i), Src::Const(c) => *c }).collect();
+        let r = conv[0].wrapping_add(conv[1].wrapping_mul(10)).wrapping_add(conv[2].wrapping_mul(100));
+        if let Some(o) = out.first_mut() {
+            *o = match &ad.result {
+                ResForm::Const(c) => Val::I32(*c),
+                _ => Val::I32(r),
+            };
+        }
+        Ok(())
+    })
 }
 
 pub fn run(calls: &[Call]) -> Vec<String> {
@@ -593,7 +650,7 @@ pub fn run(calls: &[Call]) -> Vec<String> {
             }
             "load" => {
                 let wasm = std::fs::read(&a[1]).map_err(|_| Err::named("compile", &a[0]))?;
-                l.load(&a[0], &wasm, |_| Ok(()))?;
+                l.load(&a[0], &wasm, true, |_| Ok(()))?;
                 Ok("null".to_string())
             }
             "tick" => {
