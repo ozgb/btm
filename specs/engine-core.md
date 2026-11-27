@@ -345,9 +345,11 @@ The hash, the pointer IDs, the walk of each section and the rules of the hashed 
 `docs/trace-format.md`, sections 3 to 8 and 11; `tools/tracerehash.py` is a second implementation of every hash
 from a dump. The core gate's `hash` group recomputes every row of a dump, the phase rows and `world` as well as
 `tick`, so it judges the hash apart from the logic. Its `rows` call gives the rows by tick and then in the row
-order of `docs/trace-format.md`, section 2, whatever the order of the dump's blocks (`docs/core-gate.md`, "hash").
+order of `docs/trace-format.md`, section 2 (`units` to `meteors`, `world` and `tick`), whatever the order of the
+dump's blocks (`docs/core-gate.md`, "hash").
 A goal of none of the known kinds is class 6, with no fields (section 8.10); a dump that holds an order effect of
-a class above 5 or a mission condition of class 0 has no hash (sections 8.11, 8.17 and 11).
+a class above 5 or a mission condition of class 0 fails the run and has no hash (section 11); no vector of
+the `hash` group gives such a dump.
 
 A dump can't carry a string that holds the byte 0x0a (`docs/trace-format.md`, section 8.19), and no vector of the
 `hash` group holds one, so the gate never judges one (`docs/core-gate.md`, "hash"). Which lines of a dump a reader

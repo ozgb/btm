@@ -35,17 +35,19 @@ ranges, and in each module entry `fuel_budget` and then `size_budget` after `tab
 The numbers a manifest takes are `docs/module-abi.md`, section 4.1: a non-negative integer of at most 2147483647,
 and a number with a fraction or an exponent makes the manifest invalid JSON. `stack_size` and a module entry's
 `size_budget` are refused (`manifest`) when they are not non-negative integers, and a `fuel_budget` when it is
-not an integer from 1 to 2147483647 (section 11.3). A manifest of `memory_pages` 65536 with the block at its
-ceiling and a `fuel_budget` of 2147483647 is accepted (vector `manifest_pages_max`); no vector calls `memory` on it,
+not an integer from 1 to 2147483647 (section 11.3). A manifest of `memory_pages` 65536 with `block_base`
+2147418112 and a `fuel_budget` of 2147483647 is accepted (vector `manifest_pages_max`); no vector calls `memory` on it,
 and a core must not need 4 GiB of RAM for it (`docs/core-gate.md`, "Known limits"). Which modules each class of
 error names, the class `table` of a call through an index at or past `table_size`, and how a pair of faults is
 ordered are `docs/core-gate.md`, "loader and fuel".
 
-In the `loader` and `fuel` groups the core defines, beside the memory and the table, one import at `memory`:
-`fixture.mix`, of kinds `[[int, int, int], int]`, which returns *a* + 10 *b* + 100 *c* of its arguments in i32
-arithmetic that wraps (`docs/core-gate.md`, "loader and fuel"; vector `host_import`). Every NaN a module's
-computation returns or stores is the canonical one, 0x7fc00000 for an f32, and the words 0 and 0x7ff80000 for an
-f64 (`docs/module-abi.md`, section 3.2; vector `nan_canonical`); an f32 that crosses the boundary keeps its 32 bits.
+In the `loader` and `fuel` groups the `memory` call defines, beside the memory and the table, one import: the
+name `mix` of the import module `fixture`, of kinds `[[int, int, int], int]`, which returns *a* + 10 *b* + 100 *c* of its arguments in i32
+arithmetic that wraps (`docs/core-gate.md`, "loader and fuel"; vector `host_import`). It is the only import the
+host defines there, so an adapted import (below) resolves against it alone. Every NaN a module's arithmetic
+returns or stores is the canonical one, 0x7fc00000 for an f32, and the words 0 and 0x7ff80000 for an f64
+(`docs/module-abi.md`, section 3.2; vector `nan_canonical`, which judges addition, division and the square root); an f32
+that crosses the boundary keeps its 32 bits, and a module must not let a result depend on a NaN's bits.
 
 **Adapters** (`docs/module-abi.md`, section 10.2) let a module built against an older major load: the loader
 judges them from the entry's `slots` and `imports` and the manifest's `signatures` alone, so a refusal does not
@@ -70,12 +72,13 @@ of `docs/module-abi.md`, section 9.3:
 | `RecordSimEvent`, `SimCaptureAlloc` | the sim event queue and the radar arena of `specs/engine-core.md`, section 4.5 |
 | `GetGafFrame`, `InitGafSequence`, `StepGafSequence` | the frames of a frame table, load data outside the block (`docs/module-abi.md`, section 7.1), and the sequence cursors in the block that step through them |
 | `GetSlotDpid`, `FindSlotByDpid` | the network ids of the game record's player slots |
-| `Emit` | puts an effect in the calling module's outbox (section 4.2 below), after the checks of section 9.3 in its order: a pointer outside the module memory, a size outside 4 to 128 bytes, an effect that runs past the module memory, a kind not in the entry's `publishes` table, a size other than that kind's; then the kind's hook (wind_meteors' SPAWN: the weapon slot is in the table of weapons) |
+| `Emit` | puts an effect in the calling module's outbox (section 4.2 below), after the checks of section 9.3 in its order: a pointer outside the module memory, a size outside 4 to 128 bytes, an effect that runs past the module memory, a kind not in the entry's `publishes` table, a size other than that kind's; then the kind's hook (wind_meteors' SPAWN: the weapon slot is one of the 256 of `Game.weapons` in `layout.json`, 0 to 255) |
 
 A malformed argument to one of the services of minors 1 and 2 changes nothing and does not trap: the call returns
 0 (`-1` for `GetSlotDpid`, `10` for `FindSlotByDpid`) and writes nothing, for the cases section 9.3 lists. An
 import that refuses a call traps with section 13's text, `import <name>: ` and its cause, `Emit`'s five causes and
-its hook's among them.
+its hook's among them. `pointer argument <n>` counts the import's arguments from 0. Each refusal vector holds one
+fault, so the order between two faults of one call is not judged.
 
 The header comments give each import's result, and the recordings carry every call a recorded slot makes, with
 its arguments and result (`docs/replay-format.md`, "Services").
@@ -162,11 +165,14 @@ lines (`docs/core-gate.md`, "host").
 - **The module** is the `replay` call's second argument, a path like every file a call names: `module.wasm`, the
   core's wind_meteors module, for the recordings of `tests/replay/wind_meteors/`, and a fixture module beside the
   recording, `host/wind_meteors_<vector>.wasm`, for each refusal vector (`docs/core-gate.md`, "The refusal
-  vectors"). A fixture is loaded as a wind_meteors module of the game manifest.
+  vectors"). A fixture is loaded as the wind_meteors module of the game manifest, the kit's `wasm/modules.json`
+  (its entry gives the data and table bases, `publishes`, the majors and the fuel budget). No call names that
+  manifest, so the core carries it in itself. One instance of the module serves every `call` of a recording, so a static
+  the module keeps lasts from one call to the next, and the handle table is cleared after each.
 - **A text out with a `size`** (`TdfRecord_GetFieldString`'s `dst`) is written as at most *size* - 1 bytes of the
   recorded text and then a 0, so a text longer than the buffer is cut (`docs/replay-format.md`, "Services";
   vector `import_string_cut`).
-- **An error that ends the replay** is the last entry's value: a trap or running out of fuel, an error of the
+- **An error that ends the replay** is the whole value of the `replay` call, in place of its lines: a trap or running out of fuel, an error of the
   loader classes; an import's refusal, `{"error": "import", "modules": ["wind_meteors"], "message": TEXT}`, TEXT
   section 13's text from `import ` to the end of its line; and a full handle table,
   `{"error": "glue", "modules": ["wind_meteors"], "message": "wind_meteors: the handle table is full"}`.
@@ -186,9 +192,9 @@ lines (`docs/core-gate.md`, "host").
   only its own burning lowers it (`docs/core-gate.md`, "loader and fuel").
 - **Handles.** An opaque u32, index plus 1 into a table of 32 that the core clears when the outermost call
   returns (`docs/module-abi.md`, section 8.1): 32 handles in one outermost call are numbered 1 to 32, and a 33rd
-  is the glue error of a full table (vectors `handles_32`, `handles_full`). Handle 0 is `null handle`, a handle above
-  the number issued is `unknown handle <n>`, and so is a handle kept from an earlier outermost call
-  (`import_stale_handle`).
+  is the glue error of a full table (vectors `handles_32`, `handles_full`). Handle 0 is `null handle`, and a handle above
+  the number issued in this outermost call is `unknown handle <n>`: a handle kept from an earlier call is garbage,
+  and is unknown when the current call has issued fewer (`import_stale_handle`).
 
 ## 6. Quirks
 
