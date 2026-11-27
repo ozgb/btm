@@ -49,9 +49,8 @@ The kit's manifest (`wasm/modules.json`) has the entry `pathfinding`, and the si
 - `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase`, `g_region` (ABI 8.2: the four every module
   has, then `g_region` for a module whose slots take its region). The module reads `g_blockBase` and
   `g_region` (the address of the region `Init` was given), and `g_game` for the `Game` fields of section 3.
-- `blocked`: the entry carries one, because the game's own default does not build to WASM yet; such an
-  entry has no `.wasm`, no `fuel_budget` and no `size_budget` in the kit (ABI section 4.2), so the budgets
-  are the build's (ABI sections 11.1 and 11.3).
+- No `fuel_budget` and no `size_budget`: the kit's entry has neither, and no `blocked` key, and the kit has
+  no pathfinding `.wasm`. The budgets are the build's (ABI sections 11.1 and 11.3).
 - Slot kinds (`signatures.pathfinding`):
 
 | Slot | Kinds |
@@ -760,8 +759,10 @@ records.
 - The probe has no limit of its own on its turns: it ends only by the rules of section 4.
 
 **Gaps in the kit.**
-- The entry is `blocked` (section 2), so the kit has no pathfinding `.wasm`, no fuel budget and no size
-  budget, and no recording is of a WASM pathfinding.
+- The kit's pathfinding entry has no `fuel_budget`, no `size_budget` and no `blocked` key (section 2). ABI
+  section 4.2 makes both budgets required unless an entry is `blocked`, so the kit's entry, as exported,
+  lacks the marker that would excuse them. The kit has no pathfinding `.wasm`, and no recording is of a WASM
+  pathfinding.
 - The gate's verdict on a submitted module from the recordings alone is ozgb/byte-tactics-moddable#1209's.
 
 ## 8. Kit version
