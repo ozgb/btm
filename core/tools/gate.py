@@ -24,7 +24,7 @@ def unpack(src, dst):
 def run_vector(core, group, vec, inputs, module):
     with tempfile.TemporaryDirectory() as d:
         if os.path.isdir(inputs):
-            unpack(inputs, d)
+            unpack(inputs, os.path.join(d, group))
         shutil.copy(os.path.join(KIT, "data", "trace_schema.json"), d)
         if module:
             shutil.copy(module, os.path.join(d, "module.wasm"))

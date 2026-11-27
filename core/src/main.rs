@@ -29,7 +29,7 @@ fn parse_calls(text: &str) -> Vec<Call> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 5 {
+    if args.len() < 4 {
         eprintln!("usage: core GROUP CALLS OUT");
         std::process::exit(2);
     }
