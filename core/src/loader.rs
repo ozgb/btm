@@ -279,7 +279,12 @@ impl<T: 'static> Loader<T> {
         define(&mut linker).map_err(|_| Err::named("instantiate", name))?;
         let instance = linker
             .instantiate_and_start(&mut self.store, &module)
-            .map_err(|_| Err::named("instantiate", name))?;
+            .map_err(|e| {
+                if std::env::var("CORE_DEBUG").is_ok() {
+                    eprintln!("instantiate {}: {}", name, e);
+                }
+                Err::named("instantiate", name)
+            })?;
         // the slots fill the free entries of the module's range
         let mut funcs = Vec::new();
         for ex in &exports {
