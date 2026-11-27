@@ -24,13 +24,13 @@ the metal and player feature plot maps of the cells, and frees what it allocated
 | `CanBuildAt` | synchronous, from ai and the build interface; map's inbox is delivered first |
 | `CanPlaceUnitFootprint` | synchronous, from orders, ai, players and scripts; map's inbox is delivered first |
 | `BuildAllPassMaps` | once at match load, after the terrain and the features are loaded, outside the tick |
-| `FreePassMaps` | when a match shuts down |
+| `FreePassMaps` | when a match shuts down; the engine's for now (below) |
 | `LoadMetalPlotmap`, `LoadPlayerFeaturesPlotmap` | when a saved game is loaded |
 | `SaveMetalPlotmap`, `SavePlayerFeaturesPlotmap` | when a game is saved |
 | `SnapWorldPosToFootprint`, `CanPlaceFootprintAt`, `IsPadSlotFree` | queries, from orders |
 | `PickRandomReclaimableResourcesInRadius` | synchronous, from orders' patrol and repair orders; map's inbox is delivered first |
-| `AllocateBuckets` | at match load, when the terrain's derived layers are built, outside the tick |
-| `FreeBuckets` | when a match shuts down |
+| `AllocateBuckets` | at match load, when the terrain's derived layers are built, outside the tick; the engine's for now (below) |
+| `FreeBuckets` | when a match shuts down; the engine's for now (below) |
 | `GetGroundHeight` | a query, from almost every module |
 | `PassMapGet`, `PassMapInBounds` | queries, from pathfinding during a search |
 | `RefreshMovedUnits` | synchronous, at the start of a path search for a unit; map's inbox is delivered first |
@@ -38,18 +38,25 @@ the metal and player feature plot maps of the cells, and frees what it allocated
 | `WriteState` | from the harness, after each phase, to hash and dump map's own state |
 | `PathLockStamp` | a query, when a saved game is written, outside the tick |
 
+**The engine's slots.** `FreePassMaps`, `AllocateBuckets` and `FreeBuckets` allocate what map holds at match load, or free it at
+shutdown, and no recording covers them. For this milestone they stay in the engine's native code (ozgb/byte-tactics-moddable#1203,
+decision 2), and moving them into the module is ozgb/btm#43. The module doesn't export them. Their subsections in
+section 4 state what the engine's slot leaves in the block, which the module reads as block data: the bucket grid, the
+off-map bucket, and the pass maps freed at shutdown.
+
 ### The manifest entry
 
 The kit's manifest (`wasm/modules.json`) gives map's interface major, 9 (`majors.map`), and has no signatures and no
-entry for it. This section gives the entry the module must have, as exactly as the kit allows. Two parts of it can't
+entry for it. This section gives the entry the module must have, as exactly as the kit allows. Some parts of it can't
 be exact at this kit (below, "Kit gaps").
 
 - `name` and `interface`: `map`.
 - `exports`, in this order (the header's): `Apply`, `UnitsInRange`, `GetCellMeanHeight`, `CanBuildAt`,
-  `CanPlaceUnitFootprint`, `BuildAllPassMaps`, `FreePassMaps`, `LoadMetalPlotmap`, `LoadPlayerFeaturesPlotmap`,
+  `CanPlaceUnitFootprint`, `BuildAllPassMaps`, `LoadMetalPlotmap`, `LoadPlayerFeaturesPlotmap`,
   `SaveMetalPlotmap`, `SavePlayerFeaturesPlotmap`, `SnapWorldPosToFootprint`, `CanPlaceFootprintAt`,
-  `IsPadSlotFree`, `PickRandomReclaimableResourcesInRadius`, `AllocateBuckets`, `FreeBuckets`, `GetGroundHeight`,
-  `PassMapGet`, `PassMapInBounds`, `RefreshMovedUnits`, `RefreshUnitIfStale`, `WriteState`, `PathLockStamp`.
+  `IsPadSlotFree`, `PickRandomReclaimableResourcesInRadius`, `GetGroundHeight`, `PassMapGet`, `PassMapInBounds`,
+  `RefreshMovedUnits`, `RefreshUnitIfStale`, `WriteState`, `PathLockStamp`. `FreePassMaps`, `AllocateBuckets` and
+  `FreeBuckets` are the engine's (above).
 - `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI 8.2). The module reads `g_game`,
   `g_simGlobals` and `g_blockBase`.
 - `majors`: `map` 9, and for its import groups `los_radar` 5, `features` 5, `files` 3, `services` 4.
@@ -67,7 +74,6 @@ be exact at this kit (below, "Kit gaps").
 | `CanBuildAt` | `[block, linear, int, block] -> int` |
 | `CanPlaceUnitFootprint` | `[block, int, linear, int] -> int` |
 | `BuildAllPassMaps` | `[linear, int] -> void` |
-| `FreePassMaps`, `AllocateBuckets`, `FreeBuckets` | `[] -> void` |
 | `LoadMetalPlotmap`, `LoadPlayerFeaturesPlotmap`, `SaveMetalPlotmap`, `SavePlayerFeaturesPlotmap` | `[handle] -> void` |
 | `SnapWorldPosToFootprint` | `[block, linear] -> void` |
 | `CanPlaceFootprintAt` | `[block, linear] -> int` |
@@ -95,8 +101,8 @@ The `short` argument `type` of `CanBuildAt` arrives sign-extended, and the `unsi
 | `files.BankWriteBox` | `[handle, linear, int] -> int` | saving a plot map |
 | `services.RandomInt` | `[int] -> int` | the reclaim pick's draws |
 | `services.Emit` | `[linear, int] -> void` | publishing CELLS_CHANGED and CELL_HEIGHTS |
-| the allocation service (`SimAlloc` in the recordings) | `[int] -> linear` | the pass map words, the build's scratch row, the bucket grid, the off-map bucket, the reclaim lists |
-| the free service (`SimFree` in the recordings) | `[linear] -> void` | freeing what the allocation service gave |
+| the allocation service, `SimAlloc` | `[int] -> linear` | the pass map words, the scratch block of `BuildAllPassMaps`, the reclaim lists |
+| the free service, `SimFree` | `[linear] -> void` | the old pass map words, the scratch block, the reclaim lists |
 
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`.
   The budget is ten times the most fuel any gate tick burns (ABI 11.3), which the build measures.
@@ -108,20 +114,21 @@ At `interfaces-v58` the entry above can't be loaded as it stands, and one header
 recordings. These are gaps in the kit, not in the module:
 
 - **The allocation and free services.** The recordings carry import lines of the `services` group named `SimAlloc`
-  (with the byte count and the block given) and `SimFree` (with the block), but the kit's `interfaces/services.h` (services 4.0) and the manifest's
-  `signatures.services` declare neither. Their names and kinds above are the recordings'; the ABI has to add them
-  (or a decision has to keep the slots that allocate in the engine) before the entry is exact. The kit doesn't say
-  what the bytes of a new allocation hold, so section 4 states every byte of each allocation that the module must
-  write itself.
-- **The publish.** The recordings carry a publish as an import line of the `services` group named `SchedPublish`,
-  with 7 and the size (the publisher, map, and the payload size; the payload's fields aren't recorded). The ABI's import for it is `services.Emit` (ABI 9.3). `Emit`
-  publishes only kinds of the entry's own interface, and CELL_HEIGHTS (132) is a kind of `interfaces/los_radar.h`,
-  so the host's `publishes` check refuses it until the ABI lets map publish it.
-- **The plot map imports** are `files` imports (`interfaces/files.h`, files 3.0); the manifest has no signatures for
-  them yet.
-- **The reclaim pick's comment.** The comment on `PickRandomReclaimableResourcesInRadius` in `interfaces/map.h` says
-  it draws "from the game logic stream". The recordings' behaviour is that it draws with `services.RandomInt`, whose
-  generator is `rng.seed` in the recordings (X37). This spec states the recordings' behaviour.
+  (with the byte count and the block given) and `SimFree` (with the block). The kit's `interfaces/services.h`
+  (services 4.0) declares neither. Services 4.1 (ozgb/byte-tactics-moddable#1211) declares both, and this spec moves
+  its pin to `interfaces-v60` when that is tagged. The kit doesn't say what the bytes of a new allocation hold, so
+  section 4 states every byte of each allocation that the module must write itself.
+- **The publish** (ozgb/byte-tactics-moddable#1206). The recordings carry a publish as an import line of the
+  `services` group named `SchedPublish`, with 7 and the size (the publisher, map, and the payload size; the payload's
+  fields aren't recorded). The ABI's import for it is `services.Emit` (ABI 9.3). `Emit` publishes only kinds of the
+  entry's own interface, and CELL_HEIGHTS (132) is a kind of `interfaces/los_radar.h`, so the host's `publishes` check
+  refuses it until the ABI lets map publish it.
+- **The plot map imports** (ozgb/byte-tactics-moddable#1206) are `files` imports (`interfaces/files.h`, files 3.0);
+  the manifest has no signatures for them yet.
+- **The reclaim pick's comment** (ozgb/byte-tactics-moddable#1206). The comment on
+  `PickRandomReclaimableResourcesInRadius` in `interfaces/map.h` says it draws "from the game logic stream". The
+  recordings' behaviour is that it draws with `services.RandomInt`, whose generator is `rng.seed` in the recordings
+  (X37). This spec states the recordings' behaviour.
 
 ### Arguments outside the block
 
@@ -813,6 +820,8 @@ Imports, for each class k with `defined` 1, in class order, and nothing else:
 
 ### `FreePassMaps()`
 
+The engine's slot for now (section 2, ozgb/btm#43): the module doesn't export it. This subsection states what the engine's slot does, which the module sees as block data; its "imports" are the engine's calls of the services.
+
 For each class k from 0 to 31, in order: when `cells` isn't 0, the free service with the words (their address). Then,
 for all 32 records, `width` and `height` become 0, `cells` 0 and `defined` 0. The limit fields and `lastTick` keep
 their values. The imports are those frees only, in class order.
@@ -977,6 +986,8 @@ The result is 1 when either list isn't empty, else 0. Nothing in the block chang
 
 ### `AllocateBuckets()`
 
+The engine's slot for now (section 2, ozgb/btm#43): the module doesn't export it. This subsection states what the engine's slot does, which the module sees as block data; its "imports" are the engine's calls of the services.
+
 Let *GW* = (`Game.baseX` × 65536 + 0x7fffff) arithmetic shift right by 23 and *GH* = (`Game.baseY` × 65536 + 0x7fffff)
 arithmetic shift right by 23, and let *N* = *GW* × *GH* rounded up to a multiple of 8 (X39).
 
@@ -1009,10 +1020,11 @@ What is written:
 
   A padding bucket has *a* = `Game.seaLevel`, *b* 0, *flags* 0 and `head` 0.
 
-When *N* is 0 while *GW* or *GH* isn't, the edge bits would be written through a null grid. This spec doesn't define
-it.
+When *N* is 0 while *GW* or *GH* isn't, the call isn't defined by this spec.
 
 ### `FreeBuckets()`
+
+The engine's slot for now (section 2, ozgb/btm#43): the module doesn't export it. This subsection states what the engine's slot does, which the module sees as block data; its "imports" are the engine's calls of the services.
 
 - The free service with the address of the grid, when `Game.cells_1429f` isn't 0; then the free service with the
   address of the off-map bucket, when `Game.overflowBucket` isn't 0. Those are the imports, in that order. A 0 makes
@@ -1110,7 +1122,7 @@ above 2^20 (1048576).
 | `Int` | `"overflow.flags"` | 0 | 4 | *flags* of the off-map bucket |
 | `Handle` | `"overflow.first"` | 0 | `STATE_HANDLE_UNIT` (2) | `head` of the off-map bucket |
 
-*b* isn't written: the trace hashes it in section 14 (`docs/trace-format.md`, section 8.5). No `Run` and no `Bytes`
+*b* isn't written (it is in trace section 14, `docs/trace-format.md`, section 8.5). No `Run` and no `Bytes`
 call is made.
 
 ### `PathLockStamp(unit)`
@@ -1131,9 +1143,9 @@ Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing i
   `g_blockBase` plus the stored offset. A unit's block offset is `Game.units` plus 280 × its index. `h.unit` is a block
   offset, 0 for null. `WriteState` passes a `head` to `Handle` as the stored offset, unchanged.
 - **X3, what an allocation holds.** The kit doesn't say what the allocation service puts in a new block, so
-  the module writes every byte that outlives the call: the pass map words, every bit (the full build, with 0 in the
-  bits of rows `height` and up); the grid, every byte of its *N* buckets padding included; the off-map bucket, 0 in
-  every byte but its *flags* (0x1f). The scratch block of `BuildAllPassMaps` and the two reclaim lists are freed in the
+  the module writes every bit of the pass map words (the full build, with 0 in the bits of rows `height` and up).
+  The grid and the off-map bucket are written by the engine's `AllocateBuckets` (section 2), and the module reads
+  them as block data; section 4 states their bytes. The scratch block of `BuildAllPassMaps` and the two reclaim lists are freed in the
   call that allocates them, and their bytes aren't part of this spec.
 - **X4, the event size.** `size` is compared as an unsigned 32-bit integer, first with 8 and then with the
   kind's payload size (12, 16, 24 or 32, else 8). The negative test of `MAP_PASS_MAPS` is on the signed 32-bit
@@ -1547,10 +1559,10 @@ heights are 1, so *north* = *south* = 1 and the result is 1.
 
 Only the scenario traces check these.
 
-- **Slots never called:** `FreePassMaps`, `LoadMetalPlotmap`, `LoadPlayerFeaturesPlotmap`, `SaveMetalPlotmap`,
+- **Slots never called:** `FreePassMaps` (the engine's for now, section 2), `LoadMetalPlotmap`, `LoadPlayerFeaturesPlotmap`, `SaveMetalPlotmap`,
   `SavePlayerFeaturesPlotmap` (every outcome of the load tables, Q18, Q17),
-  `PickRandomReclaimableResourcesInRadius` (its draws, Q22, Q23, Q21), `AllocateBuckets`, `FreeBuckets`
-  and `WriteState` (only their results in the state, Q25, Q24, Q26), `RefreshMovedUnits`,
+  `PickRandomReclaimableResourcesInRadius` (its draws, Q22, Q23, Q21), `AllocateBuckets` and `FreeBuckets` (the engine's
+  for now, section 2), and `WriteState` (only their results in the state, Q25, Q24, Q26), `RefreshMovedUnits`,
   `RefreshUnitIfStale` and `PathLockStamp` (the refreshes aren't recorded yet, `docs/replay-format.md`).
 - **`Apply`:** `MAP_RECLAIM_FOOTPRINT`, `MAP_LOAD_PATH_LOCK_STAMP`, the refusal of `MAP_BUCKET_PREPEND`, every outcome
   0 (each size check, the null unit, the unknown kinds, a negative `MAP_PASS_MAPS` size, the two refusals of
@@ -1580,3 +1592,5 @@ Only the scenario traces check these.
 
 Kit `interfaces-v58` and `reference-traces-v53` (both at commit 27e1982918d6), the versions the gate judges against.
 Interface `map` 9.2. The imports are against `los_radar` 5.1, `features` 5.1, `files` 3.0 and `services` 4.0.
+The pin moves to `interfaces-v60` (services 4.1, which declares `SimAlloc` and `SimFree`) once
+ozgb/byte-tactics-moddable#1211 is merged and tagged.
