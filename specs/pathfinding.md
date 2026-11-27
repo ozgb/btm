@@ -91,7 +91,8 @@ not as this module's import list.
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
   `__fuel_get`. Its fuel budget and `size_budget` are its build's (ABI sections 11.1 and 11.3).
 - Hooks: every slot of the header says "Hooks: none".
-- The kit's manifest names no gate path for this module, and no recording runs a WASM pathfinding (see
+- The kit's manifest has no entry for this module, so the replay gate of ABI section 15 (`replay.py --check
+  --subsystem pathfinding`) cannot load a WASM pathfinding at this kit, and no recording is of one (see
   "Gaps in the kit", section 7).
 
 ### Arguments outside the block
@@ -246,9 +247,10 @@ count (24), and 64 points (28: *x*, *y*, i16 each, in world units).
 
 - `Game.pathfinder` (above).
 - `Game.width` and `Game.height` (signed 32-bit, bytes 82483 and 82487 of `Game`), at `Init` only: the grid's size (below). `RegionSize`
-  uses `map` alone. The recordings give the two fields as `r Game.width 224` and `r Game.height 102` in the
-  read set of the first call of each file, equal to `map.width` and `map.height`, which is all a slot other
-  than `Init` needs of them.
+  uses `map` alone and reads neither. The recordings write the two fields as `r Game.width 224` and
+  `r Game.height 102` under the first call of each file, `RegionSize`: those lines put the values in the block
+  before the replay's first call, so they are there when `Init` reads them. They equal `map.width` and
+  `map.height`.
 
 The module reads no other field of the block outside its region.
 
@@ -330,7 +332,9 @@ as unsigned 32-bit numbers (so a negative one is off).
 dirtied. Off the grid, nothing.
 
 **To probe-visit** cell (*x*, *y*) entering by *d*: it is dirtied (no bounds test), its dir becomes *d*, and
-its flags gain bit 3. The visit *hits* when the flags then have bit 2.
+its flags gain bit 3. The visit *hits* when the flags then have bit 2. The probe visits only passable cells,
+and `pathworld.InBounds` gives a nonzero result only for cells of the map's grid, so the cell is always on
+the grid; a world view that answers otherwise is outside the contract.
 
 **To add an event** of kind *k* and status *t*: when *event count* ≥ *event capacity*, nothing (and no
 import). Otherwise record *event count* gets kind *k*, status *t*, unit = `object`, requester = `path`,
@@ -610,6 +614,10 @@ holds the slot, so the gate does not judge it. It is a kit gap (section 7).
 `baseScale` becomes `scale` (nothing when `Game.pathfinder` is 0). It changes the weights at the next
 refresh (`Step`, step 4).
 
+The engine's handler of SET_SEARCH, not this module, applies the event: its `steps` sets the match's search
+step limit, which this module reads through `pathworld.SearchStepLimit` at every `Step`, and its scale is
+passed to this slot. The module has no inbox and takes no effect.
+
 ### `DebugCell(x, y, flags, dir)`
 
 `*flags` becomes cell (*x*, *y*)'s flags and `*dir` its dir, each zero-extended. No bounds test.
@@ -734,7 +742,9 @@ reach more of them are judged in the final validation, once the modules are in.
 - A `Submit` that replaces a pending request or changes its unit.
 - A player picked for a turn while not playing (below).
 
-The events of the recordings are each recorded search's STARTED and FINISHED FOUND.
+The events of the recordings are each recorded search's STARTED and FINISHED FOUND. This module never
+records an event of kind PROGRESS, and never gives the status NEAREST (3): section 4 names every event it
+records.
 
 **Edges.**
 - `pathworld.UnitsPerPlayer` gives 250 in the recordings; a 0 is outside the contract, and the division
