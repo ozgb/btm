@@ -25,6 +25,8 @@
 5. req7 (diagnostic: the old wind_meteors module under `wind_meteors`): `refused`, as its interface moved on.
 6. req8 (data words in the data segment, no start function): `failed`.
 
+7. req9 (req8 with the custom sections stripped): `failed`.
+
 No `equal` verdict. See SPEC-QUESTIONS.md, Q-gate-1.
 
 ## Unclear points

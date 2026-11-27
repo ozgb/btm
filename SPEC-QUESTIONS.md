@@ -11,7 +11,7 @@ Evidence:
   lines written through the pointers), restoring the `r region` runs, and comparing the whole region after every
   call against the recorded `w region` runs and the `o out` / `o result` lines. Every file is equal: 12, 26, 41, 13
   and 30 calls. (Corrupting one region byte after a `Step` makes it report `differs`, so the check is not vacuous.)
-- The gate's verdict for the same file (req4, req5, req8) is `"verdict": "failed"` with `"status": "failed"` on all five
+- The gate's verdict for the same file (req4, req5, req8, req9) is `"verdict": "failed"` with `"status": "failed"` on all five
   recordings, no `tick`, `phase`, `field` or `value`, in about a second.
 - req6 was the same module with `Init`, `Submit`, `Cancel` and `Step` reduced to no-ops (`RegionSize` and the exports
   and imports unchanged): the verdict is `failed` on all five recordings too, not `differs`. So the failure does not
