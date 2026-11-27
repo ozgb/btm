@@ -170,4 +170,4 @@ vector; section 17 lines are what every dump of the kit has), 11 (manifest is th
 the original before the rewrite), 13, 14 (the target is musl on this machine; verified static), 15 (kept as the documented
 order), 16, 17, 18, 19 (robustness or dead paths no vector reaches).
 
-Verdict of req1 (this session): see below.
+Verdict of req1 (this session): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
