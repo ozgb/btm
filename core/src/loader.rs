@@ -97,7 +97,7 @@ pub fn parse_manifest(text: &[u8]) -> Result<Manifest, Err> {
         if block_max < block_size {
             return Result::Err(Err::new("layout"));
         }
-        if bb + block_size > mem_bytes {
+        if bb + block_max > mem_bytes {
             return Result::Err(Err::new("layout"));
         }
         block_base = Some(bb);

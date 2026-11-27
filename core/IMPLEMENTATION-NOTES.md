@@ -39,6 +39,21 @@ full recordings of `tests/replay/wind_meteors/`.
 2. req2 (the hash dump is now read block by block, 23 MB peak): `commands`, `console`, `events`, `fuel`, `hash`, `loader`,
    `rand`, `runtime` equal; `host` differs (same cause); `files` failed (out of scope).
 
+3. Session 3 (module rebuilt at 3.1 on main): the local gate gives `equal` on every group but `files` with
+   `/work/wind_meteors/module.wasm`; `host` is `equal` on its 3 vectors. Q1 is resolved. Verdict of the submission: see below.
+
+## Answers to the review (/srv/inbox/review.md)
+
+Fixed: 1 (shuffle uses the section 5 draw for every size; the 100000 clamp stays as a guard), 8 (local player masked),
+10 (unknown group exits 2), 11 (`panic = "unwind"`, so `catch_unwind` works), 12 (the block must fit with `block_max`),
+20 (`input` lines get no line).
+Not changed, with reasons: 2, 3, 4, 5, 6, 7, 13 (adapters, the handle table, import refusals, replay of unrecorded
+fields): no vector of the gate holds a case, the wind_meteors module uses none, and I did not want to add untested
+behaviour; they are the first work if a module other than wind_meteors is hosted. 9: `memory_pages` above about 65534
+fails here because the 4 GiB allocation is refused by the machine, not by a rule of the core (`layout` is the nearest
+class). 14, 15, 17, 19: robustness only, no vector reaches them. 16: not changed. 18: this machine is musl, so the
+default target is musl; the binary has no dynamic section and no interpreter.
+
 ## Where the specs or the kit were unclear
 
 - The module of /work/wind_meteors/ is for the interface 1.2, the kit is 3.1: see `SPEC-QUESTIONS.md`, Q1.

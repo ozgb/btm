@@ -173,7 +173,7 @@ impl Match {
                 out.push(("PLAYERS_END_GAME", ev(199, &[i(0)], true)));
             }
             "ai" => {
-                let p = if w.len() > 1 { arg(1) & 255 } else { local };
+                let p = if w.len() > 1 { arg(1) & 255 } else { local & 255 };
                 if self.exists(p) {
                     let t = if self.slots[p as usize].kind == 1 { 2 } else { 1 };
                     out.push(("PLAYERS_SET_TYPE", ev(198, &[i(p), i(t)], true)));

@@ -76,6 +76,19 @@ fn i32s_le(v: &[i32]) -> Vec<u8> {
 struct Lcg(u32);
 
 impl Lcg {
+    /// One shuffle draw for a range `d` (engine-core.md section 5): one step, widened by shifting in 1 bits.
+    fn shuffle_draw(&mut self, d: u32) -> u32 {
+        let mut r = self.next() as u32;
+        let mut m: u32 = 0x7fff;
+        while m < d && m != 0xffff_ffff {
+            m = (m << 15) | 0x7fff;
+            r = (r << 15) | 0x7fff;
+        }
+        r % d
+    }
+}
+
+impl Lcg {
     fn next(&mut self) -> i32 {
         self.0 = self.0.wrapping_mul(214013).wrapping_add(2531011);
         ((self.0 >> 16) & 0x7fff) as i32
@@ -84,9 +97,7 @@ impl Lcg {
 
 fn shuffle_in_place(a: &mut [i32], r: &mut Lcg) {
     for i in 1..a.len() {
-        // the records show a cyclic shuffle (j below i); past the rand range (i >= 32768) j is 32767
-        let x = r.next() as usize;
-        let j = if i > 32767 { 32767 } else { x % i };
+        let j = r.shuffle_draw(i as u32) as usize;
         a.swap(i, j);
     }
 }

@@ -45,7 +45,10 @@ fn main() {
         "hash" => hash::run(&calls),
         "loader" | "fuel" => loader::run(&calls),
         "host" => host::run(&calls),
-        _ => Vec::new(),
+        _ => {
+            eprintln!("unknown group {group}");
+            std::process::exit(2);
+        }
     };
     let mut out = Vec::new();
     for l in lines {

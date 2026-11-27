@@ -21,6 +21,9 @@ fn deliver(text: &str) -> Vec<String> {
         if i == 0 && first == "bt-script" || first == "units" || first == "end" || first.is_empty() {
             continue;
         }
+        if key == "input" {
+            continue;
+        }
         let tick = it.next().unwrap_or("0");
         let rest = it.next().unwrap_or("0");
         let ln: u64 = first.parse().unwrap_or(0);
