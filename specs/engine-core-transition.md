@@ -181,5 +181,5 @@ and the scheduler's order. The scenario mode, and the module gate of each module
 
 ## 8. Kit version
 
-Kit `interfaces-v52` and `reference-traces-v49`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+Kit `interfaces-v55` and `reference-traces-v51`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
 1.0, `sim_events` 1.0 and `files` 3.0.

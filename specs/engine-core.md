@@ -62,7 +62,7 @@ arguments are `interfaces/sim_events.h`, version 1.0. Module-private state enter
 how a core gives a module its `StateWriter` is scaffolding (`specs/engine-core-transition.md`, section 3).
 
 The payloads of the events a console line publishes (section 4.3) are laid out by `interfaces/players.h`,
-version 5.3, `interfaces/wind_meteors.h`, version 3.1, `interfaces/map.h`, version 9.2, `interfaces/units.h`,
+version 5.4, `interfaces/wind_meteors.h`, version 3.1, `interfaces/map.h`, version 9.2, `interfaces/units.h`,
 version 7.2, and `interfaces/features.h`, version 5.1.
 
 ### Events
@@ -265,8 +265,9 @@ The logic calls a C runtime, among it the fixed-point sine and cosine, the produ
 rotations and angles, `acos` and `hypot`, the conversions between text and numbers (`atoi`, `atof`, `%f`,
 `sprintf`, `sscanf`, `_itoa`, `_ftol`), `rand` and the shuffle of a range, and the string, memory and character
 functions. The kit's `runtime/vectors/` holds one entry for each function the logic calls:
-`README.md` states what each entry computes and the format of its records, and `layouts.txt` the type of each
-field. Each record is the inputs of one call and the results the original program gave for them, and a core
+`README.md` states what each entry computes and the format of its records, `vectors.json` the order of each
+entry's inputs and outputs (the README spells out that of `apply_rotation`), and `layouts.txt` the type of each
+field (`docs/core-gate.md`, "runtime"). Each record is the inputs of one call and the results the original program gave for them, and a core
 gives exactly those results: every bit of a double or of a float, the bytes it writes, the bytes of a buffer
 after the call, the value it returns for an input out of range or NaN, and its treatment of bytes from 0x80 to
 0xff. The core gate's `runtime` group runs each entry as one vector and each record as one call, as
@@ -334,9 +335,10 @@ from a dump. The core gate's `hash` group recomputes every row of a dump, the ph
 `tick`, so it judges the hash apart from the logic.
 
 A dump can't carry a string that holds the byte 0x0a (`docs/trace-format.md`, section 8.19), and no vector of the
-`hash` group holds one, so the gate never judges one (`docs/core-gate.md`, "hash"). The `scriptsState.*` lines a
-reader skips still give the presence byte of each unit's script (`docs/trace-format.md`, section 10, step 1, and
-section 8.12).
+`hash` group holds one, so the gate never judges one (`docs/core-gate.md`, "hash"). Which lines of a dump a reader
+skips, and at which places, is `docs/trace-format.md`, section 10, "To recompute a hash from the dump", step 1: none
+of the phase-row lines, and in the world part only the names it lists at four places. The `scriptsState.*` lines a
+reader skips still give the presence byte of each unit's script (the same step, and section 8.12).
 
 ### The random streams
 
@@ -452,8 +454,8 @@ a run and capture are judged only by the scenario mode.
 
 ## 8. Kit version
 
-Kit `interfaces-v52` and `reference-traces-v49`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
-1.0, `sim_events` 1.0, `files` 3.0, `players` 5.3, `wind_meteors` 3.1, `map` 9.2, `units` 7.2,
+Kit `interfaces-v55` and `reference-traces-v51`. Interfaces `services` 4.0, `rand_stream` 1.0, `state_writer`
+1.0, `sim_events` 1.0, `files` 3.0, `players` 5.4, `wind_meteors` 3.1, `map` 9.2, `units` 7.2,
 `features` 5.1 and `view` 2.0.
 
 The majors of `services`, `rand_stream`, `state_writer`, `sim_events` and `files`, and what those headers mean (the
