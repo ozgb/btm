@@ -200,8 +200,8 @@ toward zero to an int (section 5). The parameters are in seconds and the fields 
 
 - `g_meteorActive` becomes 0.
 - `g_meteorNextStrikeTime` becomes `g_meteorSpawnInterval` (Q2).
-- `FindWeaponByName(name)`, where *name* is the address of a NUL-terminated copy of the 32 bytes of
-  `g_meteorWeaponName` (the field in the block, or a copy of it in the module's memory). If the result is 0,
+- `FindWeaponByName(name)`, where *name* is the address of the 32 bytes of
+  `g_meteorWeaponName`: the field in the block, or a copy of its 32 bytes in the module's memory. If the result is 0,
   or the weapon's `meteor` bit is clear, `g_meteorWeapon` becomes the first entry of `Game.weapons`.
   Otherwise it becomes the weapon found. Either way it's stored as a block offset: the weapon's address
   minus `g_blockBase`. For the first entry of `Game.weapons`, that's `g_game` plus the field's offset in
@@ -215,7 +215,7 @@ Does nothing.
 
 Reads record `Default` of the data file `gamedata/meteor.<ext>` into `params`, where `<ext>` is the
 data word `g_extTdf`. The file is a `TdfFile` in the module's memory, and the path buffer must be large
-enough for the path the service writes (256 bytes is enough). Every outcome starts with these imports:
+enough for the path the service writes. Every outcome starts with these imports:
 
 - `TdfFile_Construct(file)`, then `BuildDataPath(buffer, "gamedata", "meteor", g_extTdf)`, then
   `TdfFile_LoadFile(file, buffer)`.
@@ -325,9 +325,11 @@ The weapon, its name and the timing parameters aren't saved. They come from the 
   in every computation they're sign-extended to 32 bits first, and storing one wraps to 16 bits.
 - **The weapon's slot.** The difference of the two addresses is a multiple of 277 for every weapon
   `InitMeteors` stores, so the division is exact.
-- **Float to int.** A double truncated toward zero to an int. A value outside the int range, or a NaN,
-  becomes −2147483648. This has to hold without a trap. The module is built without non-trapping
-  conversions (ABI section 3.2), and wasm's trapping conversion traps on exactly those values.
+- **Float to int.** The double truncated toward zero to a 64-bit integer, keeping its low 32 bits as a
+  signed int, as MSVC 5's `_ftol` does (`docs/files-gate.md` words it the same way). A NaN, an infinity
+  or a magnitude of 2^63 or more gives 0. No value traps: a `density` of 0.0 gives 30 / 0 = +∞, so
+  `g_meteorSpawnInterval` 0, and a `density` of f32:0x3089705f (about 1e-9) gives 30000000848.45…,
+  truncated to 30000000848, whose low 32 bits are −64770224.
 - **The table sine and cosine, S(*a*, *s*) and C(*a*, *s*).** *a* is a 16-bit angle (only its low 16
   bits count, 0x10000 a full turn) and *s* a 32-bit int.
   - The table: *T*[*i*] = round(sin(*i* × 2π / 512) × 8192) for *i* = 0 to 511, rounded to nearest,
