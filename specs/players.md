@@ -79,6 +79,7 @@ The kit's entry for players is the module's entry, and this spec follows it exac
 | `units.FindUnitTypeId` | `[linear] -> int` | a unit type by name (conditions, the respawn) |
 | `map.UnitsInRange` | `[linear, int, int, linear, int] -> int` | the units inside a radius condition's circle |
 | `map.GetCellMeanHeight` | `[linear] -> int` | the respawn's lava test |
+| `map.CanPlaceUnitFootprint` | `[block, int, linear, int] -> int` | the respawn's footprint test (a `Point16` cell of the module's own) |
 | `features.FindFeatureAtPos` | `[linear, linear, linear] -> int` | the respawn's test for a feature |
 | `network.BroadcastPlayerInfo` | `[] -> void` | a defeated local player put in watch mode |
 | `network.SendShareMetal` | `[int, int, f32] -> void` | an announced transfer of energy (section 4, Q1) |
@@ -86,6 +87,7 @@ The kit's entry for players is the module's entry, and this spec follows it exac
 | `network.BroadcastPlayerEconomy` | `[block] -> void` | the viewed player's economy, in a multiplayer game |
 | `los_radar.ClampWorldPosToTerrain` | `[int, int, linear] -> void` | a radius condition's centre, once |
 | `economy.Spend` | `[linear] -> int` | the giver's spend of an announced transfer (an `EconomySpend` of the module's own) |
+| `services.RandomInt` | `[int] -> int` | the respawn's position |
 | `services.RecordSimEvent` | `[int, int, linear, int] -> void` | the sim events of section 2, "Events" |
 | `services.Emit` | `[linear, int] -> void` | every effect and event the module publishes |
 
@@ -95,11 +97,10 @@ The kit's entry for players is the module's entry, and this spec follows it exac
   208, 209 and 210; 0 and 128 are published only by engine slots. Every route of these kinds is synchronous
   except economy's two (`data/routes.csv`), so an effect to units or los_radar has been applied when `Emit`
   returns, and its writes are in the block for what the module reads after it.
-- `blocked`: the entry's reason says that the footprint service (`services.ScheduleMapCanPlaceUnitFootprint`),
-  the lookup of the host slot and the four tables of saved-game account names have no import. By ABI 4.2 an entry with `blocked` has no `.wasm` and no budgets (`fuel_budget`, `size_budget`), and
-  the host runs the native default for every slot. A module built from this spec meters itself by rule
-  version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`; its budgets come with a later entry.
-  Section 2, "Kit gaps", says which parts of this spec meet which part of that reason.
+- `blocked`: true. By ABI 4.2 an entry with `blocked` has no `.wasm` and no budgets (`fuel_budget`,
+  `size_budget`), and the host runs the native default for every slot. A module built from this spec meters
+  itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`; its budgets come with a
+  later entry.
 - Hooks: every slot of `interfaces/players.h` says "Hooks: none"; the event kind `PLAYERS_GIVE_UNIT` names
   `UnitTransfer`. The kit defines no hook in the module ABI and the import list has none, so the module raises
   none; no recording shows one.
@@ -107,7 +108,8 @@ The kit's entry for players is the module's entry, and this spec follows it exac
 ### Routes and the recordings
 
 A recording shows the module's `Emit` as `i services.SchedPublish 4 <size>` (the recorded call of ABI 9.3,
-"Routes in the recordings"; 4 is players' outbox) and its `economy.Spend` as `i services.ScheduleEconomySpend`.
+"Routes in the recordings"; 4 is players' outbox), its `economy.Spend` as `i services.ScheduleEconomySpend`, and its `map.CanPlaceUnitFootprint` as
+`i services.ScheduleMapCanPlaceUnitFootprint`.
 An `o rng.seed` or `w Game.playerIndex` line after a publish is what the synchronous delivery of the effect
 changed, not a write of the module. A `c` line under `map.UnitsInRange` doesn't occur: the module takes ids,
 not a callback.
@@ -151,7 +153,7 @@ those of `docs/sim-events.md`, Terms.
 
 ### Kit gaps
 
-What this spec needs and the kit doesn't give; the maintainer routes them:
+What this spec needs and the kit doesn't give; the maintainer routes them (K2 and K3 were closed by the kit at `interfaces-v68`, so the numbers skip them):
 
 - **K1, the class of a condition.** A condition (section 3) is told apart by its first word, the vtable
   pointer of its class, which the engine's load-class slots write and the kit gives no value for (the
@@ -159,13 +161,7 @@ What this spec needs and the kit doesn't give; the maintainer routes them:
   `VictoryKillAllOfType#1`, but never the word). Every slot that runs a condition needs the class. Until the
   kit gives the 18 words (or a class number in the block), this spec states each class's behaviour, and a
   module can't pick it from the block alone.
-- **K2, the respawn's imports.** The respawn (section 4) asks `map.CanPlaceUnitFootprint` (the recorded
-  `services.ScheduleMapCanPlaceUnitFootprint`) and draws from `services.RandomInt`; the entry lists neither.
-  This is the first part of the entry's `blocked` reason. No recording reaches the respawn.
-- **K3, the host slot.** The entry's `blocked` reason names it as a call with no import. Section 4 defines
-  the host slot from block fields, so the module needs no import for it; only the respawn and watch mode read
-  it, and no recording reaches either.
-- **K4, the saved game's account names** (the tables of the `blocked` reason) serve only the engine
+- **K4, the saved game's account names** serve only the engine
   slots `LoadConditions` and `SaveConditions`; no exported slot needs them.
 - **K5, the whole pass.** `UpdatePlayers` and `UpdatePlayersOnStream` are exported, but the players pass
   calls other subsystems' slots (pathfinding, movement, ai, los_radar, units, economy; `docs/schedule.md`, the
@@ -609,5 +605,5 @@ second `map.UnitsInRange` call; the rank pass of `UpdatePlayersFinish`.
 
 ## 8. Kit version
 
-`interfaces-v66` and `reference-traces-v55` (commit 74bdf5ef6), with players at `interfaces/players.h` version
+`interfaces-v68` and `reference-traces-v55` (commit 906e69ae4), with players at `interfaces/players.h` version
 5.4.
