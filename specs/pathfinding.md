@@ -42,7 +42,8 @@ below follow from `interfaces/pathfinding.h` by the rules of ABI section 7: a po
 stores and hands back, never follows, and never an ABI handle (section 8.1). A module's build sets
 its `data_base` and `table_base` (within the windows and table ranges of ABI sections 2.2 and 2.3), its
 `majors`, its `slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget belongs to its
-build, set from the build's own runs).
+build, set from the build's own runs). None of these can be checked against the kit at `interfaces-v58`,
+which has no pathfinding entry; the entry the gate will hold is the one ozgb/byte-tactics-moddable#1206 adds.
 
 - `name` and `interface`: `pathfinding`.
 - `exports`, in this order: `RegionSize`, `Init`, `Shutdown`, `Submit`, `Cancel`, `CellsChanged`, `Step`,
@@ -383,7 +384,10 @@ start and *best* = *H*(start):
    step(*d*) is blocked, leave the walk. Otherwise move there, probe-visit it by *d* (a hit gives the
    result 0), and *best* becomes the smaller of *best* and *H* of it.
 3. **Wall walk.** Two walkers *a* and *b* start at (*x*, *y*), the place where the greedy walk stopped, each
-   with the direction *d* + 2 (*d* the direction that was blocked); *started* is false. Repeat:
+   with the direction *d* + 2 (*d* the direction that was blocked); *started* is false. Every direction here
+   is a number 0 to 7, its arithmetic mod 8, and directions are compared as those numbers. Each time the
+   probe goes back to step 2 and then reaches this step again, both walkers and *started* start afresh from
+   the new place and direction; *best* and `steps` carry on. Repeat:
    1. A turn. Walker *a*: let *stop* = its direction − 3; its direction goes down by 2; while *S* of its
       cell + step(its direction) is blocked: when its direction is *stop*, the result is *best*; else its
       direction goes up by 1.
@@ -510,7 +514,9 @@ Does nothing. No imports, no writes.
 
 1. *event count* and *next event* become 0.
 2. `pathworld.PlayerCount()` gives *players*. When it is 0, the step ends.
-3. `pathworld.SearchStepLimit()`; `stepsPerTick` becomes its result, or 0x535 when that is 0. The *share*
+3. `pathworld.SearchStepLimit()`; `stepsPerTick` becomes its result, or 0x535 when that is 0 (the result
+   is the header's `unsigned int`, stored as its 32 bits and used as a signed int from then on, so a limit of
+   2^31 or more is negative; `pathworld.Tick` is unsigned and compared unsigned). The *share*
    is `stepsPerTick` / *players*, truncated toward zero.
 4. `budgetRefreshCounter` goes up by 1. When it is then 150 or more: it becomes 0, and for each player *p*
    from 0 to 9: *v* = `playerTickLoad`[*p*] / `pathworld.UnitsPerPlayer()` (one import per player,
@@ -707,7 +713,9 @@ weights become `baseScale` (0x18000), and 0 for players 2 to 9, whose weights be
 Every `playerTickLoad` becomes 0 at the refresh; the turns of the same `Step` then count their visits, so the
 call ends with 666 for players 0 and 1 (`w region 364:9a0200 368:9a0200`).
 
-**Not in any recording:** these are stated by this spec alone, and no recording checks them.
+**Not in any recording:** these are stated by this spec alone, and no recording checks them. The gate's
+verdict at this stage is on the recordings alone (ozgb/byte-tactics-moddable#1209); the scenarios that would
+reach more of them are judged in the final validation, once the modules are in.
 - The slots `Shutdown`, `WriteState`, `SetSearchScale` and `DebugCell`, and `CellsChanged` with the cause 1
   (with the cause 2 it is recorded, and does nothing).
 - An event PROGRESS, and the outcomes PARTIAL and FAILED.
