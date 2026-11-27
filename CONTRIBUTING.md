@@ -31,3 +31,21 @@ goes through review again. A spec question is never answered in free text.
 - Messages are `<Type>: <Subject>`, where Type is one of Add, Fix, Update, Remove, Refactor or Docs, and the
   subject is imperative, at most 50 characters, with no full stop. A message ends with
   `Assisted-by: <agent>:<model>` when an agent wrote it.
+
+## Checks
+
+The `check` workflow runs on every pull request. It covers the crates in the root workspace, which are the
+crates that are not modules. `module.yml` builds the module. The workflow runs:
+
+- `cargo fmt --all --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
+- `cargo deny --workspace check licenses`
+
+The last one fails on a dependency whose licence is not in `deny.toml`. A copyleft licence fails it.
+
+While the workspace has no member, all four are skipped with a notice, and the workflow passes.
+
+To run the same checks locally, use Rust 1.99.1, which `rust-toolchain.toml` selects, and install cargo-deny once
+with `cargo install cargo-deny --version 0.22.1 --locked`. Then run the four commands above from the repository
+root. `unsafe` is forbidden in the workspace: a member crate sets `[lints] workspace = true` to get this.
