@@ -99,13 +99,14 @@ The recordings hold no call of these slots, so their import order isn't compared
 
 ### What the engine's slots need
 
-The engine's slots reach these engine calls. All but item 2 are calls that no import of the kit's
-`interfaces/services.h` (version 4.0) or of an interface offers. ozgb/btm#43 adds them when it moves the slots into the module. The list is for that
+The engine's slots reach these engine calls. All but items 1 and 2 are calls that no import of the kit's
+`interfaces/services.h` (version 4.1) or of an interface offers. ozgb/btm#43 adds them when it moves the slots into the module. The list is for that
 issue: the module of this spec exports none of the engine's slots, and imports only what "The manifest entry"
 lists.
 
 1. **Allocation in the block:** the record itself, the units and their strings, the start position rules, the
    features and the briefing's text; and their release, with the release of the conditions object players made. The block's allocations are zeroed.
+   `services.SimAlloc`, `services.SimAllocTagged` and `services.SimFree` (services 4.1) offer these.
 2. **Files by name:** a file's length (0 for a missing file), whether it opens for reading, and reading its
    bytes at an offset. `interfaces/files.h` offers these (`LengthByName`, `OpenRead`, `ReadAt`).
 3. **The parser's records beyond the imports:** unloading a file, resetting its current record to none,
@@ -190,7 +191,8 @@ None. No slot of this module records a sim event (kinds are listed in `docs/sim-
 | `memory`, `numPlayers` | char[128] | the map's `memory` and `numplayers` texts |
 
 The file name slots: 0 the campaign file, 1 the terrain file, 2 the briefing, 3 the narration, 4 the mission
-hint, 5 the glamour picture, 6 the use-only unit list, 7 the AI profile, 8 the glamour sound.
+hint, 5 the glamour picture, 6 the use-only unit list, 7 the AI profile, 8 the glamour sound. The comment of
+`GetNameSlot` in `interfaces/mission.h` names slots 0 to 2 only; `GetNameSlot` serves all nine.
 
 - **`MissionRule`** (12 bytes): `type` (1 a start position, 0 anything else), `id` (the player the start position
   is for, from 0), `x`, `z` (short, in world units, as the map file gives them).
@@ -358,7 +360,7 @@ The results are those of the table below; `list` is left as it was.
 | `CountMissions()` | the campaign's count | none |
 | `MissionExists(index)` | 1 when the campaign's count is above `index` (signed), else 0 | none |
 | `AdvanceMission()` | 1 when the campaign's count is above `missionIndex` + 1, else 0 | when the result is 1: `tntChecksum` = 0, `missionIndex` grows by 1, and the mission is loaded (its result is ignored) |
-| `SelectMission(index)` | the load's result | `tntChecksum` = 0, `missionIndex` = `index`, and the mission is loaded |
+| `SelectMission(index)` | the load's result: 0 when the mission is missing, and also when its files don't load (the header's "returns 1 when it exists" means a load that succeeds) | `tntChecksum` = 0, `missionIndex` = `index`, and the mission is loaded |
 
 ### `GetCampaignMissionName(index, out, size)`
 
@@ -379,7 +381,8 @@ fallback row's bytes are written over it.
 
 ### `LoadMissionByName(name)`
 
-`tntChecksum` becomes 0 in every outcome.
+`tntChecksum` becomes 0 in every outcome. As for `SelectMission`, the header's "returns 1 when it exists" means a
+load that succeeds: the result is the load's, 0 also when the map exists but its files don't load.
 
 | `type` | Effect | Result |
 | --- | --- | --- |
@@ -543,6 +546,10 @@ A result of 0 leaves `parser`'s current record wherever the last lookup left it.
 
 ### `ComputeMapChecksum()`
 
+The header's "read once per file and cached": while `tntChecksum` holds a checksum, the slot reads no file, and a
+file read again gives the value it gave before. A checksum that comes out 0 is computed again on the next call, with
+the same result.
+
 | Outcome | Result | Writes |
 | --- | --- | --- |
 | `tntChecksum` isn't 0 | `headerChecksum` XOR `tntChecksum` | none |
@@ -647,5 +654,5 @@ leaves in the record (section 3).
 
 ## 8. Kit version
 
-Kit `interfaces-v58` and `reference-traces-v53` (both at ozgb/byte-tactics-moddable 27e198291), the versions the
-gate judges against. Interface `mission` 2.0.
+Kit `interfaces-v61` (ozgb/byte-tactics-moddable f6b83002b) and `reference-traces-v53` (27e198291), the versions
+the gate judges against. Services 4.1. Interface `mission` 2.0.
