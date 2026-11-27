@@ -1,0 +1,419 @@
+{
+ "tools": {
+  "clang": "22.1.8",
+  "wasm-tools": "1.262.0"
+ },
+ "build_flags": [
+  "-mno-nontrapping-fptoint"
+ ],
+ "fuel": {
+  "rule": "The counter drops by 1 at each function entry and at the top of each loop body (once per call and once per iteration). When it goes below zero the module traps (unreachable).",
+  "version": 1
+ },
+ "block_base": 1048576,
+ "block_size": 33554432,
+ "block_max": 268435456,
+ "scratch": [
+  983040,
+  65536
+ ],
+ "memory_pages": 4112,
+ "table_size": 80,
+ "stack_size": 4096,
+ "window": 65536,
+ "table_slots": 32,
+ "majors": {
+  "ai": 6,
+  "economy": 5,
+  "features": 5,
+  "files": 3,
+  "host": 3,
+  "los_radar": 5,
+  "map": 9,
+  "mission": 2,
+  "movement": 5,
+  "network": 2,
+  "orders": 6,
+  "pathfinding": 4,
+  "players": 5,
+  "quirks": 1,
+  "rand_stream": 1,
+  "ref": 3,
+  "scripts": 3,
+  "services": 4,
+  "sim_events": 1,
+  "state_writer": 1,
+  "targeting": 4,
+  "units": 7,
+  "view": 2,
+  "weapons": 4,
+  "wind_meteors": 3
+ },
+ "signatures": {
+  "services": {
+   "GameRand": [
+    [
+     "int"
+    ],
+    "int"
+   ],
+   "RandomInt": [
+    [
+     "int"
+    ],
+    "int"
+   ],
+   "FatalError": [
+    [
+     "linear"
+    ],
+    "void"
+   ],
+   "BuildDataPath": [
+    [
+     "linear",
+     "linear",
+     "linear",
+     "linear"
+    ],
+    "linear"
+   ],
+   "TdfFile_Construct": [
+    [
+     "linear"
+    ],
+    "void"
+   ],
+   "TdfFile_Destruct": [
+    [
+     "linear"
+    ],
+    "void"
+   ],
+   "TdfFile_LoadFile": [
+    [
+     "linear",
+     "linear"
+    ],
+    "int"
+   ],
+   "TdfFile_SelectRecord": [
+    [
+     "linear",
+     "linear"
+    ],
+    "int"
+   ],
+   "TdfRecord_GetFieldInt": [
+    [
+     "handle",
+     "linear",
+     "int"
+    ],
+    "int"
+   ],
+   "TdfRecord_GetFieldDouble": [
+    [
+     "handle",
+     "linear",
+     "f64"
+    ],
+    "f64"
+   ],
+   "TdfRecord_GetFieldString": [
+    [
+     "handle",
+     "linear",
+     "linear",
+     "int",
+     "linear"
+    ],
+    "int"
+   ],
+   "HapiBank_OpenAccount": [
+    [
+     "handle",
+     "linear"
+    ],
+    "int"
+   ],
+   "HapiBank_SetIntegerItem": [
+    [
+     "handle",
+     "linear",
+     "int"
+    ],
+    "int"
+   ],
+   "HapiBank_GetIntegerItem": [
+    [
+     "handle",
+     "linear",
+     "int"
+    ],
+    "int"
+   ],
+   "Emit": [
+    [
+     "linear",
+     "int"
+    ],
+    "void"
+   ]
+  },
+  "weapons": {
+   "FindWeaponByName": [
+    [
+     "linear"
+    ],
+    "block"
+   ]
+  },
+  "wind_meteors": {
+   "UpdateWind": [
+    [
+     "int"
+    ],
+    "void"
+   ],
+   "UpdateMeteors": [
+    [],
+    "void"
+   ],
+   "Apply": [
+    [
+     "linear",
+     "int"
+    ],
+    "void"
+   ],
+   "InitMeteors": [
+    [],
+    "void"
+   ],
+   "EmptyShutdownPreCleanup": [
+    [],
+    "void"
+   ],
+   "LoadMeteorDefaults": [
+    [
+     "linear"
+    ],
+    "void"
+   ],
+   "SaveMeteors": [
+    [
+     "handle"
+    ],
+    "void"
+   ],
+   "LoadMeteors": [
+    [
+     "handle"
+    ],
+    "void"
+   ]
+  }
+ },
+ "adapters": [],
+ "modules": [
+  {
+   "name": "wind_meteors",
+   "interface": "wind_meteors",
+   "majors": {
+    "wind_meteors": 3,
+    "weapons": 4,
+    "services": 4
+   },
+   "fuel_budget": 250,
+   "size_budget": 13100,
+   "data_base": 196608,
+   "table_base": 48,
+   "exports": [
+    "UpdateWind",
+    "UpdateMeteors",
+    "Apply",
+    "InitMeteors",
+    "EmptyShutdownPreCleanup",
+    "LoadMeteorDefaults",
+    "SaveMeteors",
+    "LoadMeteors"
+   ],
+   "data": [
+    "g_game",
+    "g_simGlobals",
+    "g_extTdf",
+    "g_blockBase"
+   ],
+   "slots": {
+    "UpdateWind": [
+     [
+      "int"
+     ],
+     "void"
+    ],
+    "UpdateMeteors": [
+     [],
+     "void"
+    ],
+    "Apply": [
+     [
+      "linear",
+      "int"
+     ],
+     "void"
+    ],
+    "InitMeteors": [
+     [],
+     "void"
+    ],
+    "EmptyShutdownPreCleanup": [
+     [],
+     "void"
+    ],
+    "LoadMeteorDefaults": [
+     [
+      "linear"
+     ],
+     "void"
+    ],
+    "SaveMeteors": [
+     [
+      "handle"
+     ],
+     "void"
+    ],
+    "LoadMeteors": [
+     [
+      "handle"
+     ],
+     "void"
+    ]
+   },
+   "imports": {
+    "weapons": {
+     "FindWeaponByName": [
+      [
+       "linear"
+      ],
+      "block"
+     ]
+    },
+    "services": {
+     "GameRand": [
+      [
+       "int"
+      ],
+      "int"
+     ],
+     "RandomInt": [
+      [
+       "int"
+      ],
+      "int"
+     ],
+     "FatalError": [
+      [
+       "linear"
+      ],
+      "void"
+     ],
+     "BuildDataPath": [
+      [
+       "linear",
+       "linear",
+       "linear",
+       "linear"
+      ],
+      "linear"
+     ],
+     "TdfFile_Construct": [
+      [
+       "linear"
+      ],
+      "void"
+     ],
+     "TdfFile_Destruct": [
+      [
+       "linear"
+      ],
+      "void"
+     ],
+     "TdfFile_LoadFile": [
+      [
+       "linear",
+       "linear"
+      ],
+      "int"
+     ],
+     "TdfFile_SelectRecord": [
+      [
+       "linear",
+       "linear"
+      ],
+      "int"
+     ],
+     "TdfRecord_GetFieldInt": [
+      [
+       "handle",
+       "linear",
+       "int"
+      ],
+      "int"
+     ],
+     "TdfRecord_GetFieldDouble": [
+      [
+       "handle",
+       "linear",
+       "f64"
+      ],
+      "f64"
+     ],
+     "TdfRecord_GetFieldString": [
+      [
+       "handle",
+       "linear",
+       "linear",
+       "int",
+       "linear"
+      ],
+      "int"
+     ],
+     "HapiBank_OpenAccount": [
+      [
+       "handle",
+       "linear"
+      ],
+      "int"
+     ],
+     "HapiBank_SetIntegerItem": [
+      [
+       "handle",
+       "linear",
+       "int"
+      ],
+      "int"
+     ],
+     "HapiBank_GetIntegerItem": [
+      [
+       "handle",
+       "linear",
+       "int"
+      ],
+      "int"
+     ],
+     "Emit": [
+      [
+       "linear",
+       "int"
+      ],
+      "void"
+     ]
+    }
+   },
+   "publishes": {
+    "80": 36
+   }
+  }
+ ]
+}

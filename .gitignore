@@ -1,3 +1,7 @@
 wind_meteors/target/
 .review/
 *.wasm
+target/
+/core/target/
+core/core
+*.bundle
