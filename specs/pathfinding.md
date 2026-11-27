@@ -25,32 +25,34 @@ the engine allocates at match load.
 | `CellsChanged` | when map rewrites a rectangle of a pass map (map's interface, its effect CELLS_CHANGED) |
 | `Step` | once per tick, first in the players phase |
 | `Poll` | right after `Step`, in the same phase, until it returns less than the header's size |
-| `WriteState` | from the test harness, to dump the module's state |
-| `SetSearchScale` | by the `search` console command, through the engine's handler of SET_SEARCH |
-| `DebugCell` | by the debug overlay, per cell it draws |
+| `WriteState` | from the test harness, to dump the state (an engine slot, below) |
+| `SetSearchScale` | by the `search` console command, through the engine's handler of SET_SEARCH (an engine slot) |
+| `DebugCell` | by the debug overlay, per cell it draws (an engine slot) |
 
-`SetSearchScale` and `DebugCell` are optional in the header (null for an implementation without them);
-this module provides both.
+The last three are the entry's `engine` slots (below): the module does not export them, and the host calls
+the engine's native slot instead, with the module's state in the block as the native slot reads it (ABI
+section 6, "Engine slots"). Section 4 states what each does to the region, so that the module's region is
+the one they read and write.
 
 ### The manifest entry
 
-The kit's manifest (`wasm/modules.json`) has no entry for pathfinding: it has no `signatures.pathfinding`
-and no signatures for the world view, and it gives the interface major, 4 (`majors.pathfinding`). The kinds
-below follow from `interfaces/pathfinding.h` by the rules of ABI section 7: a pointer is `linear` (or
-`block` when it always lies in the block), every `int`, `unsigned int` and `unsigned short` is `int`, and a
-`PathUnit`, `PathClass` or `PathHandle` is `int` too: each is a block offset or a number that the module
-stores and hands back, never follows, and never an ABI handle (section 8.1). A module's build sets
-its `data_base` and `table_base` (within the windows and table ranges of ABI sections 2.2 and 2.3), its
-`majors`, its `slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget belongs to its
-build, set from the build's own runs). None of these can be checked against the kit at `interfaces-v61`,
-which has no pathfinding entry; the entry the gate will hold is the one ozgb/byte-tactics-moddable#1206 adds.
+The kit's manifest (`wasm/modules.json`) has the entry `pathfinding`, and the signatures
+`signatures.pathfinding` and `signatures.pathworld`. The module must have that entry, which is:
 
 - `name` and `interface`: `pathfinding`.
+- `majors`: `pathfinding` 4 and `pathworld` 4 (the world view's major is its header's, ABI section 4.2).
+- `data_base` 327680 (0x50000) and `table_base` 176, within the window of `window` (32768) bytes and the
+  table range of ABI sections 2.2 and 2.3.
 - `exports`, in this order: `RegionSize`, `Init`, `Shutdown`, `Submit`, `Cancel`, `CellsChanged`, `Step`,
-  `Poll`, `WriteState`, `SetSearchScale`, `DebugCell`.
-- `data`: `g_game`, `g_blockBase` (ABI 8.2). The module reads both and no other data word.
-- `majors`: `pathfinding` 4.
-- Slot kinds:
+  `Poll`.
+- `engine`: `WriteState`, `SetSearchScale` and `DebugCell`, each with the entry's reason.
+- `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase`, `g_region` (ABI 8.2: the four every module
+  has, then `g_region` for a module whose slots take its region). The module reads `g_blockBase` and
+  `g_region` (the address of the region `Init` was given), and `g_game` for the `Game` fields of section 3.
+- `blocked`: the entry carries one, because the game's own default does not build to WASM yet; such an
+  entry has no `.wasm`, no `fuel_budget` and no `size_budget` in the kit (ABI section 4.2), so the budgets
+  are the build's (ABI sections 11.1 and 11.3).
+- Slot kinds (`signatures.pathfinding`):
 
 | Slot | Kinds |
 | --- | --- |
@@ -62,12 +64,14 @@ which has no pathfinding entry; the entry the gate will hold is the one ozgb/byt
 | `CellsChanged` | `[int, int, int, int, int, int] -> void` |
 | `Step` | `[] -> void` |
 | `Poll` | `[linear, int, linear, int] -> int` |
-| `WriteState` | `[linear] -> void` |
-| `SetSearchScale` | `[int] -> void` |
-| `DebugCell` | `[int, int, linear, linear] -> void` |
 
-- Imports, every one listed and nothing else. They are the slots of `PathWorldView` of the same header, as
-  the group `pathworld` (the name the recordings give them, `i pathworld.<Slot>`):
+A `PathUnit`, `PathClass` or `PathHandle` is `int`: a block offset or a number that the module stores and
+hands back, never follows, and never an ABI handle (section 8.1).
+
+- Imports (`signatures.pathworld`), every one listed and nothing else (ABI 9.1: the module imports every
+  listed function, even one it never calls). They are the slots of `PathWorldView` of the same header, as the
+  group `pathworld` (a world view of an interface header, ABI section 4.2; the recordings write them as
+  `i pathworld.<Slot>`):
 
 | Import | Kinds | Used for |
 | --- | --- | --- |
@@ -79,21 +83,21 @@ which has no pathfinding entry; the entry the gate will hold is the one ozgb/byt
 | `pathworld.FirstUnit`, `pathworld.LastUnit` | `[int] -> int` | a player's first and last unit slot |
 | `pathworld.NextUnit` | `[int] -> int` | the slot after a slot |
 | `pathworld.UnitState` | `[int, linear] -> int` | the start of a search |
+| `pathworld.MoveClass` | `[int] -> int` | never called |
 | `pathworld.InBounds`, `pathworld.Pass` | `[int, int, int] -> int` | the pass state of a cell |
 | `pathworld.SeenSize` | `[linear, linear] -> void` | the size of the visibility grid |
 | `pathworld.Seen` | `[int, int, int] -> int` | whether the searching player has seen a cell |
+| `pathworld.LineOfSight` | `[int, int, int, int, int] -> int` | never called |
+| `pathworld.TerrainPass` | `[int, int, int] -> int` | never called |
 | `pathworld.BeginSearch`, `pathworld.EndSearch` | `[int] -> void` | around a search |
 
-The world view's `MoveClass`, `LineOfSight` and `TerrainPass` are not imported: this module never calls
-them. The kit's replay schema lists all eighteen slots of the world view, as the world view's own table,
-not as this module's import list.
-
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. Its fuel budget and `size_budget` are its build's (ABI sections 11.1 and 11.3).
+  `__fuel_get`.
 - Hooks: every slot of the header says "Hooks: none".
-- The kit's manifest has no entry for this module, so the replay gate of ABI section 15 (`replay.py --check
-  --subsystem pathfinding`) cannot load a WASM pathfinding at this kit, and no recording is of one (see
-  "Gaps in the kit", section 7).
+- The gate: `replay.py --check --subsystem pathfinding` (ABI section 15) replays a module of the manifest on
+  its recordings through the generated glue (`docs/replay-format.md`, "Against the WASM module"); the
+  entry's `engine` slots are the native ones there. A verdict for a submitted module waits on the gate's
+  recordings-only path (see "Gaps in the kit", section 7).
 
 ### Arguments outside the block
 
@@ -123,8 +127,6 @@ All of these are in the caller's memory (`linear`), read or written in place, li
 - **`Poll`'s `out`** is a buffer of `size` bytes, which the caller has zeroed; `points` is a buffer of
   `capacity` `PathPoint`s (4 bytes each). The recordings compare the bytes of `out` that the call writes
   (`o out x:...`), and never `points` (`docs/replay-format.md`, the `scratch` form).
-- **`WriteState`'s `writer`** is a `StateWriter` (`interfaces/state_writer.h`), a table of five calls.
-- **`DebugCell`'s `flags` and `dir`**: two 32-bit ints the slot writes.
 
 ### Events
 
@@ -136,8 +138,9 @@ of this spec are the module's own path events (`PathEventKind`), polled through 
 ### Owned
 
 - **`Game.pathfinder`** (`layout.json`: byte 82439 of `Game`, unaligned): the block offset of the region, *R*, from `Init` until `Shutdown`, which sets it
-  to 0. Every slot but `RegionSize` and `Init` finds the region through it; while it is 0, `Submit`,
-  `Cancel` and `Step` do nothing and `Poll` returns 0 (`DebugCell` is outside the contract then).
+  to 0. The module reaches the region through the data word `g_region` (its address, ABI section 8.2); the
+  engine slots reach it through `Game.pathfinder`. While `Game.pathfinder` is 0, `Submit`, `Cancel` and `Step`
+  do nothing and `Poll` returns 0.
 - **The region**, every byte of it, compared byte for byte at the end of every recorded call (the pseudo-field
   `region` of `docs/replay-format.md`, "A module's region and world view"). It is zero when `Init` starts.
   Its parts, for a map of *w* × *h* cells with *s* unit slots:
@@ -512,7 +515,9 @@ chain (as above, each by the link that names it); its requester becomes 0; its *
 
 No imports.
 
-### `CellsChanged(left, top, right, bottom, classes, cause)`
+### `CellsChanged`
+
+Its arguments are a rectangle (`left`, `top`, `right`, `bottom`), the `classes` and the `cause`.
 
 Does nothing. No imports, no writes.
 
@@ -600,27 +605,26 @@ is at least its size, or 2^31 or more, and nothing when `size` is 0), and the
 record's first min(count, `capacity`) points to `points` (none when `capacity` ≤ 0). The result is the
 payload's size, whatever `size` is. No imports.
 
-### `WriteState(writer)`
+### The engine slots
 
-Does nothing in this module: no imports, no writes. `writer` is a table of calls that the ABI gives a module
-no way to call (no import reaches it, and ABI section 9.1 allows no other call out of the module), so the
-module cannot write its state through it. The game's own pathfinder writes, through it, the lines of the kit's
-`docs/trace-format.md`, section 8.7 (sections 16 and 17). No trace row hashes those sections (the kit's `docs/trace-format.md`, the paragraph "The rows hash state,
-and events are only dumped": sections 16 and 17 are in a dump and in no row), and no recording
-holds the slot, so the gate does not judge it. It is a kit gap (section 7).
+`WriteState`, `SetSearchScale` and `DebugCell` are the engine's (the entry's `engine`): the module exports
+none of them, and the engine's native slot runs on the module's region through `Game.pathfinder` (ABI section
+6, "Engine slots"; section 9.3, "What stays in the engine": the engine writes a module's state for the dump
+from the block, so a module writes nothing for it). What each does to the region, for the module's state to
+be the one it reads:
 
-### `SetSearchScale(scale)`
-
-`baseScale` becomes `scale` (nothing when `Game.pathfinder` is 0). It changes the weights at the next
-refresh (`Step`, step 4).
+- **`WriteState(writer)`** reads the region and writes the lines of the kit's `docs/trace-format.md`, section
+  8.7 (sections 16 and 17), which no trace row hashes (the paragraph "The rows hash state, and events are only
+  dumped"). It writes nothing to the region.
+- **`SetSearchScale(scale)`**: `baseScale` becomes `scale` (nothing when `Game.pathfinder` is 0). It changes
+  the weights at the next refresh (`Step`, step 4).
 
 The engine's handler of SET_SEARCH, not this module, applies the event: a nonzero `steps` sets the match's search
 step limit, which this module reads through `pathworld.SearchStepLimit` at every `Step`, and its scale, when `hasScale` is nonzero, is
 passed to this slot. The module has no inbox and takes no effect.
 
-### `DebugCell(x, y, flags, dir)`
-
-`*flags` becomes cell (*x*, *y*)'s flags and `*dir` its dir, each zero-extended. No bounds test.
+- **`DebugCell(x, y, flags, dir)`**: `*flags` becomes cell (*x*, *y*)'s flags and `*dir` its dir, each
+  zero-extended. It writes nothing to the region.
 
 ## 5. Exactness
 
@@ -756,13 +760,11 @@ records.
 - The probe has no limit of its own on its turns: it ends only by the rules of section 4.
 
 **Gaps in the kit.**
-- The kit's manifest has no entry and no signatures for pathfinding or for `pathworld`, so the kinds of
-  section 2 are this spec's reading of the header. The ABI (section 9.1) names an import group after an
-  interface or `services`; `pathworld` is a world view inside `interfaces/pathfinding.h`.
-- No WASM gate runs a pathfinding module at this kit, and no recording is of one.
-- `WriteState` takes a `StateWriter`, a table of calls, which the ABI gives a module no way to call.
+- The entry is `blocked` (section 2), so the kit has no pathfinding `.wasm`, no fuel budget and no size
+  budget, and no recording is of a WASM pathfinding.
+- The gate's verdict on a submitted module from the recordings alone is ozgb/byte-tactics-moddable#1209's.
 
 ## 8. Kit version
 
-Kit `interfaces-v61` and `reference-traces-v53`, the versions the gate judges against. Interface
+Kit `interfaces-v65` and `reference-traces-v54`, the versions the gate judges against. Interface
 `pathfinding` 4.1.
