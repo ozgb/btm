@@ -187,3 +187,5 @@ Not changed, with reasons: 10 (the fixture import and shadowing serve adapted im
 11, 12 (dead branches kept as guards), 14 (commands.md 4.2 events of `edge`, `nowisee`, `reloadaiprofiles` are outside the
 twelve commands of engine-core.md 4.3), 15 (only a realloc of 256 MiB or more), 16 (no rustup here; the host triple is musl and the
 binary is checked static).
+
+Verdict of req1 (session 7): `commands`, `console`, `events`, `fuel`, `hash`, `host`, `loader`, `rand`, `runtime` equal; `files` failed (not judged); `play` not judged.
