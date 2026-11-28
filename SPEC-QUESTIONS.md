@@ -2,6 +2,8 @@
 
 ## Q-gate-1: the gate answers `failed` on every recording, whatever the module does
 
+**Resolved.** The failures came from a fault on the gate host (fixed by the operator). The unchanged module was resubmitted as req10: `equal` on all five recordings. No spec change needed.
+
 Spec: section 2, "The gate" (recordings route, blocked entry, `--no-budgets`); kit: `docs/module-abi.md` section 15,
 `docs/replay-format.md` "Against the WASM module".
 

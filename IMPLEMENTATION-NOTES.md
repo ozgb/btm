@@ -27,10 +27,12 @@
 
 7. req9 (req8 with the custom sections stripped): `failed`.
 
-No `equal` verdict. See SPEC-QUESTIONS.md, Q-gate-1.
+req1 to req9 were caused by a fault on the gate host, not by the module (operator's note).
+
+8. req10 (same module, gate fixed): `equal` on all five recordings. Q-gate-1 is resolved.
 
 ## Unclear points
-- A `failed` verdict has no message, so the cause is unknown (SPEC-QUESTIONS.md).
+- A `failed` verdict has no message; the earlier ones were a gate host fault (Q-gate-1, resolved).
 - `--no-stack-first` is not in the linker's help here (LLD 20.1.8); the default places the stack after the data, and the
   stack pointer was checked to lie in the window.
 - Spec section 4 is otherwise sufficient: the five recordings replay equal locally from it. Not in any recording and
