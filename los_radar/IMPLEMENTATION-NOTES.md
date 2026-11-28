@@ -18,7 +18,15 @@ result with the kit's `tools/wasm_fuel.py`.
    (same surface), and it failed the same way, so the fault is in the gate's replay of los_radar and not in the
    module's behaviour. req3, 4, 5, 6, 8, 9 are the same 18671-byte module.
 
-So the module has not been judged against the recordings: no `equal` and no `differs` was ever seen. It is
+10. req10 (after the gate was fixed): `differs` on all three recordings at call 40 (the first `Apply`, kind 137),
+    field `result`, value 0 (recorded 1).
+11. req11 to req16: probes (not the real module) that return values computed from `Apply`'s arguments. They show the
+    gate passes `size` 4 and a zero payload (`event.unit` 0) where the recording says `a size 8`, `a event.unit Unit#1`.
+    The module follows the spec (size below the payload: outcome 0), so it cannot match. Question in
+    SPEC-QUESTIONS.md (Q-gate-1). The source is unchanged from req10's.
+
+Until that is answered, the module has not been judged beyond the first call: the gate stops at the first difference.
+(Earlier note:) the module had not been judged against the recordings: no `equal` and no `differs` was ever seen. It is
 validated with `wasm-tools validate`; exports are the entry's, plus the data words and `__fuel_*`; imports are the
 eight listed plus `env.memory` and the table. I did not hand the branch over, since it is neither `equal` nor
 blocked on a spec question.
