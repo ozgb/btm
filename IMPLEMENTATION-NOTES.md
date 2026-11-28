@@ -50,3 +50,7 @@ req1 to req9 were caused by a fault on the gate host, not by the module (operato
 - Spec section 4 is otherwise sufficient: the five recordings replay equal locally from it. Not in any recording and
   written from the text alone: Shutdown, CellsChanged, PROGRESS, FAILED/PARTIAL outcomes, ring goals, Q5, Q6, event
   dropping in Cancel, Submit replacing an entry.
+
+## Spec update (merged from spec-pathfinding)
+The spec now states the probe's endless walk (section 7, "Edges") and puts the case outside the contract, so
+Q-probe-1 is resolved and removed. The module's logic is unchanged; the last verdict (req11) is `equal`.
