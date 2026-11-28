@@ -181,15 +181,15 @@ All in the caller's memory (`linear`), little-endian, read in place:
 - **The event of `Apply`**: a `UnitsEventHeader` (`kind`, then `unit`, a block offset) and its kind's payload,
   `size` bytes. The payloads (`interfaces/units.h`) and their sizes: SET_STATE_BITS, SET_FLAGS, SET_NET_DIRTY,
   REPAIR, SET_BUILD_STATE, SCRIPT_VALUE, DAMAGE_RECORD and SET_HEALTH 16; SET_WORK_TIME, FINISH_CONSTRUCTION,
-  BUILD_DECAY, UNLINK, TURN, SET_MOVED, NOTIFY_REFS, KILL, SEND and RELOAD_TYPE 12; SET_POSITION 28 and CREATE
-  28; ATTACH_TO_PIECE 20; MOVE 20; SET_STANCE and SET_ANGLES 24; CHANGE_CELL 36; CAPTURE 60; SFX_OCCUPY,
+  BUILD_DECAY, UNLINK, TURN, SET_MOVED, NOTIFY_REFS, KILL, SEND and RELOAD_TYPE 12; SET_POSITION 24; CREATE
+  28; ATTACH_TO_PIECE 20; MOVE 20; SET_STANCE and SET_ANGLES 24; CHANGE_CELL 32; CAPTURE 48; SFX_OCCUPY,
   ATTACKED_SPEECH, MARK_DAMAGED, KILL_ALL and FORGET_ATTACKER the header alone (8). The recordings write the
   fields as `a event.<field>` and the size as `a size`.
 - **`pos`** of `CreateUnit` and of `GetFactoriesInRadius`: a `Vec3` (three signed 32-bit words, x, y, z).
 - **`out`** of `GetFactoriesInRadius`: an array of `capacity` 32-bit words, each written as a unit's block
   offset (a `Ref<Unit>`).
 - **`name`** of `FindUnitType` and `FindUnitTypeId`: a NUL-terminated string.
-- **What the module passes to imports**, in its own memory: a `MissionParams` (`interfaces/mission.h`, 116
+- **What the module passes to imports**, in its own memory: a `MissionParams` (`interfaces/mission.h`, 124
   bytes) that `mission.GetMissionParams` fills, of which the module reads `waterDoesDamage` and `waterDamage`;
   the name `"Killed"` (NUL-terminated) and two 32-bit words for `scripts.QueryScript`, its `arg0` and `arg1`, the
   last two pointers 0; the argument array of `RecordSimEvent`; every effect payload of `Emit`.
@@ -513,7 +513,8 @@ order; in each, the writes are made before its imports, so a synchronous subscri
 of its stage and of the stages before it. A bit of `flags` not named keeps its value.
 
 1. `unitDefIndex` *ty*, `def` `Game.defs[ty]`, `footprint` *f*, `pos` *pos*, `cell` Cell(*pos*, *f*);
-   `buildLeft` 0.0 and `health` *d*.`hp` when *fin* ≠ 0, else `buildLeft` 1.0, `health` 0 and
+   `buildLeft` 0.0 and `health` *d*.`hp` (the low 16 bits of `maxHealth`, which `layout.json` gives at the same
+   offset) when *fin* ≠ 0, else `buildLeft` 1.0, `health` 0 and
    `unfinishedInitZero` 0; `healthPercent`, `prevHealthPercent`, `activateFlags`, `workTime` and `pitch` 0;
    `cobStateFlags` bits 0 to 3 cleared; `zBufferFlag` bit 0 *d*.`flags1` bit 7; `flags`: bits 0 and 1 become 1,
    bit 28 set, bit 29 set when *d*.`mobile` is 0 and cleared otherwise, bit 14 cleared, bit 31 *d*.`flags1` bit 16,
@@ -572,7 +573,7 @@ network id *e* that Kill gives it. *A* is `u.attacker`, and *C* is Commander(u).
 
 | *k* | Credited when | Writes |
 | --- | --- | --- |
-| 1, 6, and 5 when *s* ≠ 10 and *s* ≠ `playerIndex` | always | `P.losses` + 1; when *s* ≠ 10, `buildLeft` is 0.0 and `playerIndex` ≠ *s*: `L.kills` + 1; when *C*: `L.commanderKills` + 1 (when *s* ≠ 10) and `P.commanderLosses` + 1; when *A* is not 0, `buildLeft` is 0.0 and `playerIndex` ≠ *s*: `A.killCount` + 1 |
+| 1, 6, and 5 when *s* ≠ 10 and *s* ≠ `u.playerIndex` | always | `P.losses` + 1; when *s* ≠ 10, `buildLeft` is 0.0 and `u.playerIndex` ≠ *s*: `L.kills` + 1; when *C*: `L.commanderKills` + 1 (when *s* ≠ 10) and `P.commanderLosses` + 1; when *A* is not 0, `buildLeft` is 0.0 and `u.playerIndex` ≠ *s*: `A.killCount` + 1 |
 | 3 | `Game.players[Game.localPlayer].shareVision[P.index]` is 0 | `P.losses` + 1; when *C*: `P.commanderLosses` + 1 |
 | any other (5 otherwise) | never | none |
 
@@ -610,7 +611,7 @@ The smoke is Event(`SIM_EVENT_SMOKE`, [`pos.x`, `pos.y`, `pos.z`, 15, 900, 9]), 
 | --- | --- |
 | *k* is 7 | 0 and 1 |
 | *k* is 4, 5 or 9, or `health` > 0 | 0 and 0 |
-| otherwise | *v* = clamp((Uq(−100 × `health`, *d*.`maxHealth`) + `prevHealthPercent`) / 2, 1, 100); then `scripts.QueryScript(script, "Killed", &v, &w, 0, 0)` with *w* 0, which may change *v* and *w*; its result is ignored |
+| otherwise | *v* = clamp((Uq(−100 × `health`, *d*.`maxHealth`) + `prevHealthPercent`) / 2, 1, 100); then `scripts.QueryScript(script, "Killed", &v, &w, 0, 0)` with *w* 0, which may change *v* and *w*; its result is ignored; the call is made with `script` as it is, 0 included |
 
 Uq(*a*, *b*) is the unsigned 32-bit quotient of *a* and *b*, read back as a signed number. Then *w* becomes 0 when
 `buildLeft` is not 0.0. In order:
@@ -627,7 +628,8 @@ Uq(*a*, *b*) is the unsigned 32-bit quotient of *a* and *b*, read back as a sign
 The result is 0, with nothing written and no import, when *size* < 8; when `kind` is none of 352 to 367 and 384
 to 398; when *size* is smaller than the kind's payload (section 2); for UNLINK, when `ref` is 0; for every kind
 but UNLINK, CREATE, KILL_ALL and RELOAD_TYPE, when `unit` is 0; for SEND and CAPTURE, when `player` is 10 or more
-(read unsigned). The limits of ozgb/btm#25 (a malformed event changes nothing and does not trap): the reference
+(read unsigned). The limits of ozgb/btm#25 (the contract of `docs/module-abi.md`, 9.3: a malformed argument
+changes nothing and does not trap): the reference
 has no defined result for the cases below, and the module's answer to each is outcome 0 with nothing written and
 no import:
 
@@ -755,7 +757,7 @@ when every condition of its row holds, else 0:
 
 | Slot | Conditions |
 | --- | --- |
-| `CanLoad` | *e*.`flags2` lacks 0x80000; *d*.`flags2` has 0x100; the units of *u*'s cargo list (from `cargo` along `cargoNext`) whose `carrier` is *u* number fewer than *d*.`transportcapacity` (unsigned byte); `t.motion` is not 0; *e*.`footprintx` ≤ *d*.`capacity`; `t.flags & 3` ≠ 2; *d*.`flags1` has 0x800 or *e*.`minwaterdepth` < 0; `t.pos.y` + *e*.`modelMaxY` > `seaLevel` × 65536 (32-bit, wrapping); `t.buildLeft` is 0.0 |
+| `CanLoad` | *e*.`flags2` lacks 0x80000; *d*.`flags2` has 0x100; the units of *u*'s cargo list (from `cargo` along `cargoNext`) whose `carrier` is *u* number fewer than *d*.`transportcapacity` (a `char`, read as an unsigned byte); `t.motion` is not 0; *e*.`footprintx` ≤ *d*.`capacity`; `t.flags & 3` ≠ 2; *d*.`flags1` has 0x800 or *e*.`minwaterdepth` < 0; `t.pos.y` + *e*.`modelMaxY` > `seaLevel` × 65536 (32-bit, wrapping); `t.buildLeft` is 0.0 |
 | `CanReclaim` | *d*.`flags2` has 0x400; `t.flags & 3` ≠ 2; *e*.`flags2` lacks 0x1000 |
 | `CanRepair` | *t* is not 0; *d*.`flags2` has 0x200; `t.health` ≠ *e*.`maxHealth` (compared unsigned); `t.flags & 3` ≠ 2; when *d*.`flags1` has 0x800: *d*.`flags1` has 0x200000 or *Y* + *e*.`modelMaxYHigh` ≥ `seaLevel`; when it lacks 0x800: *Y* + *e*.`modelMaxYHigh` ≥ `seaLevel` − *d*.`maxwaterdepth` |
 
@@ -851,21 +853,20 @@ zero-extended when unsigned (section 3 gives each type), and a write keeps the f
 
 ## 6. Quirks
 
-- **Q1**: the health percentage divides 100 × `health` by `maxHealth` unsigned, so a negative `health` gives a
-  huge quotient, clamped to 100: a unit with negative health shows 100 percent.
-- **Q2**: Build's cap compares `health` plus the gain with `maxHealth` unsigned, so a negative sum takes
+- **Q1**: the health percentage divides 100 × `health` by `maxHealth` unsigned; a negative `health` gives 100.
+- **Q2**: Build's cap compares `health` plus the gain with `maxHealth` unsigned; a negative sum gives
   `maxHealth`.
-- **Q3**: the self-repair's test `health` < `maxHealth` is unsigned, so a unit with negative health does not
-  repair itself.
+- **Q3**: the self-repair's test `health` < `maxHealth` is unsigned; a unit with negative health does not repair
+  itself.
 - **Q4**: Repair adds at most 1 point of health and asks at most 1 unit of energy per call, whatever the amount.
 - **Q5**: Kill clears bit 0 of the player's `flags` when the unit is the commander, whether or not the player is
   simulated and whatever the commander-death rule.
-- **Q6**: FORGET_ATTACKER sets bit 14 of `Unit.flags`, the dying flag, so the next unit pass kills the unit with
-  its `lastDamageType` (K7).
+- **Q6**: FORGET_ATTACKER sets bit 14 of `Unit.flags`, the dying flag; the next unit pass kills the unit with its
+  `lastDamageType` (K7).
 - **Q7**: a SEND sends the unit and then damages it with 30000 of damage kind 4; a CAPTURE without `present`
   damages the captured unit the same way after its copy is made.
-- **Q8**: KILL with `selfDestruct` 0 is a damage of 30000 of kind 3 from the unit to itself, the damage of a
-  self-destruct; with `selfDestruct` 1 the unit detonates and dies at once.
+- **Q8**: KILL with `selfDestruct` 0 is a damage of 30000 of kind 3 from the unit to itself; with `selfDestruct` 1
+  the unit detonates and dies at once.
 
 ## 7. Examples
 
@@ -910,13 +911,34 @@ lines, or the last value an earlier line gave).
 5. **Repair query.** `tests/replay/units/orders-air-repair.txt`, tick 852, `CanRepair(Unit#4, Unit#1)` is 0:
    `Unit#1`'s `health` 3000 is its `maxHealth`. `CanRepair(Unit#4, null)` is 0.
 
+6. **Reclaim and load queries.** `tests/replay/units/orders-guard-reclaim.txt`, tick 250, `CanReclaim(Unit#1,
+   Unit#2)` is 1: `UnitDef#34.flags2` 0x0056f6fb has 0x400, `Unit#2.flags` 0x30282321 has mode 1, and
+   `UnitDef#112.flags2` 0x00500004 lacks 0x1000. `tests/replay/units/units-transport.txt`, tick 4100,
+   `CanLoad(Unit#3, Unit#1)` is 1: the target's `UnitDef#34.flags2` lacks 0x80000; the transport's
+   `UnitDef#122.flags2` 0x005001e8 has 0x100; `Unit#3.cargo` is null, so 0 units against `transportcapacity` 5;
+   `Unit#1.motion` is set; `footprintx` 2 ≤ `capacity` 3; `Unit#1`'s mode is 1; `UnitDef#122.flags1` 0x008090a9
+   lacks 0x800 but the target's `UnitDef#34.minwaterdepth` is −10000; `posY` 65536 plus the model height is above 0 (`seaLevel` 0);
+   `buildLeft` 0.0.
+7. **A detach.** `tests/replay/units/orders-air-repair.txt`, tick 852, `Apply` of ATTACH_TO_PIECE (size 20) with
+   `unit` `Unit#4`, `target` 0, `piece` −1, `mode` 2. `Unit#4` (`flags` 0x10e40020: alive, not a structure, no
+   cargo) is carried by `Unit#2`, whose `cargo` is `Unit#4`. Imports: `network.SendAttach Unit#4 null -1 2`; the
+   unit leaves its carrier's list (`Unit#2.cargo` takes `Unit#4.cargoNext`, null); `transportPiece` 255, `carrier`
+   and `cargoNext` 0, then PREPEND_BUCKET (8), after which the recording gives `o Unit#4.cargoNext Unit#2` (map's
+   write, which stands); MOVE_MODE (12) with mode 2; no BE_CARRIED (no target); DESELECT_IF_INELIGIBLE `[4]`.
+   Writes: `Unit#4.transportPiece` 255, `Unit#4.carrier` null, `Unit#2.cargo` null; outcome 1.
+
 Not covered by any recording: `UpdateAllUnits` (K1), `KillUnit`, `FreeFactoryIndex`, `GetFactoriesInRadius`,
 `UnitRefUnlink`; `Apply` of FINISH_CONSTRUCTION, BUILD_DECAY, REPAIR,
 SET_STANCE, SET_BUILD_STATE, SEND, CAPTURE, FORGET_ATTACKER, KILL_ALL and RELOAD_TYPE; the water
 damage and the selection reset of `UpdateUnitBody`; the wind of `UpdateUnitHead`; `FindUnitType` and
-`FindUnitTypeId` with a name that is no type; a wreck (both rows of Wreck); the credit of kill types 1, 5 and 6,
-a rank change and PLAYER_TOOK_LEAD; the last unit of a player; the cargo of a dying transport; a vector that
-grows; Build with a negative amount and a refused request.
+`FindUnitTypeId` with a name that is no type; the self-repair of `UpdateUnitBody`; a wreck (both rows of Wreck);
+the credit of kill types 5 and 6, and of kill type 1 with a killer slot (the one recorded has slot 10); a rank
+change and PLAYER_TOOK_LEAD; the last unit of a player; a death with cargo or a carrier; Kill with a `script` of 0;
+a vector that grows; Build with a negative amount and a refused request; a refused Repair; Create's refusals;
+Attach with a target; the activation bits 2 and 3 and the loss of bit 1 (Bits); Occupy's states 1 and 2;
+SCRIPT_VALUE with `which` 1, 19 or 20; KILL with `selfDestruct` 1; NOTIFY_REFS with references. Some writes are in
+no `w` line, so a replay does not compare them: Create's `heading`, `UnitRefInit`'s `value` and a death's reset of
+its references.
 
 ## 8. Kit version
 
