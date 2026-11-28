@@ -28,8 +28,9 @@ const NAME_SIZE: u32 = 256;
 const RULE_SIZE: u32 = 12;
 const UNIT_SIZE: u32 = 36;
 const FEATURE_SIZE: u32 = 136;
+const FEATURE_NAME: u32 = 0;
 const FEATURE_X: u32 = 128;
-const FEATURE_Z: u32 = 132;
+const FEATURE_Y: u32 = 132;
 
 fn rd<T: Copy>(a: u32) -> T {
     unsafe { read_unaligned(a as *const T) }
@@ -161,9 +162,9 @@ pub extern "C" fn GetMissionFeature(index: i32, out: u32) -> i32 {
         return 0;
     }
     let f = addr(rd(r.wrapping_add(M_FEATURES))).wrapping_add((index as u32).wrapping_mul(FEATURE_SIZE));
-    wr(out, f);
+    wr(out, f.wrapping_add(FEATURE_NAME));
     wr(out.wrapping_add(4), rd::<i32>(f.wrapping_add(FEATURE_X)));
-    wr(out.wrapping_add(8), rd::<i32>(f.wrapping_add(FEATURE_Z)));
+    wr(out.wrapping_add(8), rd::<i32>(f.wrapping_add(FEATURE_Y)));
     1
 }
 

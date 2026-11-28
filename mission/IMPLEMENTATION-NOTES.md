@@ -31,3 +31,12 @@ and `g_blockBase`, using the offsets of `layout.json`. The engine's slots are no
 2. Nit: copies are byte `ptr::copy` (memmove).
 3. Nit: name-slot arithmetic now wrapping.
 4. Nit: wording fixed above; req4-req14 verdicts unknown.
+
+## Third review round (review.md: 0 bug, 3 risk, 3 nit)
+1. Risk, huge `ruleCount`: no change. The spec (sections 3, 4) leaves a consistent record, and the loop is bounded by the count read once at entry.
+2. Risk, null tables with a count: no change. Spec section 4 requires 0 only for the given-out strings; a record with a count and no table is not a consistent record.
+3. Risk, coverage: agreed. The recordings exercise 8 of 12 slots; the other paths (GetMissionIndex, HasMissionName, None outcome, out-of-range) are read against spec section 4 only, no verdict covers them.
+4. Nit: `FEATURE_Z` renamed `FEATURE_Y` (offset 132 is `y`); `FEATURE_NAME = 0` added and used for the `name` address.
+5. Nit, `TABLE_ANCHOR`: the refusal came from the gate's loader ("has no data segment, so its data and stack cannot be placed", req1), and req2 refused a missing table import. Whether the anchor itself is needed beyond the data segment is untested; kept because it is harmless.
+6. Nit, start function zeroing the bss: kept; it does not read the data words and the loader zeroes the window anyway (ABI 2.2, 3).
+Verdict for this round: see below.
