@@ -256,7 +256,10 @@ What this spec needs and the kit doesn't give; the maintainer routes them:
   `BlockVector<struct Ref<struct Unit> >` with no fields, and `docs/replay-format.md`, "Vectors", names the
   first, last and end words without their offsets. Section 3 states the layout the engine slots read.
 - **K7, FORGET_ATTACKER.** The header says that the kind flags the unit's panel to refresh; the bit it sets is
-  bit 14 of `Unit.flags`, the dying flag (Q6).
+  bit 14 of `Unit.flags`, the dying flag (Q6). The Terms list of the writers of unit flag 0x4000
+  (`docs/sim-events.md`) leaves out this kind, KILL with `selfDestruct` 1 and SET_HEALTH with `dying` 1.
+- **K10, AddBuildProgress's result.** The header says the slot returns 1 when the construction is done; it
+  returns 1 when the progress was paid for (Build), as the recordings show (example 1).
 - **K8, the reload of a type.** RELOAD_TYPE reloads the type's definition through the load-class engine slot
   `ReloadUnitType`, which no import reaches; the module does the kills and not the reload. The case is
   unrecorded and load class.
@@ -268,7 +271,11 @@ Field names are `layout.json`'s; a name in `code` with no record is a field of t
 `u.def`, the unit's `UnitDef`. The recordings use some other names for the same bytes: `posX`, `posY`, `posZ`
 are `pos.x`, `pos.y`, `pos.z`; `bank`, `heading` and `pitch` are the angles; `sfxOccupy` is the 32-bit word at
 `unknown_10a` (bytes 266 to 269); `weapon0Stockpile` to `weapon2Stockpile` are `weapons[i].stockpile`;
-`FeatureHeap#N.dead` is `Feature.dead` of `Game.features[N]`; `UnitModel#N.model` is `Game.types[N]`.
+`Feature#N.dead` and `FeatureHeap#N.dead` are `Feature.dead` of `Game.features[N]`; `UnitModel#N.model` is
+`Game.types[N]`; `UnitDef.corpse` and `buildangle` are the same bytes as `corpseUnsigned` and
+`buildangleUnsigned`; `PlayerInfo.flags` holds `bit6` as its bit 6; `Order#N.link` is a `PathOrderAttach`
+inside an order, a reference like any other; `Cell#a+n.height` is a run of the `height` of *n* cells from *a*
+(`docs/replay-format.md`, "A table recorded as changed elements").
 
 ### Owned
 
@@ -419,7 +426,9 @@ when `u.motion` is not 0 and `flags & 3` is 1:
 | has 0x80000, not 0x100000 | (`seaLevel` − *d*.`draft`) × 65536 (no import) |
 | neither | Align(u) (no import) |
 
-**Align(u)**, putting a unit on the ground from its model: *M* is `Game.types[u.unitDefIndex]`; when
+**Align(u)**, putting a unit on the ground from its model: *M* is `Game.types[u.unitDefIndex]`, the address of
+the unit type's model as the engine loaded and relocated it (load data outside the block: `docs/replay-format.md`,
+"Load inputs"), whose `vertices`, `faces` and `indices` are addresses in the module memory; when
 *M*.`firstFace` < 0, nothing. Otherwise *F* is the face `M.faces[M.firstFace]` (32-byte `PieceFrame` records),
 and for each corner *k* = 0 to 3, *v* is the `Vec3` `M.vertices[F.indices[k]]` (`indices` 16-bit unsigned):
 
@@ -483,9 +492,9 @@ Then, when `b.flags` or `t.flags` has 0x10, `Game.flags_37ebe` gains 0x10.
 | --- | --- | --- | --- |
 | *x* < 0 | ECON_INCOME(u, −*Mc*); DAMAGE(u, u, 30000, 9) when *N* ≥ 1.0; then Finish(b, u) when *N* = 0.0 | `health` max(*hp* + `health`, 0), `buildLeft` *N*, `flags` gains 0x2000 | 0 |
 | otherwise (*x* > 0, or a NaN), `economy.RequestGranted(b, 3)` gives non-zero | that call; ECON_REQUEST(b, 3, *E*, *Mc*); Finish(b, u) when *N* = 0.0 | `health` min(*hp* + `health`, *D*) (Q2), `buildLeft` *N*, `flags` gains 0x2000 | 1 |
-| otherwise, it gives 0 | that call; ECON_REQUEST(b, 3, *E*, *Mc*); Finish(b, u) when `buildLeft` is 0.0 | nothing | 0 |
+| otherwise, it gives 0 | that call; ECON_REQUEST(b, 3, *E*, *Mc*) | nothing | 0 |
 
-`netDirtyFlags` is written before every import; a row's other writes come after its first effect (ECON_INCOME,
+`netDirtyFlags`, when it is written (*x* ≥ 0, so not for a NaN), is written before every import; a row's other writes come after its first effect (ECON_INCOME,
 or ECON_REQUEST) and before the rest. `health` keeps the low 16 bits of the value. ECON_REQUEST's `player` is
 *b*'s `playerIndex`.
 
@@ -558,7 +567,9 @@ network id *e* that Kill gives it. *A* is `u.attacker`, and *C* is Commander(u).
 10. when *w* > 0: Wreck(u, w, *k* ≠ 7);
 11. the references: while `head` is not 0, for the reference *r* at `head`: STATUS(u, r.`value`, 8) when
     `r.value` is not 0; then, when `r.owner` is still *u*, *r* is taken out of *u*'s list and its `owner` and
-    `next` become 0;
+    `next` become 0. A reference whose `owner` is no longer *u* after the effect and that is still at `head`
+    has no defined result in the reference (it is met again for ever); the module takes it out of the list as
+    for any other, with no effect (ozgb/btm#25);
 12. when `script` is not 0: `scripts.DeleteScript(script)`, then `script` becomes 0; when `state` is not 0:
     `scripts.FreeObjectState(state)`, then `state` becomes 0;
 13. when `motion` is not 0: MOVE_DESTROY(u);
@@ -575,7 +586,7 @@ network id *e* that Kill gives it. *A* is `u.attacker`, and *C* is Commander(u).
 | --- | --- | --- |
 | 1, 6, and 5 when *s* ≠ 10 and *s* ≠ `u.playerIndex` | always | `P.losses` + 1; when *s* ≠ 10, `buildLeft` is 0.0 and `u.playerIndex` ≠ *s*: `L.kills` + 1; when *C*: `L.commanderKills` + 1 (when *s* ≠ 10) and `P.commanderLosses` + 1; when *A* is not 0, `buildLeft` is 0.0 and `u.playerIndex` ≠ *s*: `A.killCount` + 1 |
 | 3 | `Game.players[Game.localPlayer].shareVision[P.index]` is 0 | `P.losses` + 1; when *C*: `P.commanderLosses` + 1 |
-| any other (5 otherwise) | never | none |
+| any other (5 otherwise; 4, the damage of SEND and CAPTURE; 8, KILL_ALL and RELOAD_TYPE; 9, Build's full refund) | never | none |
 
 The writes are made before the imports. Imports of a credited kill, in order: Event(`SIM_EVENT_CD_ACTIVITY`, [5, *s*, *s*]) when *k* is not 3 and *s* =
 `Game.localPlayer`; then, when *s* ≠ 10: the rank pass, then Event(`SIM_EVENT_SCORE_FLASH`, [*s*, `P.index`]).
@@ -589,8 +600,9 @@ and whose *K* is below *K*(L). When *best* < *L*.`rank`: each player 0 to 9 whos
 `rank` is at least *best* and below *L*.`rank` (as it was) has `rank` + 1; *L*.`rank` becomes *best*; and when
 *best* is 0, Event(`SIM_EVENT_PLAYER_TOOK_LEAD`, [*L*.`index`, *K*(L)]).
 
-**Wreck(u, w, smoke)**: *f* = *d*.`corpseUnsigned`; *w* − 1 times, *f* becomes `Game.features[f].dead`, and when *f*
-≥ 0xfffb before any step, nothing happens. When the final *f* ≥ 0xfffb, nothing happens. Otherwise *c* =
+**Wreck(u, w, smoke)**: *f* = *d*.`corpseUnsigned`; *w* − 1 times, *f* becomes `Game.features[f].dead`, each step
+made only when *f* is below 0xfffb before it (when it is not, nothing happens and no further `dead` is read).
+When the final *f* ≥ 0xfffb, nothing happens. Otherwise *c* =
 `los_radar.GetMapCell(cell.x, cell.y)` (sign-extended); when *c* is 0, nothing more. Otherwise
 `map.GetGroundHeight(&u.pos)` gives *h*, and the placement *Q* is a `FeaturesPlace` with `x` and `z` the cell's
 column and row (*i* mod `Game.width` and *i* / `Game.width`, *i* the index of *c* in `Game.cells`, 13 bytes a
@@ -781,7 +793,9 @@ Unlinking *r* means: when `r.owner` is not 0, *r* is taken out of its owner's li
 
 ### The factory index
 
-*I* is the `FactoryIndex` at `SimGlobals.g_factoryIndex`, and *E* its `players[player]`.
+*I* is the `FactoryIndex` at `SimGlobals.g_factoryIndex`, and *E* its `players[player]`. A `player` outside 0 to 9
+has no defined result in the reference; the module does nothing, and `GetFactoriesInRadius` answers 0
+(ozgb/btm#25).
 
 - **`CreateFactoryIndex(player)`**: when `g_factoryIndex` is 0, `services.SimAlloc(240)` gives *I* (zeroed) and
   `g_factoryIndex` becomes its block offset. Then *E*'s vector is emptied (*last* becomes *first*; its storage
@@ -928,17 +942,22 @@ lines, or the last value an earlier line gave).
    Writes: `Unit#4.transportPiece` 255, `Unit#4.carrier` null, `Unit#2.cargo` null; outcome 1.
 
 Not covered by any recording: `UpdateAllUnits` (K1), `KillUnit`, `FreeFactoryIndex`, `GetFactoriesInRadius`,
-`UnitRefUnlink`; `Apply` of FINISH_CONSTRUCTION, BUILD_DECAY, REPAIR,
-SET_STANCE, SET_BUILD_STATE, SEND, CAPTURE, FORGET_ATTACKER, KILL_ALL and RELOAD_TYPE; the water
-damage and the selection reset of `UpdateUnitBody`; the wind of `UpdateUnitHead`; `FindUnitType` and
-`FindUnitTypeId` with a name that is no type; the self-repair of `UpdateUnitBody`; a wreck (both rows of Wreck);
-the credit of kill types 5 and 6, and of kill type 1 with a killer slot (the one recorded has slot 10); a rank
-change and PLAYER_TOOK_LEAD; the last unit of a player; a death with cargo or a carrier; Kill with a `script` of 0;
-a vector that grows; Build with a negative amount and a refused request; a refused Repair; Create's refusals;
-Attach with a target; the activation bits 2 and 3 and the loss of bit 1 (Bits); Occupy's states 1 and 2;
-SCRIPT_VALUE with `which` 1, 19 or 20; KILL with `selfDestruct` 1; NOTIFY_REFS with references. Some writes are in
-no `w` line, so a replay does not compare them: Create's `heading`, `UnitRefInit`'s `value` and a death's reset of
-its references.
+`UnitRefUnlink`; `Apply` of FINISH_CONSTRUCTION, BUILD_DECAY, REPAIR, SET_STANCE, SET_BUILD_STATE, SEND,
+CAPTURE, FORGET_ATTACKER, KILL_ALL and RELOAD_TYPE; the water damage, the selection reset, the self-repair and a
+result of 0 of `UpdateUnitBody`; the wind of `UpdateUnitHead`; `FindUnitType` and `FindUnitTypeId` with a name
+that is no type; a wreck that is placed (both rows of Wreck; the chain of `dead` that ends with no placement is
+recorded, `mission-victory` tick 181); Height's rows with 0x100000 and with 0x80000, and Align on a unit that does
+not hover, with `firstFace` below 0 or stopped at the map's edge; Place with a change of cell; Attach with a
+target, from a carrier's list past its first unit, or with no carrier; Finish, in every slot that reaches it;
+Create with no script, with an `id`, with a `maxThisUnit`, with an isfeature type, and its refusals; the credit
+of kill types 5 and 6, and of kill type 1 with a killer slot (the one recorded has slot 10); a rank change and
+PLAYER_TOOK_LEAD; the last unit of a player; a death with cargo or a carrier; Kill with a `script` of 0; a vector
+that grows, and a refill that admits a unit; Build with a negative amount and a refused request; a refused
+Repair; the activation bits 2 and 3 and the loss of bit 1 (Bits); Occupy's states 1, 2 and 3; SCRIPT_VALUE with
+`which` 1, 19 or 20; KILL with `selfDestruct` 1; NOTIFY_REFS with references; `CanLoad` and `CanReclaim`
+answering 0, and `CanLoad` with cargo. Some writes are in no `w` line, so a replay does not compare them:
+Create's `heading`, `bank` and `pitch`, `UnitRefInit`'s `value`, and a death's reset of its references (for
+example `Order#N.link.owner`).
 
 ## 8. Kit version
 
