@@ -270,8 +270,9 @@ This module reads and writes none of the three itself, and never draws except th
 
 ## 4. Behaviour
 
-Within one call, only the order of import calls is observable. The block writes are compared at the
-end of the call, so the order they are listed in here carries no meaning.
+Within one call, only the order of import calls is observable, and the block writes are compared at the
+end of the call, so the order they are listed in here carries no meaning: except that the clearing of a slot
+comes before the import that publishes CLEARED (below, "Publishing CLEARED").
 
 In each slot, *u* is the unit, *w* the weapon (0, 1 or 2) and "the slot" is *u*'s weapon slot *w*. The
 engine never calls `GetWeaponTargetUnit`, `GetWeaponTargetPos` or `FindWeaponTarget` with a *w* (for
@@ -284,6 +285,11 @@ module is judged on the scenarios too (section 7, gaps).
 *Publishing CLEARED* for *u* and *w* is the import `services.Emit(effect, 12)` with the CLEARED effect of *u*
 and *w* (section 2). It returns nothing, and the recordings show it as `i services.Emit (112,Unit#N,w) 12`,
 with *u* as `Unit#N`, in its place among the slot's imports.
+
+The effect reaches its subscribers before `services.Emit` returns (section 2), so the writes the slot's call
+makes to the slot (TargetX = 0 and TargetZ = −32768, in the two places that publish CLEARED) are made before
+the import: a subscriber that reads the slot while it runs sees it already cleared. The other writes of
+the slots (the target fields of a SET, RESET or LOAD, and `netDirtyFlags`) are made in calls that import nothing.
 
 ### `Apply(event, size)`
 
