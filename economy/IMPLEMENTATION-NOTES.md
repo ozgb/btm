@@ -23,3 +23,21 @@ rustc's `--stack-first`/`--allow-undefined`. The only static that changes is `UN
 ## Later verdicts
 - req3 to req5: no verdict (the host replayer was missing).
 - req10: `equal` on all 9 recordings (kit interfaces-v73 / reference-traces-v57). Question 1 in SPEC-QUESTIONS.md is answered: the spec's v72 pin stands.
+
+## Review round (req20)
+
+Verdict req20: `equal` on all 9 recordings. This supersedes the earlier statements in "Verdicts" and
+"Unclear points" that the behaviour was not known to be `equal`; the module is `equal` since req10.
+
+Review findings:
+1. Fixed: `UpdatePlayerEconomy` and `UpdateResourceSharing` return at once for a `player` outside 0..9.
+2. Fixed: both unit walks stop when `NextUnit` does not rise (unsigned).
+3. Fixed: `UpdateMetalExtraction` skips the cell loops when `footprintX` <= 0.
+4. Fixed: the `Unit.extraction` write no longer skips unit 0 (spec Q11: written whatever UnitInfo returned).
+5. Kept, with a comment in the source: the function pointer is how the linker imports the table; the
+   table entry it adds is harmless because slots are called by export name.
+6. Fixed: `g_extTdf` is now a `u32` (`tdf\0`), 4 bytes as in ABI 8.2.
+7. Fixed: the source order of the exports now follows the manifest entry (checked with wasm-tools).
+8. The kit's pin stays `interfaces-v72` as the spec gives it. The spec writer's answer: v73 differs from v72
+   only in the gate's tooling and docs. That is their statement, not something the kit shows.
+9. This section marks the earlier statements as superseded.

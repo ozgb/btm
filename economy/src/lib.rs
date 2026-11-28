@@ -47,7 +47,7 @@ pub static mut g_game: u32 = 0;
 #[no_mangle]
 pub static mut g_simGlobals: u32 = 0;
 #[no_mangle]
-pub static mut g_extTdf: [u8; 8] = *b"tdf\0\0\0\0\0";
+pub static mut g_extTdf: u32 = 0x0066_6474;
 #[no_mangle]
 pub static mut g_blockBase: u32 = 0;
 #[no_mangle]
@@ -56,7 +56,8 @@ pub static mut g_region: u32 = 0;
 fn ident(x: u32) -> u32 {
     x
 }
-// A function pointer, so that the module imports the table as its manifest entry lists.
+// A function pointer (the linker then imports the table, as ABI 2.3 and the manifest entry require; the
+// element entry it adds at table_base is harmless because slots are called by export name). So that the module imports the table as its manifest entry lists.
 static IDENT: fn(u32) -> u32 = ident;
 
 // Set once by Init (before the first tick).
@@ -370,104 +371,10 @@ pub extern "C" fn Spend(sp: u32) -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn RequestGranted(unit: i32, res: u32) -> i32 {
-    let slot = unsafe { w_unit_slot(unit) };
-    let a = match slot_addr(slot) {
-        Some(a) => a,
-        None => return 0,
-    };
-    let e = allow(rf(a + L_STALL));
-    let m = allow(rf(a + METAL + L_STALL));
-    (match res & 3 {
-        3 => e && m,
-        1 => e,
-        _ => m,
-    }) as i32
-}
-
-#[no_mangle]
-pub extern "C" fn UnitAccount(unit: i32, out: u32) {
-    let slot = unsafe { w_unit_slot(unit) };
-    if let Some(a) = slot_addr(slot) {
-        for i in 0..12 {
-            wr32(out + 4 * i, rd32(a + 4 * i));
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn GetEnergyUse(ty: i32) -> f64 {
-    let mut t = [0i32; 11];
-    unsafe { w_type_info(ty, t.as_mut_ptr()) };
-    let f = |i: usize| f32::from_bits(t[i] as u32);
-    let eu = f(1);
-    if eu != 0.0 {
-        return eu as f64;
-    }
-    if f(4) > 0.0 {
-        let w = unsafe { w_wind() };
-        return -(w as f64 * f(4) as f64);
-    }
-    if f(5) > 0.0 {
-        let d = unsafe { w_tide() };
-        return -(d as f64 * f(5) as f64);
-    }
-    0.0
-}
-
-#[no_mangle]
-pub extern "C" fn UpdateMetalExtraction(unit: i32) {
-    let mut u = [0i32; 15];
-    let mut t = [0i32; 11];
-    unsafe {
-        w_unit_info(unit, u.as_mut_ptr());
-        w_type_info(u[1], t.as_mut_ptr());
-    }
-    let extracts = f32::from_bits(t[3] as u32);
-    if !(extracts > 0.0) {
+pub extern "C" fn UpdatePlayerEconomy(player: i32) {
+    if player as u32 > 9 {
         return;
     }
-    let (cx, cy, fx, fy) = (u[10], u[11], u[12], u[13]);
-    let mut w: i16 = 0;
-    let mut dy = 0i32;
-    while dy < fy {
-        let y = cy.wrapping_add(dy);
-        let mut dx = 0i32;
-        while dx < fx {
-            let m = unsafe { w_cell_metal(cx.wrapping_add(dx), y) };
-            if m >= 0 {
-                w = w.wrapping_add(m.wrapping_add(1) as i16);
-            }
-            dx += 1;
-        }
-        dy += 1;
-    }
-    if unit != 0 {
-        wf(base().wrapping_add(unit as u32).wrapping_add(88), (extracts as f64 * w as f64) as f32);
-    }
-    if u[14] != 0 {
-        let fx = [17, u[0], unit, w as i32];
-        unsafe { w_emit(fx.as_ptr(), 16) };
-    }
-}
-
-// The handicap of player q: imports PlayerInfo, and Difficulty when it is a computer player.
-fn handicap(q: i32) -> Option<f64> {
-    let mut pi = [0i32; 9];
-    unsafe { w_player_info(q, pi.as_mut_ptr()) };
-    if pi[0] != 0 && pi[1] == 2 {
-        match unsafe { w_difficulty() } {
-            0 => Some(0.5),
-            1 => Some(0.7),
-            _ => None,
-        }
-    } else {
-        None
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn UpdatePlayerEconomy(player: i32) {
     let pl = player as u32;
     let p = player_addr(pl);
     let mut dummy = [0u32; 12];
@@ -572,7 +479,11 @@ pub extern "C" fn UpdatePlayerEconomy(player: i32) {
                 }
             }
         }
-        u = unsafe { w_next_unit(u) };
+        let n = unsafe { w_next_unit(u) };
+        if (n as u32) <= (u as u32) {
+            break;
+        }
+        u = n;
     }
 
     // The player part.
@@ -650,7 +561,11 @@ pub extern "C" fn UpdatePlayerEconomy(player: i32) {
                 settle(a);
             }
         }
-        u = unsafe { w_next_unit(u) };
+        let n = unsafe { w_next_unit(u) };
+        if (n as u32) <= (u as u32) {
+            break;
+        }
+        u = n;
     }
     settle(e);
 }
@@ -708,7 +623,59 @@ fn share(player: i32, me: &[i32; 9], metal: bool) {
 }
 
 #[no_mangle]
+pub extern "C" fn UpdateMetalExtraction(unit: i32) {
+    let mut u = [0i32; 15];
+    let mut t = [0i32; 11];
+    unsafe {
+        w_unit_info(unit, u.as_mut_ptr());
+        w_type_info(u[1], t.as_mut_ptr());
+    }
+    let extracts = f32::from_bits(t[3] as u32);
+    if !(extracts > 0.0) {
+        return;
+    }
+    let (cx, cy, fx, fy) = (u[10], u[11], u[12], u[13]);
+    let mut w: i16 = 0;
+    let mut dy = 0i32;
+    while fx > 0 && dy < fy {
+        let y = cy.wrapping_add(dy);
+        let mut dx = 0i32;
+        while dx < fx {
+            let m = unsafe { w_cell_metal(cx.wrapping_add(dx), y) };
+            if m >= 0 {
+                w = w.wrapping_add(m.wrapping_add(1) as i16);
+            }
+            dx += 1;
+        }
+        dy += 1;
+    }
+    wf(base().wrapping_add(unit as u32).wrapping_add(88), (extracts as f64 * w as f64) as f32);
+    if u[14] != 0 {
+        let fx = [17, u[0], unit, w as i32];
+        unsafe { w_emit(fx.as_ptr(), 16) };
+    }
+}
+
+// The handicap of player q: imports PlayerInfo, and Difficulty when it is a computer player.
+fn handicap(q: i32) -> Option<f64> {
+    let mut pi = [0i32; 9];
+    unsafe { w_player_info(q, pi.as_mut_ptr()) };
+    if pi[0] != 0 && pi[1] == 2 {
+        match unsafe { w_difficulty() } {
+            0 => Some(0.5),
+            1 => Some(0.7),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn UpdateResourceSharing(player: i32) {
+    if player as u32 > 9 {
+        return;
+    }
     if unsafe { w_sharing_enabled() } == 0 {
         return;
     }
@@ -733,3 +700,49 @@ pub extern "C" fn UpdateResourceSharing(player: i32) {
         }
     }
 }
+#[no_mangle]
+pub extern "C" fn RequestGranted(unit: i32, res: u32) -> i32 {
+    let slot = unsafe { w_unit_slot(unit) };
+    let a = match slot_addr(slot) {
+        Some(a) => a,
+        None => return 0,
+    };
+    let e = allow(rf(a + L_STALL));
+    let m = allow(rf(a + METAL + L_STALL));
+    (match res & 3 {
+        3 => e && m,
+        1 => e,
+        _ => m,
+    }) as i32
+}
+
+#[no_mangle]
+pub extern "C" fn GetEnergyUse(ty: i32) -> f64 {
+    let mut t = [0i32; 11];
+    unsafe { w_type_info(ty, t.as_mut_ptr()) };
+    let f = |i: usize| f32::from_bits(t[i] as u32);
+    let eu = f(1);
+    if eu != 0.0 {
+        return eu as f64;
+    }
+    if f(4) > 0.0 {
+        let w = unsafe { w_wind() };
+        return -(w as f64 * f(4) as f64);
+    }
+    if f(5) > 0.0 {
+        let d = unsafe { w_tide() };
+        return -(d as f64 * f(5) as f64);
+    }
+    0.0
+}
+
+#[no_mangle]
+pub extern "C" fn UnitAccount(unit: i32, out: u32) {
+    let slot = unsafe { w_unit_slot(unit) };
+    if let Some(a) = slot_addr(slot) {
+        for i in 0..12 {
+            wr32(out + 4 * i, rd32(a + 4 * i));
+        }
+    }
+}
+

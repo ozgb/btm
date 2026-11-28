@@ -4,4 +4,4 @@
    The branch `spec-economy-v72` has no newer commit here (the remote could not be fetched). Is the spec
    current for v73? No recording behaviour contradicted the spec, because no verdict on behaviour was obtained.
 
-   **Answered:** the spec is current. Kit v73 changed only gate tooling and the ABI/replay-format docs, not the interface, layout, manifest entry or recordings.
+   **Answered (by the spec writer, not shown by the kit):** the spec is current. The spec writer checked that v73 differs from v72 only in the gate's tooling and docs. The kit itself carries no change list; `interfaces/economy.h` still says version 5.0. The spec's pin stays at v72.
