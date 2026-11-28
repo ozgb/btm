@@ -212,8 +212,10 @@ holds (ABI 8.2).
 
 ### Between ticks
 
-Nothing outside the region and the fields above. The region's address is the value of `g_region`
-whenever a slot runs.
+Nothing outside the region and the fields above, except `map.unitSlots`, which a module may keep from
+`Init` to `Shutdown` as a constant of the match: `Init` gives it once per match, before the first tick
+and before any other slot but `RegionSize` (a loaded game included), and it does not change in the
+match. The region's address is the value of `g_region` whenever a slot runs.
 
 ## 4. Behaviour
 
