@@ -102,8 +102,8 @@ The kit's entry for players is the module's entry, and this spec follows it exac
   itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`; its budgets come with a
   later entry.
 - Hooks: every slot of `interfaces/players.h` says "Hooks: none"; the event kind `PLAYERS_GIVE_UNIT` names
-  `UnitTransfer`. The kit defines no hook in the module ABI and the import list has none, so the module raises
-  none; no recording shows one.
+  `UnitTransfer`, whose point is the `Apply` of a `PLAYERS_GIVE_UNIT` (ABI 6, "Hook points"). The kit defines no
+  way to raise a hook and the import list has none, so the module raises none; no recording shows one.
 
 ### Routes and the recordings
 
@@ -119,7 +119,9 @@ and `w Game.localPlayer` lines of the first `Apply` of a file are fields of the 
 known value yet (`docs/replay-format.md`, "Lines"), not writes of the module; their values are the ones
 already in the block. A field the recorded write set leaves out (the `active` of `PLAYERS_DEACTIVATE_CONDITIONS`)
 has no `w` line, and a later call's `r` line shows its value. A `c` line under `map.UnitsInRange` doesn't occur:
-the module takes ids, not a callback. A unit id *n* names slot *n* of the unit table (`Game.units` plus 280·*n*),
+the module takes ids, not a callback. The recordings name some fields by other spellings of the same bytes: a radius condition's `pos` as `posX`,
+`posY` and `posZ`, and the `PlayerInfo` bits by their words `flags_97_wide`, `flags` and `flags_9d_wide`. A
+unit id *n* names slot *n* of the unit table (`Game.units` plus 280·*n*),
 which a recording writes `Unit#n`.
 
 ### Arguments outside the block
@@ -273,7 +275,8 @@ the marker 0x12345678 until the centre is put on the ground (section 4).
 - A player is *counted for rank* when it plays, is not (`unitCount` 0 with `unitsCreated` not 0), and its info
   flag 0x40 is clear.
 - The *host slot*: the lowest player 0 to 9 whose `type` is not 0 and whose `info.host` is set, else 10.
-- *L* is `Game.localPlayer`; *local* means player *L*.
+- *L* is `Game.localPlayer`; *local* means player *L*. The engine keeps *L* from 0 to 9; for another *L* the
+  reference has no defined result.
 - A player's *slice* is the unit table from its `unitsBegin` to its `unitsEnd`, both included, 280 bytes apart.
   A *scan* of a slice visits, in table order, each unit whose `unitDefIndex` is not 0 and stops after the first
   visit that says stop.
@@ -367,11 +370,14 @@ players when *h* is 10), with these imports in order:
 2. Up to 9999 tries of a position *P*: *cx* = `baseX` / 10 and *cz* = `baseY` / 10 (section 5);
    `services.RandomInt(baseX − 2·cx)` gives *a*, then `services.RandomInt(baseY − 2·cz)` gives *b*;
    *P* = ((*a* + *cx*) · 65536, 0, (*b* + *cz*) · 65536). Then nine `map.CanPlaceUnitFootprint(d, 0, cell, 1)`, all nine on every try,
-   the cell (*X*, *Z*) for *Z* from *P*.z − *Hh* and *X* from *P*.x − *Hw*, each in three steps of *Hh* and *Hw*
-   (*Hh* = `height`·65536, *Hw* = `width`·65536), *Z* the outer loop, the cell's `x` and `y` the 16-bit
-   truncations of the unsigned values shifted right by 20 (section 5). *P* is taken when all nine answer
-   non-zero and then the low 16 bits of `features.FindFeatureAtPos(P, 0, 0)` are 0xffff and either `mission.GetMissionParams`
-   gives `lavaWorld` 0, or `lavaWorld` is not 0 and `map.GetCellMeanHeight(P)` is above `seaLevel`. A try whose
+   for the nine cells (*X*, *Z*) with *Z* taking *P*.z − *Hh*, *P*.z and *P*.z + *Hh* in that order and, for each,
+   *X* taking *P*.x − *Hw*, *P*.x and *P*.x + *Hw* (*Hh* = `height`·65536, *Hw* = `width`·65536); the cell is a
+   `Point16` of the module's own, passed by its address, with `x` from *X* and `y` from *Z*, each the 16-bit
+   truncation of the unsigned value shifted right by 20 (section 5). *P* is taken when all nine answer
+   non-zero and then the low 16 bits of `features.FindFeatureAtPos(P, 0, 0)` are 0xffff (*P* as the address of
+   the module's own `Vec3`, and both other arguments null) and either `mission.GetMissionParams`
+   gives `lavaWorld` 0 (a `MissionParams` of the module's own, which the import fills whole), or `lavaWorld` is
+   not 0 and `map.GetCellMeanHeight(P)` (the same `Vec3`) is above `seaLevel`. A try whose
    footprint count is below 9 makes neither of the last calls, and one whose feature test fails doesn't ask
    for the mission's figures. After the 9999th try the last *P* is taken.
 3. `units.CreateUnit(L, t, P, 1, 1, 0)` gives the unit *u*. Whatever it gives, player *L*'s `flags` gets bit 0,
@@ -384,7 +390,8 @@ players when *h* is 10), with these imports in order:
 
 ### Checks
 
-A victory check *V* and a defeat check *D* read the conditions object *C* = `Game.list_391ed`. When *C*.`active`
+A victory check *V* and a defeat check *D* read the conditions object *C* = `Game.list_391ed`. The reference has
+no defined result for a null *C* here; this spec makes the check give 0 with no import (ozgb/btm#25). When *C*.`active`
 is 0 the check gives 0 with no import. Otherwise its first import is `mission.GetGameType`, *g*:
 
 | *g* | *V* | *D* |
@@ -604,8 +611,8 @@ Each is taken from the kit's recordings and recomputed from this spec's definiti
    48`); result 1. The `UNIT_DIED` of `Unit#282` in the same tick runs `DefeatAllUnitsKilledOfType#1`:
    `units.FindUnitTypeId "CORGEO" = 123`, `id` 123, and the scans give `count` 2.
 6. `tests/replay/players/skirmish2.txt`, tick 29 and 30, `UpdatePlayerHead`: players 0 and 1 (`active` 1,
-   `type` 2, `index` 0 and 1) give 1, players 2 to 9 (`active` 0) give 0. At tick 30 player 0's body (clock 30)
-   gives 2: it is still in, `type` 2, `endGameFlags` bit 2 clear, countdown −1.
+   `type` 2, `index` 0 and 1) give 1, players 2 to 9 (`active` 0) give 0. At tick 30 the bodies of players 0 and 1 (clock 30)
+   both give 2; for player 0: it is still in, `type` 2, `endGameFlags` bit 2 clear, countdown −1.
 7. `tests/replay/players/mission-defeat-passes-x.txt`, tick 0, `UpdatePlayerBody(0)`: the
    `VictoryMoveUnitToRadius#1` centre (8000, 4700) has the marker y, so
    `los_radar.ClampWorldPosToTerrain 8000 4700` writes (524288000, 5505024, 310771712) to `pos`; one
@@ -621,7 +628,9 @@ the classes `VictoryKillEnemyCommander`, `VictoryKillAllMobileUnits`, `VictoryBu
 second `map.UnitsInRange` call; the rank pass of `UpdatePlayersFinish`; in `UpdatePlayerBody`, game type 1
 with *V* 1, a game type other than 1 with *L*'s info flag 0x40 set, and every row in which *D* is 1 outside
 game type 1 (the countdown rows, the respawn and watch mode); a check of a game type other than 1 to 3; and
-a *p* above 9.
+a *p* above 9; the advance of the countdown in `UpdatePlayersFinish`; `PLAYERS_SET_TYPE` with `type` 3;
+`PLAYERS_END_GAME` with `victory` 0; `PLAYERS_KILL_UNITS` for player 10 and a KILL_UNIT with `selfDestruct` 1;
+a transfer with a NaN amount or store, or with `from` equal to `to`; and an `Apply` whose `size` is too small.
 
 ## 8. Kit version
 
