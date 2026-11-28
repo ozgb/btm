@@ -155,7 +155,7 @@ replay names are the recordings' field names.
 | `AiSearchGoal` | 101 | `points` (12, 20 `Point16`, whole world units: 16 per cell, so `x` is a position's `x >> 16`), `count` (92, int), `repathClaimTick` (96, unsigned), `flags` (100, byte: bit 0 `active`, *has a route*; bit 1 `flag_1`, *wants a search*; bit 2 `flag_2`, the blocked bit last sent over the network; bit 3 `flag_3`, *changed since sent*) |
 | `PatrolGoal` | 28 | `points` (12, 3 `Point16`), `count` (24, int) |
 | `LiteGoal` | 40 | `pos` (12, `Vec3`), `vel` (24, `Vec3`), `heading` (36, signed 16-bit), `field_26` (38, stays 0), `netDirtyFlags` (39, byte: bit 0 `dirty`, bits 1-2 `mode`) |
-| `PackedPosGoal` | 39 | `pos`, `vel`, `heading`, `field_26` as `LiteGoal` (the layout's `PackedGoal`) |
+| `PackedPosGoal` | 39 | `pos`, `vel`, `heading`, `field_26`, the fields of its base record `PackedGoal` (which `LiteGoal` also starts with) |
 
 The replay names `points`, `count`, `repathClaimTick`, `flags`, `posX` to `posZ`, `velX` to `velZ`, `heading`,
 `netDirtyFlags`; `points` is written as its bytes (`x:...`).
@@ -191,13 +191,18 @@ any class word ("Kit gaps", section 7). The embedded `PathOrderAttach` has a cla
 | --- | --- | --- |
 | `Game.ticks`, `Game.seaLevel` (unsigned byte), `Game.gravity`, `Game.overflowBucket` | game | the tick; the water line; the tilt; whether a unit is off the map |
 | `Game.units`, `Game.unitsEnd` | units | the unit table, units of 280 bytes, for the limits of section 4 |
-| `Unit.pos` (`posX`, `posY`, `posZ`; `xWhole`, `yWhole`, `zWhole` are the high halves), `heading`, `pitch`, `cell`, `footprint` (`Point16`), `flags`, `carrier`, `transportPiece` (byte), `def`, `player`, `list`, `spatialBucket`, `id`, `weapons[0].weapon` | units | as section 4 says; the unit's mode is `Unit.flags` bits 0-1 and its move rate bits 2-3 |
-| `UnitDef.maxvelocity`, `brakerate`, `acceleration`, `bankscale`, `pitchscale`, `moverate1`, `moverate2`, `movementclass`, `turnrate` (unsigned 16-bit), `altitude` (signed 16-bit), `draft` (byte), `flags1` | units | bit 11 (`flying`): an aircraft; bit 19 (`b19`): stays at or above the water line when carried; bit 22 (`b22`): a sea unit; bits 12 and 19 (mask 0x81000): no slowdown under water |
-| `WeaponDef.range` | weapons | a follow offset |
+| `Unit.pos` (`posX`, `posY`, `posZ`; `xWhole`, `yWhole`, `zWhole` are the high halves), `heading`, `pitch`, `cell`, `footprint` (`Point16`), `flags`, `carrier`, `transportPiece` (byte), `def`, `player`, `list`, `spatialBucket`, `id`, `weapons[0].weapon` (replay `weapon0Def`) | units | as section 4 says; the unit's mode is `Unit.flags` bits 0-1 and its move rate bits 2-3 |
+| `UnitDef.maxvelocity`, `brakerate`, `acceleration`, `bankscale`, `pitchscale`, `moverate1`, `moverate2`, `movementclass`, `turnrateUnsigned` (the 16 bits of `turnrate`, read unsigned; this spec writes `turnrate` for it), `altitude` (signed 16-bit), `draft` (byte), `flags1` | units | bit 11 (`flying`): an aircraft; bit 19 (`b19`): stays at or above the water line when carried; bit 22 (`b22`): a sea unit; bits 12 and 19 (mask 0x81000): no slowdown under water |
+| `WeaponDef.range` (replay kind `weapondef`) | weapons | a follow offset |
 | `Player.active`, `Player.type` | players | type 1 or 2 is a player whose units check the map; type 3 gets the remote goals |
 | `Order.unit`, `Order.flags_42` (bit 0x800000) | orders | the unit an order's target reports to; whether a goal may take a straight route |
 | `SpatialBucket.bytes` (byte 1: the bucket's ground height in whole units) | map | the cruise height |
 | a carrier's `UnitMotion.speed` and `velocity` | movement | a carried unit takes them |
+
+A recording's read set also lists fields the module need not read (`Game.width_142a3`, `Game.height_142a7`, and in
+some `Apply` calls `Projectile` and `Unit.flags` fields): `r` lines are the call's inputs, and a read is never
+compared. The replay schema lists `units.LoadUnit` among movement's imports: only the engine slot `LoadTarget` uses it,
+so the entry does not list it.
 
 ### Between ticks
 
@@ -260,7 +265,8 @@ else *r* > 0.5 gives no; 0x1 with `ref.owner` 0 gives no; 0x4 with `u.heading` �
 16-bit) gives no; 0x8 with |`u.pos.y` − *at.y*| > 0x10000 gives no; otherwise yes. When Pos(t) fails here (a
 followed unit that is gone or off the map), the answer is no ("Gaps in the kit"). For an air maneuver: yes when
 hyp(`u.pos.x` − `target.x`, `u.pos.z` − `target.z`) rounded to a float, divided by 65536, is below 48; else yes when
-`headingSet` and Head((0, 0, 0), `other`) is `heading`; else no. It writes nothing.
+`headingSet` and A(−`other.x`, −`other.z`), before it is kept to 16 bits (−32768 to 32768), equals `heading` read
+unsigned (so a negative angle never matches); else no. It writes nothing.
 
 **Whether it stays after it is reached, Keep(t)**: a move target whose `flags` has 0x1 and whose `ref.owner` is
 not 0; no other.
@@ -332,7 +338,8 @@ A size below 8 gives 0. An unknown kind (325 included) gives 0, and so does a si
 
 - a *unit* is valid when it is not 0, at least `Game.units`, below `Game.unitsEnd`, and a multiple of 280 bytes from
   `Game.units`;
-- a *target* is valid when it is not 0 and its class word is one of the five target kinds' (section 3);
+- a *target* is valid when it is not 0, its record lies inside the block, and its class word is one of the five
+  target kinds' (section 3); a module reads nothing outside the block to decide it;
 - for DESTROY_TARGET, SET_ALTITUDE, SET_APPROACH_RADIUS and SET_HEADING, `target` must be valid, and `unit` is not
   looked at; for the others, `unit` must be valid and, but for NEW, have a motion; SET_TARGET's `target` must be 0
   or valid;
@@ -350,7 +357,7 @@ The recordings hold no event outside these limits, and no outcome 0.
 | SET_TARGET 326 | Give(*M*'s goal, `target`) | 1 |
 | DESTROY_TARGET 327 | a move target first makes `units.UnitRefUnlink` of its `ref`; then `SimFree(target)`. No goal's `target` changes | 1 |
 | SET_FLIGHT_MODE 328 | when `mode` differs from the event's *m*: for *m* 1, `speed` and `velocity` become 0, then Tilt(*u*, (0, 0, 0)) (below), then SET_STATE_BITS with `mask` 1 and `set` 0; for any other *m*, SET_STATE_BITS with `mask` 1 and `set` 1; then `mode` becomes *m*. When it is the same, nothing | 1 |
-| SET_ALTITUDE 329 | a move target: `flags` gains 0x8, `altitude` becomes the low 16 bits of `value`, and when `flags` has 0x20, `pos.y` becomes (*g* + `value`) << 16, at most 0x1ff0000, where *g* is `map.GetGroundHeight(&pos)` when that is above `Game.seaLevel`, and `Game.seaLevel` otherwise (Q1). An air maneuver target: nothing | 1 for those two kinds; 0 for the other kinds, with no change |
+| SET_ALTITUDE 329 | a move target: `flags` gains 0x8, `altitude` becomes the low 16 bits of `value`, and when `flags` has 0x20, `pos.y` becomes (*g* + `value`) << 16 with the full 32-bit `value`, at most 0x1ff0000, where *g* is `map.GetGroundHeight(&pos)` when that is above `Game.seaLevel`, and `Game.seaLevel` otherwise (Q1). An air maneuver target: nothing | 1 for those two kinds; 0 for the other kinds, with no change |
 | SET_APPROACH_RADIUS 330 | a move target: `flags` gains 0x10 and `approachRadius` becomes the low 16 bits of `value` | 1; 0 for another kind |
 | SET_HEADING 331 | a move target: `flags` gains 0x40 and `heading` becomes the low 16 bits of `value` | 1; 0 for another kind |
 
@@ -438,14 +445,16 @@ are 0; then START_SCRIPT MoveRate1, 2 or 3 (2, 3, 4) for rates 1 to 3; then MOVE
 
 ### `ApplyPathEvent(event, size, waypoints)`
 
-A size below 20 does nothing. *g* is the event's `requester`; an event whose requester is not an AI search goal of
-this module (by its class word) does nothing (ozgb/btm#25).
+A size below 20 does nothing, and so does a kind other than 0 to 2. *g* is the event's `requester`; an event whose
+requester is 0, not inside the block, or not an AI search goal of this module (by its class word) does nothing, with
+no read outside the block and no trap (ozgb/btm#25).
 
 - **STARTED** (size at least 24; otherwise nothing): when the event's `target` is a valid target (section 4,
   `Apply`), `repathClaimTick` becomes the event's `tick`, and Report(that target, 0x100 when `start` is
   `PATH_START_DIRECT`, 0x200 otherwise). A STARTED with an invalid target does nothing.
 - **PROGRESS**: nothing.
-- **FINISHED** (size at least 28; otherwise nothing): with *n* = `count`: when *n* is 0 and *g* has a target *t*
+- **FINISHED** (size at least 28; otherwise nothing; a negative `count` does nothing, ozgb/btm#25): with *n* =
+  `count`: when *n* is 0 and *g* has a target *t*
   that Reached(*t*, owner) says no to, Report(*t*, 0x40); `active` is cleared; `count` and `points` stay. When *n* >
   0: `count` becomes min(*n*, 20), points 0 to `count` − 1 become the first waypoints (the rest stay), and `active`
   is set. Either way `flag_1` is cleared and `flag_3` set.
@@ -514,8 +523,8 @@ los_radar's header) whose `unit` is the unit's block offset.
   under water, (cap × 0x8000) >> 16.
 - **The ground steering widths**: *k* is the 64-bit product of |*δ*| (0 to 32768) and `speed`, divided by
   `turnrate` and truncated, kept to 32 bits; `2 × brakerate` wraps at 32 bits; *lim* is hi(*k*²) times 4, wrapping.
-  The reference never divides by a `turnrate` of 0 here (no moving ground unit has one); a module must not trap on
-  it, and what it gives is not judged.
+  A `turnrate` of 0 here, a `brakerate` of 0 in the ground steering and a `maxvelocity` of 0 in the flying
+  drag are in no recording; a module must not trap on them, and what it gives is not judged.
 - **Comparisons**: `repathClaimTick` against the tick is unsigned. Every other comparison is signed, `turnrate`
   and the ANGLES heading being unsigned 16-bit values widened to int.
 - **The carried water line**: `(seaLevel − draft)`, its low 16 bits as a signed whole, times 65536.
@@ -538,8 +547,7 @@ los_radar's header) whose `unit` is the unit's block offset.
 
 - **Q1**: SET_ALTITUDE asks `map.GetGroundHeight` twice, with the same position, when the ground is above the
   water line, and once when it is not.
-- **Q2**: `NewRingApproach` stores its `inner` argument as the ring's `outer` and its `outer` argument as `inner`
-  (so a caller that passes the outer radius first gets a ring the right way round).
+- **Q2**: `NewRingApproach` stores its `inner` argument as the ring's `outer` and its `outer` argument as `inner`.
 - **Q3**: `NewPathOrderToUnitAtAngle` stores its `angle` as the target's `piece`; the target's `heading` stays 0.
 - **Q4**: a footprint marker's position is the middle column of its rectangle but its last row (`y2`), not the
   middle row.
@@ -624,9 +632,13 @@ everything those goals do, a move target's follow offset (flags 0x2), an air man
 - **SET_TARGET's points.** An AI search goal's new two-point route is not written as a `w` line in the `Apply` that
   makes it; the following call's `r` line restores it.
 - **An unset position.** When Reached asks a followed move target whose unit is gone or off the map, the reference
-  compares with a position it never set. No recording reaches it; this spec answers no.
+  compares with a position it never set. No recording reaches it; this spec answers no (ozgb/btm#25).
 - **`Unit.pitch`.** The recordings carry no `pitch` line for the units they move, so the cap's slope index is 0 in
   every recorded call.
+- **The flying roundings.** No recording separates the float and double steps of section 5 (Q8 included): a module
+  that rounds them otherwise still replays the six recordings equal. Only scenarios, or a kit vector, would judge them.
+- **New objects in the recordings.** Which fields a recording lists as `w` lines for a newly made object follows the
+  recorder's rules (`docs/replay-format.md`), not this spec: a name reused after a `SimFree` lists fields that are 0.
 
 ## 8. Kit version
 
