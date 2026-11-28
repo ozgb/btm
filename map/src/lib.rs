@@ -1556,10 +1556,10 @@ pub extern "C" fn PickRandomReclaimableResourcesInRadius(
     let mut nm: u32 = 0;
     let mut z = pz.wrapping_sub(hh);
     let zmax = pz.wrapping_add(hh);
-    while z <= zmax {
+    'rows: while z <= zmax {
         let mut x = px.wrapping_sub(hh);
         let xmax = px.wrapping_add(hh);
-        while x <= xmax {
+        'cols: while x <= xmax {
             let pt: [u32; 3] = [x as u32, py as u32, z as u32];
             let cell = unsafe { los_get_map_cell_at_position(pt.as_ptr() as *const u8) };
             if cell != 0 {
@@ -1569,32 +1569,35 @@ pub extern "C" fn PickRandomReclaimableResourcesInRadius(
                     if r16(f + 254) & 0x180 == 0x180 {
                         let en = f32::from_bits(r32(f + 236));
                         let me = f32::from_bits(r32(f + 240));
-                        if en != 0.0 && energy_list != 0 {
+                        if en != 0.0 {
                             let a = energy_list.wrapping_add(ne.wrapping_mul(16));
                             w32(a, pt[0]);
                             w32(a + 4, pt[1]);
                             w32(a + 8, pt[2]);
                             w32(a + 12, r32(f + 236));
                             ne += 1;
-                        } else if en != 0.0 {
-                            ne += 1;
                         }
-                        if me != 0.0 && metal_list != 0 {
+                        if me != 0.0 {
                             let a = metal_list.wrapping_add(nm.wrapping_mul(16));
                             w32(a, pt[0]);
                             w32(a + 4, pt[1]);
                             w32(a + 8, pt[2]);
                             w32(a + 12, r32(f + 240));
                             nm += 1;
-                        } else if me != 0.0 {
-                            nm += 1;
                         }
                     }
                 }
             }
-            x = x.wrapping_add(0x30_0000);
+            // a step that wraps past i32::MAX ends the row instead of looping on
+            match x.checked_add(0x30_0000) {
+                Some(nx) => x = nx,
+                None => break 'cols,
+            }
         }
-        z = z.wrapping_add(0x30_0000);
+        match z.checked_add(0x30_0000) {
+            Some(nz) => z = nz,
+            None => break 'rows,
+        }
     }
     let pick = |list: u32, n: u32| -> u32 {
         let mut idx: u32 = 0;
@@ -1613,6 +1616,17 @@ pub extern "C" fn PickRandomReclaimableResourcesInRadius(
     };
     let ep = if ne != 0 { pick(energy_list, ne) } else { 0 };
     let mp = if nm != 0 { pick(metal_list, nm) } else { 0 };
+    // the picked entries are copied out before the lists are freed
+    let mut eo = [0u32; 4];
+    let mut mo = [0u32; 4];
+    if ne != 0 {
+        let a = energy_list.wrapping_add(ep.wrapping_mul(16));
+        eo = [r32(a), r32(a + 4), r32(a + 8), r32(a + 12)];
+    }
+    if nm != 0 {
+        let a = metal_list.wrapping_add(mp.wrapping_mul(16));
+        mo = [r32(a), r32(a + 4), r32(a + 8), r32(a + 12)];
+    }
     if energy_list != 0 {
         unsafe { svc_free(energy_list) };
     }
@@ -1620,23 +1634,21 @@ pub extern "C" fn PickRandomReclaimableResourcesInRadius(
         unsafe { svc_free(metal_list) };
     }
     if ne != 0 {
-        let a = energy_list.wrapping_add(ep.wrapping_mul(16));
         let dst = r32(energy);
-        w32(dst, r32(a));
-        w32(dst + 4, r32(a + 4));
-        w32(dst + 8, r32(a + 8));
-        w32(energy_amount, r32(a + 12));
+        w32(dst, eo[0]);
+        w32(dst + 4, eo[1]);
+        w32(dst + 8, eo[2]);
+        w32(energy_amount, eo[3]);
     } else {
         w32(energy, 0);
         w32(energy_amount, 0);
     }
     if nm != 0 {
-        let a = metal_list.wrapping_add(mp.wrapping_mul(16));
         let dst = r32(metal);
-        w32(dst, r32(a));
-        w32(dst + 4, r32(a + 4));
-        w32(dst + 8, r32(a + 8));
-        w32(metal_amount, r32(a + 12));
+        w32(dst, mo[0]);
+        w32(dst + 4, mo[1]);
+        w32(dst + 8, mo[2]);
+        w32(metal_amount, mo[3]);
     } else {
         w32(metal, 0);
         w32(metal_amount, 0);

@@ -5,4 +5,4 @@ cargo rustc --release --target wasm32-unknown-unknown -- -C linker="$PWD/ld-wrap
  -C link-arg=--import-memory -C link-arg=--import-table -C link-arg=--global-base=557056 -C link-arg=--table-base=400 \
  -C link-arg=--no-entry -C link-arg=-zstack-size=4096 -C link-arg=--gc-sections
 cp target/wasm32-unknown-unknown/release/map.wasm target/map-raw.wasm
-python3 -I /data/tools/wasm_fuel.py target/map-raw.wasm -o module.wasm
+python3 -I "${WASM_FUEL:-/data/tools/wasm_fuel.py}" target/map-raw.wasm -o module.wasm

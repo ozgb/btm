@@ -3,9 +3,9 @@
 ## What was built
 
 `src/lib.rs` is a `no_std` Rust crate (`cdylib`, `panic = "abort"`) that exports the 15 slots of the map manifest
-entry in the manifest's order, the four data words (`g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase`) and the two
+entry (the linker orders the export section by symbol, not by the manifest's list; the names are what the loader reads), the four data words (`g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase`) and the two
 fuel functions. `build.sh` links it at `data_base` 557056 and `table_base` 400 with a 4096-byte stack, then runs the
-kit's `wasm_fuel.py` (rule v1). `ld-wrap.sh` drops the `--stack-first`, `--allow-undefined` and `__heap_base`
+kit's `wasm_fuel.py` (rule v1). `ld-wrap.sh` adds `--no-stack-first` when the linker lists it, and drops the `--stack-first`, `--allow-undefined` and `__heap_base`
 /`__data_end` arguments that rustc adds.
 
 - Every block record is read through unaligned accesses at the offsets of `layout.json` (cells are 13 bytes).
@@ -27,8 +27,19 @@ kit's `wasm_fuel.py` (rule v1). `ld-wrap.sh` drops the `--stack-first`, `--allow
   `MAP_RECLAIM_FOOTPRINT`, `MAP_LOAD_PATH_LOCK_STAMP`, the claim re-claim paths, the off-map bucket, the player
   visibility test or the move tests, so those were written from the text alone and are unverified by the gate.
 - The `y` of a reclaim scan point (Q21) is the `y` of `pos`.
-- A reclaim list whose allocation returned 0 is not written (the spec leaves a null allocation undefined).
 - A rebuild of a class with null `cells` writes nothing (the spec does not say; writing would hit block offset 0).
-- The installed `wasm-ld` has no `--no-stack-first` (the ABI text says it should); the default there already puts the
-  stack after the data, and the linked `__stack_pointer` (561184) lies inside the window.
+- The installed `wasm-ld` has no `--no-stack-first`; the default there already puts the stack after the data, and the
+  linked `__stack_pointer` (561184) lies inside the window. `ld-wrap.sh` passes the option to a linker that has it.
 - The kit has no map budgets (the entry is blocked), so fuel and size are not judged.
+
+## Review answers
+
+1. `--no-stack-first`: fixed in `ld-wrap.sh` (same `--help` test as the other modules).
+2. Pick scan wrap: a step of 0x300000 that would pass `i32::MAX` now ends the row (or the scan) instead of wrapping
+   into an endless loop. Spec X36 is silent on that case; no recording calls the pick.
+3. Pick outputs: the picked entries are copied into locals before the two frees; the import order is unchanged.
+4. The dead null-allocation branches are removed (`SimAlloc` never returns null, ABI 9.3).
+5. Export order: the note is corrected. The linker fixes the order; the loader looks exports up by name.
+6. Incremental rebuild cost: left as is. Fuel is not judged for this blocked entry, and a grown block is at most
+   (fx+2)×(fz+2) cells; making it incremental would risk the recorded behaviour for no judged gain.
+7. `build.sh` takes the fuel tool from `$WASM_FUEL` (default `/data/tools/wasm_fuel.py`); artifacts stay ignored.
