@@ -1238,7 +1238,11 @@ Returns the unit's stamp (as an int), or 0 when `Unit.motion` is null. Nothing i
 - **X36, the reclaim scan.** *w* is the signed high 16 bits of `range`; *w*² is a 32-bit product; ⌊*w*² / 256⌋
   is exact (*w*² ≥ 0). *h* is the signed division of `range` by 2, rounding toward zero. Each z and x is computed at
   32 bits, and the loop tests z ≤ `pos.z` + *h* and x ≤ `pos.x` + *h* as signed 32-bit comparisons, with the bounds
-  computed at 32 bits. A negative `range` gives no scan point. The allocation size *c* × 16 is unsigned.
+  computed at 32 bits. A negative `range` gives no scan point. The allocation size *c* × 16 is unsigned. Each
+  step of 0x300000 wraps at 32 bits too: when the last z of the scan (or the last x of a row) is above
+  0x7fffffff − 0x300000, the step past it wraps to a negative value, which is still within the bound, and the
+  scan goes on past the wrap. Such a position is outside the contract: no recording calls the pick at such a
+  position, and a module may behave in any way for it.
 - **X37, the reclaim draws.** Each draw of the pick is one `services.RandomInt(n)`, with *n* the length of the
   list, giving an index 0 to *n* − 1 (0 for *n* below 2), used unscaled. A list of length 1 still makes its three
   calls. The draws are three for the energy list, then three for the metal list, each list's only when it isn't empty:
