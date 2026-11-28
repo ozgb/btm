@@ -120,7 +120,8 @@ known value yet (`docs/replay-format.md`, "Lines"), not writes of the module; th
 already in the block. A field the recorded write set leaves out (the `active` of `PLAYERS_DEACTIVATE_CONDITIONS`)
 has no `w` line, and a later call's `r` line shows its value. A `c` line under `map.UnitsInRange` doesn't occur:
 the module takes ids, not a callback. The recordings name some fields by other spellings of the same bytes: a radius condition's `pos` as `posX`,
-`posY` and `posZ`, and the `PlayerInfo` bits by their words `flags_97_wide`, `flags` and `flags_9d_wide`. A
+`posY` and `posZ`, and the `PlayerInfo` bits by their words `flags_97_wide` (bit 0 `host`), `flags` (bit 6 `bit6`, bit 7
+`watching`) and `flags_9d_wide` (bit 1 `f9d_1`). A
 unit id *n* names slot *n* of the unit table (`Game.units` plus 280·*n*),
 which a recording writes `Unit#n`.
 
@@ -200,8 +201,8 @@ restores them, `SavePlayers` stores them):
 | 4 to 43 | the *update clock* of players 0 to 9, ten unsigned 32-bit ticks (player *p* at 4 + 4*p*) |
 | 44 to 83 | the *win clock* of players 0 to 9, ten 32-bit ticks; the module's slots never read or write it |
 
-**`Player`** (the array `Game.players`, 331 bytes apart from offset 7011; index 10 is the record past the ten
-players, `Game.players_1b63`): `rank` (byte), `energy`, `metal` (floats; written by `PLAYERS_SET_STORE`),
+**`Player`** (the array `Game.players`, 331 bytes apart from offset 7011; the record past the ten players is
+element 10 of `Game.players_1b63`, the 11-element array at the same offset): `rank` (byte), `energy`, `metal` (floats; written by `PLAYERS_SET_STORE`),
 `type` (byte), `energyStorageBonus`, `metalStorageBonus` (floats) and bit 0 of `flags` (the respawn).
 
 **`PlayerInfo`** (a player's `info`, a `Ref`): `kind` (byte, `PLAYERS_SET_TYPE`) and `bit6` (info flag 0x40).
@@ -296,7 +297,8 @@ The region, the conditions and the fields above. Nothing else: the module keeps 
 
 Within one call, only the order of import calls is observable. The block writes are compared at the end of
 the call, so the order they are listed in carries no meaning, except where a later read in the same call sees
-an earlier write or an effect's synchronous delivery, as said.
+an earlier write, and except that every write this spec places before an `Emit` is in the block when that
+`Emit` delivers its effect, since the subscriber reads the block (watch mode and the respawn, below).
 
 ### `RegionSize(info)`
 
@@ -357,12 +359,14 @@ used.
 *W* holds when *g2* is 3, *L*'s `rejectReason` is 0, and `Game.players[h].info.watching` is set or there is at
 least one active AI player.
 
-RECALCULATE is a `LosRadarRecalculate` (`kind` 133, `reset` 1, 8 bytes); the two events carry `[L]`. The
-count of combat players is taken after *L*'s info flag 0x40 is set (the count of active AI players doesn't
+RECALCULATE is a `LosRadarRecalculate` (`kind` 133, `reset` 1, 8 bytes); the two events carry `[L]`. *L*'s
+info flag 0x40 and the map flags are written before the RECALCULATE `Emit`, which los_radar delivers at once and which
+reads them; `endGameVictory` is written after the last import. The count of combat players is taken after
+*L*'s info flag 0x40 is set (the count of active AI players doesn't
 read the flag).
 
-**The respawn** (player *L*; *h* is the host slot and *H* is `Game.players[h].info`, the record past the ten
-players when *h* is 10), with these imports in order:
+**The respawn** (player *L*; *h* is the host slot and *H* is `Game.players[h].info`, for *h* 10 the `info` of
+the record past the ten players, element 10 of `Game.players_1b63`), with these imports in order:
 
 1. `units.FindUnitTypeId` with `Game.sideDefs[s].commander`, *s* the `side` of player *L*'s info; *t* is the
    result's low 16 bits, and *d* the unit type *t* of `Game.defs` (`Game.defs` plus 585·*t*, for any *t*, 0
@@ -382,7 +386,8 @@ players when *h* is 10), with these imports in order:
    for the mission's figures. After the 9999th try the last *P* is taken.
 3. `units.CreateUnit(L, t, P, 1, 1, 0)` gives the unit *u*. Whatever it gives, player *L*'s `flags` gets bit 0,
    its `energyStorageBonus` becomes the float of max(*H*.energy·100, 200) and its `metalStorageBonus` the float
-   of max(*H*.metal·100, 200). Then, for a *u* that is not null, `Emit` INCOME (`EconomyIncome`, 24 bytes: `kind` 4, `player`
+   of max(*H*.metal·100, 200), all three after `units.CreateUnit` returns and before the first `Emit`. Then, for a
+*u* that is not null, `Emit` INCOME (`EconomyIncome`, 24 bytes: `kind` 4, `player`
    *u*.`playerIndex`, `unit` the block offset of *u*, `resources` 1, `energy` float(*H*.energy)·100.0, `metal`
    0.0), `Emit` INCOME (`resources` 2, `energy` 0.0, `metal` float(*H*.metal)·100.0), `Emit` RECALCULATE
    (`reset` 1), and `RecordSimEvent` FOCUS_COMMANDER `[1]`. What follows a null *u* is not defined by the
@@ -417,7 +422,7 @@ is still in (*L* and *i* included). After every *i*, the result is 1.
 | --- | --- | --- |
 | `VictoryDestroyAllUnits` | `Game.field_1df2` is 0 | when met: celebrate |
 | `VictoryBuildUnitType` | `satisfied` is not 0, or becomes so | when `satisfied` is 0: if `id` is 0, `units.FindUnitTypeId(name)` and `id` becomes its 16-bit result; then a scan of player 0's slice: a unit whose `unitDefIndex` equals `id` and whose `buildLeft` is ±0.0 sets `satisfied` to 1 and celebrates; the scan stops once `satisfied` is not 0 |
-| `VictoryMoveUnitToRadius` | `satisfied` is not 0 after the visits | when `pos.y` is 0x12345678: `los_radar.ClampWorldPosToTerrain` with the x and z of `pos` and `pos` itself as the output. Then `map.UnitsInRange(pos, radius, k, ids, 256)` with *k* 0, 256, 512 and so on, while each answer is 256; each id *n* of an answer, in order, visits unit slot *n* of `Game.units`: a unit with `playerIndex` 0, whose type matches `name` (any type when `name` is empty) and that can be counted sets `satisfied` to 1 and celebrates. Every id of every answer is visited |
+| `VictoryMoveUnitToRadius` | `satisfied` is not 0 after the visits | when `pos.y` is 0x12345678: `los_radar.ClampWorldPosToTerrain` with the x and z of `pos` and `pos` itself as the output. Then `map.UnitsInRange(pos, radius, k, ids, 256)` with *k* 0, 256, 512 and so on, while each answer is 256; each id *n* of the ids an answer gives (as many as its result), in order, visits unit slot *n* of `Game.units`: a unit with `playerIndex` 0, whose type matches `name` (any type when `name` is empty) and that can be counted sets `satisfied` to 1 and celebrates. Every id of every answer is visited |
 | `VictoryUnitTypePassesX` (`Z`) | `satisfied` is not 0, or becomes so | when `satisfied` is 0, a scan of player 0's slice: a unit whose type matches `name` (any when empty) and whose `cell.x` (`cell.y`) is within 2 of `x` (`z`) sets `satisfied` and celebrates; stop once set |
 | `VictoryTimerRunsOut`, `DefeatDeathTimerRunsOut` | `Game.ticks` ≥ `endTick`, both unsigned | none |
 | `DefeatAllUnitsKilled` | no unit of player 0's slice can be counted | `satisfied` becomes 1 when it is met, 0 when it isn't |
@@ -468,7 +473,7 @@ object. By kind:
 | `PLAYERS_SET_CONTROL` | `player` is above 9, or the player doesn't play | `localPlayer` and `playerIndex` become `player` | 1 |
 | `PLAYERS_SET_VIEW` | as SET_CONTROL | `playerIndex` becomes `player` | 1 |
 | `PLAYERS_COMPACT_RANKS` | `g_quirks.rankCompactionPerTick` is not 0 | the rank pass below | 1 |
-| any other kind | always | none | 0 |
+| any other kind (`ECONOMY_EFFECT_SHARE` included: the engine turns economy's SHARE into the announced `PLAYERS_TRANSFER` below before it reaches `Apply`) | always | none | 0 |
 
 A field the table doesn't use is not read: the `unit` of a kind that names none is ignored.
 
@@ -561,7 +566,8 @@ The other subsystems' steps need imports the entry doesn't list (K5); no recordi
   `unitCount` and `numPlayers` are unsigned 16 bits; `rank` is an unsigned byte compared with the place *i*.
   `numLeftToKill`, `numUnits` and `count` are signed 32-bit; `numLeftToKill` of `DefeatUnitTypeKilled` can go
   below 0.
-- **Ids:** `units.FindUnitTypeId` returns an unsigned 16-bit value (ABI 7: zero-extended); `id` stores its low 16
+- **Ids:** `units.FindUnitTypeId` returns an unsigned 16-bit value (ABI 7: zero-extended), 0 for a name with no
+  type (`interfaces/units.h`), which the module uses as it is; `id` stores its low 16
   bits, and a unit's `unitDefIndex` is compared with `id` as 16-bit values.
 - **`buildLeft`** is compared with 0.0 as a float: −0.0 counts as 0, a NaN does not.
 
