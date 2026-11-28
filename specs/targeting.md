@@ -25,36 +25,42 @@ weapon a unit fires first, and searches the enemies los_radar lists for a unit, 
 The events are those of `TargetingEventKind` in the header: `TARGETING_SET_UNIT` (96), `TARGETING_SET_POS`
 (97), `TARGETING_CLEAR` (98), `TARGETING_RESET` (99) and `TARGETING_LOAD` (100), called SET_UNIT, SET_POS,
 CLEAR, RESET and LOAD below.
-Other modules publish them; the engine holds the inbox and delivers it, through `Apply`, before each call of
+Other modules publish them, and the route table (`data/routes.csv`; `docs/schedule.md`, "Routes") says
+which and how: SET_UNIT and CLEAR from orders and from ai, SET_POS from orders and CLEAR from weapons are
+*synchronous*, delivered through `Apply` before the publish returns (after what targeting's inbox holds);
+SET_POS from ai, and RESET and LOAD from units, are *queued* in targeting's inbox, or delivered at once when
+published outside the tick. The engine holds the inbox and delivers it, through `Apply`, before each call of
 `GetWeaponTargetUnit`, `GetWeaponTargetPos`, `FindWeaponTarget` and `FindBestTargetIfFireAtWill`, and at
-each phase boundary (the header; `docs/schedule.md` lists `targeting.Apply` once in every phase and in the
-work after the phases). An
-event may also be delivered as soon as it is published, inside its publisher's call (ABI section 6.1: the
-scheduler delivers an event at once or from the inbox). Each `Apply` takes effect at once: an event's
-changes are all made in its `Apply`.
+the end of each phase and of the tick (the header; `docs/schedule.md` lists `targeting.Apply` once in every
+phase and in the work after the phases). Each `Apply` takes effect at once: an event's changes are all made
+in its `Apply`.
 
 `ChooseWeapon` takes the unit as its only argument, as the header lists.
 
 ### The manifest entry
 
-The kit's manifest (`wasm/modules.json`) carries this module's interface major, 4 (`majors.targeting`), and
-the majors of its import groups. It has no build entry for it, and its `signatures` list only the names the
-manifest's modules use (ABI section 10.1), so they hold none of this module's slots and, of its imports, only
-`services.RandomInt` and `services.Emit`: the kinds below, in the terms of ABI section 7, are the ones to
-build against. A module's build sets its `data_base` and `table_base` (within the windows and table ranges of
-ABI sections 2.2 and 2.3), its `slots`, and its fuel and size budgets (ABI sections 11.1 and 11.3: a budget
-belongs to its build, set from the build's own gate runs). This section gives the rest of the entry the module
-must have.
+The kit's manifest (`wasm/modules.json`) has an entry for targeting, which `tools/wasm_glue.py` writes from the
+interface header, the replay schema and the recordings (ABI section 4.2), and its `signatures` give the kinds
+of every slot and import below (ABI section 10.1). The entry is `blocked` (`true` in the kit: the default does
+not build to WASM yet), so it has no `fuel_budget` or `size_budget`, and the gate judges a module of it on its
+recordings alone: ABI section 15, the `recordings` route, one replay of each recording of
+`tests/replay/targeting/` against the module, with `scenarios` and `budgets` not judged. The module must match
+the entry:
 
 - `name` and `interface`: `targeting`.
+- `data_base` 393216 (0x60000) and `table_base` 240: entry 6 of the game manifest (ABI sections 2.2 and 16),
+  whose window is the manifest's `window`, 32768 bytes.
 - `exports`, in this order: `Apply`, `GetWeaponTargetUnit`, `GetWeaponTargetPos`, `FindWeaponTarget`,
-  `FindBestTargetIfFireAtWill`, `ChooseWeapon`, `SavedTargetPair`.
-- `data`: `g_game`, `g_blockBase` (ABI 8.2).
+  `FindBestTargetIfFireAtWill`, `ChooseWeapon`, `SavedTargetPair`. The entry has no `engine` slots (ABI
+  section 6), so the module exports all seven.
+- `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI section 8.2), the four data words every
+  module exports. The module uses `g_game` and `g_blockBase`.
 - `majors`: the majors the module is built against (ABI 10.1, the values of the manifest's `majors`):
   `targeting` 4, and for its import groups `map` 9, `scripts` 3, `weapons` 4, `los_radar` 5, `services` 4.
 - `publishes`: `{"112": 12}` (ABI section 4.2): the one kind the module publishes through `services.Emit`,
   CLEARED (`TARGETING_EFFECT_CLEARED`, 112), with its payload size, 12 bytes, the size of
-  `TargetingEventHeader` in `interfaces/targeting.h` (an `int`, an `unsigned int` and an `int`).
+  `TargetingEventHeader` in `interfaces/targeting.h` (an `int`, an `unsigned int` and an `int`). The route
+  table has one row for it: targeting to scripts, synchronous (`data/routes.csv`).
 - Slot kinds:
 
 | Slot | Kinds |
@@ -71,8 +77,8 @@ must have.
 
 | Import | Kinds | Used for |
 | --- | --- | --- |
-| `map.GetGroundHeight` | `[linear] -> int` | the height of a ground target (`interfaces/map.h`, version 9.0) |
-| `scripts.GetSweetSpot` | `[block, linear] -> void` | the point to aim at on a target unit |
+| `map.GetGroundHeight` | `[linear] -> int` | the height of a ground target (`interfaces/map.h`, version 9.2) |
+| `scripts.GetSweetSpot` | `[linear, linear] -> void` | the point to aim at on a target unit, given as its address |
 | `weapons.GetWeaponRange` | `[block, int] -> int` | the search radius |
 | `weapons.WeaponCanReachUnit` | `[block, block, int] -> int` | whether a candidate can be hit |
 | `los_radar.GetVisibleEnemiesInRadius` | `[int, linear, int, int, linear, int] -> int` | the candidates of a search |
@@ -81,11 +87,9 @@ must have.
 
   The kinds of the services imports are those of ABI section 9.3.
 - Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and
-  `__fuel_get`. Its fuel budget and `size_budget` are its build's
-  (ABI sections 11.1 and 11.3), not the kit's. Its stack is the manifest's `stack_size`,
-  4096 bytes (ABI sections 2.2 and 4.1). How a manifest sets the budget is in the kit's
-  `docs/module-abi.md`, section 11.3 (the game manifest's budget is ten times the most fuel any tick of the
-  conformity gate's scenarios burns).
+  `__fuel_get`. The entry, being `blocked`, has no budgets: the gate replays the module with the largest fuel
+  budget of ABI section 11.3, 2147483647 a tick, and does not judge its size (ABI section 15, "A blocked entry
+  is judged without budgets"). Its stack is the manifest's `stack_size`, 4096 bytes (ABI sections 2.2 and 4.1).
 - Hooks: the header names the hook `FilterTargets` for `FindWeaponTarget` and
   `FindBestTargetIfFireAtWill`, and `VeterancyLevel` for `GetWeaponTargetPos`; every other slot has
   `Hooks: none`. ABI section 6 ("Hook points") says such a line fixes only where a hook runs, and that
@@ -115,13 +119,17 @@ must have.
   has exactly its kind's payload size. `unit` and `target` are stored pointers, so they are offsets from the
   block's base (ABI section 7.1; the recordings write them as `Unit#N` or `null`, the `ref` field kind of
   `docs/replay-format.md`). The unit is at `g_blockBase` plus the offset. The module reads no byte of the
-  event at or past `size`.
+  event at or past `size`. The in-repo host copies at most the largest payload of targeting's inbox kinds,
+  24 bytes (SET_POS), and passes the smaller of that and the size it was given (ABI section 6), so a module
+  there is never given a `size` above 24.
 - **The effect** the module publishes is a `TargetingEventHeader` alone, 12 bytes, in the module's own
   memory (its stack or its statics), published as `services.Emit(effect, 12)` (ABI section 6.1: the
   publisher passes the payload's size). The CLEARED effect of a unit *u* and a weapon *w* has `kind` 112
   (`TARGETING_EFFECT_CLEARED`), `unit` the block offset of *u* (its address less `g_blockBase`) and `weapon`
   *w*. The host puts it in targeting's outbox, the one of the manifest entry's `interface`, and refuses, as
-  an import error, a kind outside the entry's `publishes` table or a size other than 12 (ABI section 9.3).
+  an import error, a kind outside the entry's `publishes` table, a size other than 12, and the other faults
+  ABI section 9.3 lists for `Emit`. The engine delivers it as the route table says: to scripts, synchronous,
+  so before `services.Emit` returns (`data/routes.csv`).
   The recordings show each publication as `i services.Emit (112,Unit#3,0) 12`: the effect's value (`kind`,
   `unit` as a `Unit#N` ref, `weapon`) and its size, both compared (`docs/replay-format.md`, the `Emit`
   service). The header says what the subscribers do with it: the unit's script runs its TargetCleared
@@ -160,7 +168,8 @@ must have.
   statics. The stack is 4096 bytes with no guard below it (ABI section 2.2), room for at most 1024 offsets
   less the slot's own use of it. Statics are hashed after every tick of a test-mode run, and a hash that
   differs from the first is fatal (ABI section 12): a buffer in statics must hold the same bytes at the end
-  of every tick as at the end of the first. The window is all zero at instantiation (ABI section 2.2).
+  of every tick as at the end of the first. The window, 32768 bytes, holds the data, the statics and the
+  stack together, and is all zero at instantiation (ABI section 2.2).
   The recordings show the import as one line, `i los_radar.GetVisibleEnemiesInRadius`, whose arguments are
   the player index, `pos` written as `pos=(x,y,z)` (the three 32-bit coordinates), the radius and the flags,
   as in `i los_radar.GetVisibleEnemiesInRadius 1 pos=(221249536,65536,92274688) 200 0`. It has no buffer and
@@ -263,9 +272,10 @@ end of the call, so the order they are listed in here carries no meaning.
 In each slot, *u* is the unit, *w* the weapon (0, 1 or 2) and "the slot" is *u*'s weapon slot *w*. The
 engine never calls `GetWeaponTargetUnit`, `GetWeaponTargetPos` or `FindWeaponTarget` with a *w* (for
 `FindWeaponTarget`, its low 8 bits) above 2. An input *outside the contract* is one this spec sets no
-result for: such a *w*, and the inputs section 7 lists as outside the contract. A trap fails a scenario
-that reaches it (ABI section 13); the kit does not say whether the gate can reach any of these inputs
-(section 7, gaps).
+result for: such a *w*, and the inputs section 7 lists as outside the contract. A trap ends the game or the
+replay that reaches it (ABI section 13). While the entry is `blocked` the gate replays only the recordings
+(section 2), and none holds these inputs; the kit does not say whether a scenario can reach them once the
+module is judged on the scenarios too (section 7, gaps).
 
 *Publishing CLEARED* for *u* and *w* is the import `services.Emit(effect, 12)` with the CLEARED effect of *u*
 and *w* (section 2). It returns nothing, and the recordings show it as `i services.Emit (112,Unit#N,w) 12`,
@@ -295,10 +305,34 @@ result is the event's *outcome*.
 `pos[1]` is not read. A LOAD writes the two fields and nothing else: `u.netDirtyFlags` is kept, a
 TargetZ of −32768 is stored as it is (Q1 is SET_POS's alone), and no CLEARED is published. A SET_UNIT
 whose `t.id` is 0 leaves the slot with no target (section 3), with outcome 1. The `event` record is not
-written. A nonzero `event.unit` or `event.target` that is not the offset of a unit is outside the contract.
+written. A nonzero `event.unit` or `event.target` that is not a unit (below) is outside the contract for the
+module (section 7).
 A SET_UNIT reads `t.id` and nothing else of *t*: the target's own `netDirtyFlags` appears among the recorded
 reads (for example `r Unit#3.netDirtyFlags 1024` at tick 138 of `orders-guard-attacked`), is not changed,
 and no result depends on it.
+
+**The limits of each kind** (ozgb/btm#25). An event outside its kind's limits changes nothing, writes nothing,
+publishes nothing and does not trap. A nonzero block offset is *a unit* when it is the offset of a slot of the
+unit pool: from `Game.units` to `Game.unitsEnd`, the pool's last slot, in steps of 280, the size of `Unit`
+(`docs/replay-format.md`, the paragraph on `Game.unitsEnd`), whether or not the slot's unit is alive or holds
+a unit type.
+
+| Kind | `size` at least | `unit` | `weapon` | The payload |
+| --- | --- | --- | --- | --- |
+| SET_UNIT (96) | 16 | a unit | 0 to 2 | `target` a unit |
+| SET_POS (97) | 24 | a unit | 0 to 2 | `pos`: any three 32-bit values |
+| CLEAR (98) | 12 | a unit | 0 to 2 | none |
+| RESET (99) | 12 | a unit | 0 to 2 | none |
+| LOAD (100) | 20 | a unit | 0 to 2 | `xOrUnit` and `zOrSentinel`: any 32-bit values (section 5 keeps their low 16 bits) |
+
+No kind names a player. A kind other than these five is outside every limit. The module enforces every limit
+but *a unit* by the rows above, with outcome 0. Whether the host's delivery or the module checks that a nonzero
+`unit` or `target` is a unit is left open by ozgb/btm#25, which prefers delivery; this module does not check
+it: targeting's recordings carry neither `Game.unitsEnd` nor `Game.poolCount`, which the replayer derives the
+pool's end from (`docs/replay-format.md`, the paragraph on `Game.unitsEnd`), so a replay gives no pool end to
+check against (section 7, gaps). The CLEARED effect
+the module publishes is within its kind's limits: its `unit` is the unit of the event or slot call it answers,
+and its `weapon` 0 to 2.
 
 ### `GetWeaponTargetUnit(u, w)`
 
@@ -383,7 +417,8 @@ The slot's target as a saved game keeps it, one 32-bit word: TargetX's 16 bits i
 TargetZ's 16 bits in bits 16 to 31. A LOAD with `xOrUnit` = TargetX and `zOrSentinel` = TargetZ stores the
 same pair back. A slot with no target gives 0x80000000 (−2147483648 as a signed 32-bit result). No
 imports, no writes. The engine calls it outside the tick, while a game is saved; `save-targets` records
-12 calls, weapons 0 to 2 of four units (example 8). The gate also judges the saved game
+12 calls, weapons 0 to 2 of four units (example 8). While the entry is `blocked` the gate judges only
+those recorded calls (section 2); a gate run on the scenarios also judges the saved game
 (`docs/reference-traces.md`: the reference's saves of `save-midgame` and `save-targets` are stored, a save
 is compared with the reference's by decoded contents, and `load-midgame` and `load-targets` play on from the
 saves `save-midgame` and `save-targets` make in the same run).
@@ -556,7 +591,8 @@ Not recorded, and the kit gives no reason and does not say whether a scenario re
 - A unit target with a negative TargetX, or with a TargetX outside the unit pool: outside the contract.
 - A weapon index above 2 in `GetWeaponTargetUnit`, `GetWeaponTargetPos` or `SavedTargetPair`, and in
   `FindWeaponTarget` a weapon index whose low 8 bits (section 5) are above 2: outside the contract.
-- A nonzero `event.unit` or `event.target` that is not the offset of a unit: outside the contract.
+- An `Apply` whose `event.unit` or `event.target` is nonzero and not a unit (section 4): outside the contract
+  for the module, which ozgb/btm#25 may move to the host's delivery.
 - A ground target with a negative coordinate (section 5 gives the shift).
 - A `unitDefIndex` of 512 or more (a `UnitTypeSet` holds 512 bits) given to a set test, and a null
   `categories`, `weaponCategories`, `u.def`, `t.def` or `u.player`: outside the contract.
@@ -590,11 +626,15 @@ Recorded once, so a single recorded call or search checks it:
 
 Gaps in the kit, which this spec does not fill:
 
-- The inputs outside the contract (section 4): the kit does not say whether the gate can reach any of
-  them, and so whether a module's result or trap there can be judged.
+- The inputs outside the contract (section 4): no recording holds one, and the kit does not say whether a
+  scenario can reach any of them once the entry is no longer `blocked`, and so whether a module's result or
+  trap there can be judged.
 - The candidate list's maximum: ABI section 7.3 bounds it by the slots of the unit pool, but the kit gives
   no fixed number of them that a module must hold, against the 4096-byte stack of ABI section 2.2
   (section 2).
+- The pool's end in the replay: targeting's recordings carry neither `Game.unitsEnd` nor `Game.poolCount`,
+  so the kit does not say that a replay's block holds the pool's end, and a module cannot rely on it there to
+  check that a nonzero `event.unit` or `event.target` is a unit (section 4, the limits of each kind).
 - The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
   result and the stream words advance as the game's do, and ABI section 9.3 gives the range-below-2 case,
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
@@ -613,5 +653,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v33` and `reference-traces-v33`, the versions the gate judges against. Interface
+Kit `interfaces-v68` and `reference-traces-v55`, the versions the gate judges against. Interface
 `targeting` 4.0.
