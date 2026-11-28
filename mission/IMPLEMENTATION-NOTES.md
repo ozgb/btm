@@ -39,4 +39,4 @@ and `g_blockBase`, using the offsets of `layout.json`. The engine's slots are no
 4. Nit: `FEATURE_Z` renamed `FEATURE_Y` (offset 132 is `y`); `FEATURE_NAME = 0` added and used for the `name` address.
 5. Nit, `TABLE_ANCHOR`: the refusal came from the gate's loader ("has no data segment, so its data and stack cannot be placed", req1), and req2 refused a missing table import. Whether the anchor itself is needed beyond the data segment is untested; kept because it is harmless.
 6. Nit, start function zeroing the bss: kept; it does not read the data words and the loader zeroes the window anyway (ABI 2.2, 3).
-Verdict for this round: see below.
+7. req17: equal on console-ilose and long/mission-build-unit.
