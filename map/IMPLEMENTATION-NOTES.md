@@ -21,6 +21,7 @@ kit's `wasm_fuel.py` (rule v1). `ld-wrap.sh` adds `--no-stack-first` when the li
 
 1. req1 (first build): `equal` on all five recordings of `tests/replay/map/` (scope `recordings`, budgets not judged).
 2. req1 (after the review fixes, resubmitted as req1 in a fresh outbox): `equal` on all five recordings.
+3. req1 (after merging the spec's X36 wrap text and the second review): `equal` on all five recordings.
 
 ## Where the spec or kit was unclear
 
@@ -44,3 +45,13 @@ kit's `wasm_fuel.py` (rule v1). `ld-wrap.sh` adds `--no-stack-first` when the li
 6. Incremental rebuild cost: left as is. Fuel is not judged for this blocked entry, and a grown block is at most
    (fx+2)×(fz+2) cells; making it incremental would risk the recorded behaviour for no judged gain.
 7. `build.sh` takes the fuel tool from `$WASM_FUEL` (default `/data/tools/wasm_fuel.py`); artifacts stay ignored.
+
+## Second review answers
+
+1. Pick scan wrap: the merged spec (X36) now says a position whose scan step wraps is outside the contract and a module may
+   behave in any way. The module keeps its stop at the wrap (no endless scan); this is a deliberate departure from the
+   wrapping text, allowed by that sentence.
+2. `do_removal` now skips cells outside `0..Game.width` x `0..Game.height`, so a removal or clear of a unit with an off-map
+   footprint and a null bucket cannot write outside `Game.cells`. The spec is silent; in-map cells behave as before.
+3. The three dead guards on `SimAlloc` results are removed.
+4. The panic handler executes `unreachable`, so a panic traps at once.

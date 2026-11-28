@@ -43,7 +43,7 @@ static TABLE: [fn(); 1] = [noop];
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
-    loop {}
+    core::arch::wasm32::unreachable()
 }
 
 // ---------------------------------------------------------------- memory
@@ -676,7 +676,12 @@ fn do_removal(e: &Env, uo: u32) {
             let mut col = 0;
             while col < w {
                 let k = row * w + col;
-                let ca = e.cell_xy(x + col, y + row);
+                let (cx, cy) = (x + col, y + row);
+                if cx < 0 || cx >= e.w || cy < 0 || cy >= e.h {
+                    col += 1;
+                    continue;
+                }
+                let ca = e.cell_xy(cx, cy);
                 if fl & F_STRUCT != 0 {
                     if r16(ca) == id {
                         w16(ca, 0);
@@ -1404,7 +1409,7 @@ pub extern "C" fn BuildAllPassMaps(limits: u32, count: i32) {
             let a2 = fz.wrapping_add(height);
             let s = if a1 > a2 { a1 } else { a2 };
             let scratch = unsafe { svc_alloc(s.wrapping_add(3) as i32) };
-            if n != 0 && scratch != 0 {
+            if n != 0 {
                 full_build(k, scratch);
             }
             unsafe { svc_free(scratch) };
@@ -1627,12 +1632,8 @@ pub extern "C" fn PickRandomReclaimableResourcesInRadius(
         let a = metal_list.wrapping_add(mp.wrapping_mul(16));
         mo = [r32(a), r32(a + 4), r32(a + 8), r32(a + 12)];
     }
-    if energy_list != 0 {
-        unsafe { svc_free(energy_list) };
-    }
-    if metal_list != 0 {
-        unsafe { svc_free(metal_list) };
-    }
+    unsafe { svc_free(energy_list) };
+    unsafe { svc_free(metal_list) };
     if ne != 0 {
         let dst = r32(energy);
         w32(dst, eo[0]);
