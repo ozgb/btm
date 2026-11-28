@@ -124,9 +124,10 @@ field 4 bytes (a signed 32-bit int unless it says unsigned or float):
 
 - **`EconMapInfo`** (`RegionSize`, `Init`), 8 bytes: `unitSlots` (0), `playerCount` (4). The recordings
   write it as `a map (2501,2)` in that order. `playerCount` is not used.
-- **The region** (`Init`): the address of its first byte in the block, and `size`, its length, the value
-  `RegionSize` gave for the same map. The recordings give its block offset, `a region 6078584`, and
-  `a size 120048`.
+- **The region** (`Init`): a `block` argument, the linear address of its first byte in the block (ABI 7.1:
+  a pointer argument is an address), the same address the data word `g_region` holds from then on; and
+  `size`, its length, the value `RegionSize` gave for the same map. The recordings print the region as
+  its block offset, the address less `g_blockBase` (`a region 6078584`), and `a size 120048`.
 - **An event** (`Apply`): the address of an `EconomyEventHeader` and the size of its payload. The header
   is 12 bytes: `kind` (0), `player` (4), `unit` (8, an `EconUnit`). The payloads of the header file:
   `EconomyLoad` (60 bytes: the header, then `account`, an `EconAccount` of 48 bytes at 12),
@@ -183,7 +184,9 @@ of this spec are economy's own inbox kinds and effect kinds (`EconomyEventKind`,
   `totalEnergyProduced`, `totalMetalProduced`, `totalEnergyConsumed`, `totalMetalConsumed`,
   `energyWasted`, `metalWasted` (64-bit floats).
 - **`Unit.extraction`**: a 32-bit float stored in the 4 bytes the layout types as `int` (byte 88 of
-  `Unit`), the metal an extractor makes per settlement before any handicap.
+  `Unit`), the figure `interfaces/economy.h` calls the metal an extractor makes per tick. Each settlement
+  in which the extractor is funded adds it once, with the handicap, to its account's `metal.make`
+  (section 4).
 
 ### Read
 
@@ -264,7 +267,7 @@ below.
 | `event.unit` | Imports | Writes |
 | --- | --- | --- |
 | not 0 | `econworld.UnitSlot(event.unit)` | the unit's account: all 48 bytes become 0 |
-| 0 | none | the account of player `event.player`: its twelve floats become +0.0, and its `player` becomes the block offset of `Game.players[`*i*`]`, where *i* = `Game.players[event.player].index` (0 to 255): the offset of `Game` from the block's base, plus 7011, plus 331 *i* |
+| 0 | none | the account of player `event.player`: its twelve floats become +0.0, and its `player` becomes the block offset of `Game.players[`*i*`]`, where *i* = `Game.players[event.player].index` (0 to 255): the value of `g_game` less the value of `g_blockBase`, plus 7011, plus 331 *i* |
 
 **LOAD (1).** Imports `econworld.UnitSlot(event.unit)`. The unit's account becomes the 48 bytes of
 `event.account`. Outcome 1.
@@ -445,14 +448,21 @@ call in this state, for each resource, with the ratios *rs* and *rp* of that res
 - `make`, `use` and `usePaid` are +0.0.
 
 A walk with no unit in play makes only its walk imports, and the player part runs as for any walk, with
-the sums before *e* at +0.0. A *last* below the first *u* has no slots at all. A null *p*.`econ` is
-outside the contract.
+the sums before *e* at +0.0. A *last* below the first *u* has no slots at all.
+
+**Outside the contract** (the engine never calls so, and no recording does): a `player` outside 0 to 9, a
+null *p*.`econ`, a `UnitSlot` outside 0 to `map.unitSlots` − 1, a *ui*`.player` outside 0 to 9, and a
+`FirstUnit` or `NextUnit` of 0 (the world view gives the slots of one player's block of the unit array, in
+order, and the walk ends at the first *u* above *last*). The same holds for `RequestGranted` and
+`UnitAccount` given a slot outside the range, and for `UpdateResourceSharing` given a `player` outside 0
+to 9. A module must not trap on any of them, and nothing it does there is judged.
 
 ### `UpdateResourceSharing(player)`
 
 *s* is `Game.players[player]`. The imports, and what each decides, in order:
 
-1. `econworld.SharingEnabled()`. When it returns 0, nothing more happens.
+1. `econworld.SharingEnabled()`. When it returns 0, nothing more happens. The import is the whole test:
+   the module reads no field of `Game` for it (`Game.netGameFlags` included).
 2. `econworld.PlayerInfo(player)`: *me*.
 3. `econworld.Tick()` (*T*). When *T* is a multiple of 60 (unsigned; 0 is one), the metal share and then
    the energy share, below.
@@ -496,8 +506,9 @@ float field or argument is a 32-bit float unless section 3 says 64.
 - ***Allow***: a stall allows a request when it is ≤ 0 or a NaN (Q2).
 - ***The handicap*** *h* of a player *q*: the import `econworld.PlayerInfo(q)`; when its `active` ≠ 0
   and its `controller` = 2, the import `econworld.Difficulty()`, and *h* is 0.5 when it returns 0 and
-  *h7* = f64(0.7) = 0x3fe6666666666666 when it returns 1. In every other case there is no handicap (and
-  no `Difficulty` import when the first test fails).
+  *h7* = f64(0.7) = 0x3fe6666666666666 when it returns 1; for any other result (2, 3, a negative
+  value) there is no handicap. When the first test fails there is no handicap and no `Difficulty`
+  import.
 - ***Income*** `I(F, v, h)`, where *v* is exact (a float, or an exact product of two floats; an
   integer enters as f32 of it): with a handicap, f32(f64(`F` + f64(*v* × *h*))); without one, f32(f64(`F` + *v*)).
 - **Products in `I`:** *w* × `windGenerator` and *d* × `tidalGenerator` are exact products, not rounded
@@ -514,7 +525,7 @@ float field or argument is a 32-bit float unless section 3 says 64.
 - **The new stall of an account:** with *s* = `stall` and *q* = `usePaid` (both 32-bit), the 64-bit
   values *x* = f64(*s* − f64(*rs* × *s*)) and *y* = f64(*q* − f64(*rp* × *q*)), and the new `stall` is
   f32(f64(*x* + *y*)).
-- **ftol, the cloak cost:** the 32-bit float is widened to 64 bits (exactly). A NaN, an infinity or a
+- **ftol, the cloak cost** (the kit's `ftol`, `runtime/vectors/README.md`; `runtime/ftol.c`): the 32-bit float is widened to 64 bits (exactly). A NaN, an infinity or a
   magnitude of 2^63 or more gives 0. Otherwise the value is truncated toward zero to an exact integer *t*,
   and the result is *t* mod 2^32, read as a signed 32-bit integer. Within the int range this is plain
   truncation; outside it the value wraps: 2147483648.0 gives −2147483648, 2147483649.0 gives
@@ -642,8 +653,8 @@ authority for each:
 - `UpdatePlayerEconomy`: a player whose *pinfo* has `controller` 3 (no CLOAK at all); the moving cloak
   cost, `cloakBlocked` set, a `workTime` above the tick, a cost that is not payable or not whole, and a
   NaN or out-of-range cost (Q7); a nonzero wind or tide (every recorded `Wind` and `Tide` is 0); a
-  handicap of 0.7 in a settlement (difficulty 1); a structure with a negative `energyUse` (Q5); a metal
-  maker; a unit that is not a structure and not active but moving; a unit of another player than
+  difficulty other than 0 and 1 for a computer player; a structure with a negative `energyUse` that
+  extracts or makes metal (Q5); a metal maker; a stall larger than *A* (*rs* below 1); a unit that is not a structure and not active but moving; a unit of another player than
   `player` (Q6); *pinfo*.`storage` 0; and the case *S* = 0 with *A* < 0.
 - `UpdateMetalExtraction` for a unit with no script, with a footprint of 0 or less, or with a wrap of *W*
   (Q9).
@@ -651,9 +662,16 @@ authority for each:
   player as its own partner in the share of the map (Q4), an index of 10, and the partner conditions
   `inGame` and `human` at 0 for an active remote player.
 - `GetEnergyUse` with a nonzero wind or tide.
-- The 64-bit roundings of *M*\*, *A*, *L* and the quotient *L* / *P*: a 32-bit reading of them gives the
-  same results on every recording, and so does adding *M* in place of *M*\* to `totalEnergyProduced`
-  (Q1). This spec is the authority for them.
+- `Apply`: an INCOME to a unit's account (every recorded INCOME is to a player's), an INCOME with
+  `resources` 0 or 3, a REQUEST to a player's own account, and a RESET of a player whose `index` is not
+  its own number.
+- `RequestGranted` with `resources` 2 or 0, and a `Spend` from a unit of another player than
+  `spend.player`.
+- **Roundings no recording pins.** Each of these, read another way, gives the same results on every
+  recording, so the gate cannot tell them apart and this spec is the only authority: the 64-bit
+  roundings of *M*\*, *A*, *L* and the quotient *L* / *P*; adding *M* in place of *M*\* to
+  `totalEnergyProduced` (Q1); the 64-bit handicap product in `I` (and the last bit of *h7*); the
+  64-bit intermediates of the new stall; and the 64-bit difference *B* − *C* of the wasted amount.
 
 ## 8. Kit version
 
