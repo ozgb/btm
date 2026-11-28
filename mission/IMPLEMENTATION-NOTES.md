@@ -8,6 +8,8 @@ and `g_blockBase`, using the offsets of `layout.json`. The engine's slots are no
 1. req1: refused, "has no data segment, so its data and stack cannot be placed".
 2. req2: refused, "the manifest lists env.__indirect_function_table, which the module does not import".
 3. req3: equal (recording mission/console-ilose; budgets not judged, the entry is blocked).
+4. req4-req14: earlier sessions (not recorded here).
+5. req15: equal on console-ilose and long/mission-build-unit, after the review fixes and the spec merge.
 
 ## Review answers (review.md)
 1. Risk: the notes were wrong; ABI 9.1/2.2/2.3 do require the table import, element segment and data segment. `TABLE_ANCHOR`
@@ -21,4 +23,4 @@ and `g_blockBase`, using the offsets of `layout.json`. The engine's slots are no
 ## Unclear points
 - Earlier note "the spec/ABI doesn't say the table import is required" was wrong (ABI 9.1); spec section 2 now says
   "no function imports", which resolves the conflict.
-- The verdict lists only `console-ilose`; `long/mission-build-unit` isn't reported (see req15 verdict below).
+- The verdict lists only `console-ilose`; `long/mission-build-unit` isn't reported (req15 reports both).
