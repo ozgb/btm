@@ -19,7 +19,8 @@ kit's `wasm_fuel.py` (rule v1). `ld-wrap.sh` adds `--no-stack-first` when the li
 
 ## Verdicts, in order
 
-1. req1: `equal` on all five recordings of `tests/replay/map/` (scope `recordings`, budgets not judged).
+1. req1 (first build): `equal` on all five recordings of `tests/replay/map/` (scope `recordings`, budgets not judged).
+2. req1 (after the review fixes, resubmitted as req1 in a fresh outbox): `equal` on all five recordings.
 
 ## Where the spec or kit was unclear
 
