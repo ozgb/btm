@@ -19,3 +19,7 @@ rustc's `--stack-first`/`--allow-undefined`. The only static that changes is `UN
 - A module with only zeroed statics and no function pointer is refused by the gate (data segment, table import);
   the ABI text does not say so directly.
 - No local replayer exists in the kit, so the arithmetic was written from the spec alone and checked only by reading.
+
+## Later verdicts
+- req3 to req5: no verdict (the host replayer was missing).
+- req10: `equal` on all 9 recordings (kit interfaces-v73 / reference-traces-v57). Question 1 in SPEC-QUESTIONS.md is answered: the spec's v72 pin stands.
