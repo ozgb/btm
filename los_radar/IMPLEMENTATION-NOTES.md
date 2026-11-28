@@ -32,7 +32,7 @@ eight listed plus `env.memory` and the table. I did not hand the branch over, si
 blocked on a spec question.
 
 ## Unclear points
-- The gate's `kit.interfaces` is `interfaces-v70`; the spec says v69 (and the branch `spec-los_radar` has no newer commit).
+- The kit's interface tag is `interfaces-v74`, as spec section 8 says (earlier notes saying v69/v70 are obsolete).
 - Where `unitSlots` comes from after `Init`: the spec says the limits use `Init`'s map, but no slot gets the map
   later, and the region size is not in a data word. I use `Game.poolCount` (WriteState does too).
 - Behaviours the spec leaves outside the contract are guarded rather than reproduced: a null `def`/`player` of a unit
@@ -55,12 +55,27 @@ Verdicts: req30 `differs` on `console-sight` at call 505 (tick 30), `Game.visibi
 verdict names; they show the gate's frame and frame table are all zero when read (Q-gate-3).
 
 Change from req10: the mask index reads `FrameTable.count` only when the index is 9 or more, since the reference
-reads it once (call 0) and the replayer's table has no `count` at call 505 (req10 asked for frame −1). With a real table
-the result is the spec's clamp.
-The module is otherwise unchanged and follows the spec; it is blocked on Q-gate-3.
+reads it once (call 0) and the replayer's table has no `count` at call 505 (req10 asked for frame −1). (Superseded by the review round below: the clamp now always reads the count.)
 
 ## Final: req60
 
 req60 (the module as committed, no change) is `equal` on `console-sight`, `console-units` and `sensors-sonar-jam`
 (the gate now maps the load data, so Q-gate-3 is answered). The verdict lists the rule notes `queries:
-services.GetGafFrame` and `unread_arguments: los_radar.GetMapCellAtPosition pos.y`; no spec question is open.
+services.GetGafFrame` and `unread_arguments: los_radar.GetMapCellAtPosition pos.y`; 
+
+## Review round (req70)
+
+req70 is `equal` on all three recordings. Changes for review.md:
+1. `Apply` takes `size` as `i32`; a negative size gives outcome 0.
+2. `mask_index` always clamps to `FrameTable.count - 1` (spec section 4); the Q-gate-3 workaround is gone.
+3. Not changed, open spec question: the unit-slot limit still uses `Game.poolCount`. `Init` gets `size` (so
+   `unitSlots` = size / 5) but spec section 3 says the module keeps nothing else, and storing it would add state
+   the spec does not list. The recordings cannot tell the two apart (`poolCount` = `unitSlots`). Spec question:
+   should the module keep `unitSlots` from `Init`, or is `poolCount` the intended bound?
+4. `Shutdown` writes 0 to `g_region` after reading it.
+5. Nit, not changed: the circle-mask loop in `add_sight` and `reveal` stays duplicated; the two copies differ in
+   what they do per pixel and the module is equal, so I did not risk a refactor. Extra `GetGafFrame` calls are
+   allowed by spec section 2.
+6. Notes brought up to date (this file).
+
+Open question: the `unitSlots` source (item 3), not blocking.

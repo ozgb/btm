@@ -81,3 +81,8 @@ not see; likewise `r FrameTable#1.count 10` is not in the table the module reads
 **Question.** Should the replayed frame at the address `GetGafFrame` returns hold the recorded fields and pixels, and the
 table at `Game.losTable` its `count`, at the time the module reads them? As it is, circle type (`mapFlags` bit 2 clear)
 cannot be matched by any module.
+
+## Q-slots: where does the unit-slot limit come from after Init?
+Spec section 4 bounds `unit` by `unitSlots` "of Init's map", but section 3 says the module keeps nothing else than the
+region, and `Init` gets only `size`. I use `Game.poolCount` (as `WriteState` does). Recordings agree. Should the
+module store `size / 5` from `Init`?

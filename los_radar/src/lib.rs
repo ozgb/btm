@@ -309,11 +309,9 @@ fn mask_index(s: &Sight) -> i32 {
     if i < 0 {
         i = 0;
     }
-    if i >= 9 {
-        let m = mask_count();
-        if i >= m - 1 {
-            i = m - 1;
-        }
+    let m = mask_count();
+    if i >= m - 1 {
+        i = m - 1;
     }
     i
 }
@@ -619,7 +617,7 @@ fn record_share(t: u32, v: u32) {
 }
 
 #[no_mangle]
-pub extern "C" fn Apply(ev: u32, size: u32) -> i32 {
+pub extern "C" fn Apply(ev: u32, size: i32) -> i32 {
     if size < 4 {
         return 0;
     }
@@ -632,7 +630,7 @@ pub extern "C" fn Apply(ev: u32, size: u32) -> i32 {
         138 => 16,
         _ => return 0,
     };
-    if size < need {
+    if size < need as i32 {
         return 0;
     }
     let g = game();
@@ -1609,7 +1607,9 @@ pub extern "C" fn Init(_map: u32, region: u32, _size: i32) {
 pub extern "C" fn Shutdown() -> u32 {
     let f = unsafe { read_volatile(&raw const NOP) };
     f();
-    region()
+    let r = region();
+    unsafe { g_region = 0 };
+    r
 }
 
 // A function pointer keeps the table import (ABI 9.1).
