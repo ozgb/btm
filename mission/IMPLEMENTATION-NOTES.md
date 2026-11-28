@@ -9,8 +9,16 @@ and `g_blockBase`, using the offsets of `layout.json`. The engine's slots are no
 2. req2: refused, "the manifest lists env.__indirect_function_table, which the module does not import".
 3. req3: equal (recording mission/console-ilose; budgets not judged, the entry is blocked).
 
+## Review answers (review.md)
+1. Risk: the notes were wrong; ABI 9.1/2.2/2.3 do require the table import, element segment and data segment. `TABLE_ANCHOR`
+   is the documented approach. `build.sh` now runs `wasm_fuel.py --check` and fails if the table import is missing.
+2. Panic handler is now `unreachable()`.
+3. All address arithmetic uses wrapping ops.
+4. Named constants (`RULE_SIZE`, `UNIT_SIZE`, `FEATURE_SIZE`, ...) and shared `rule_count()`/`rule_at()`.
+5. `GetMissionParams` and the tail of `GetMissionUnit` use `copy_nonoverlapping` (`memory.copy`).
+6. `build.sh` quotes the linker path; the tool path comes from `FUEL_TOOL` (default /data/tools/wasm_fuel.py).
+
 ## Unclear points
-- Neither the spec nor the ABI says the gate refuses a module with no data segment, or one that doesn't import the
-  table. A module of only queries has no function pointers, so it needs a static array holding a slot
-  (`TABLE_ANCHOR`) to get a table import, an element segment at 496 and a data segment.
-- The verdict lists only `console-ilose`; `long/mission-build-unit` isn't reported.
+- Earlier note "the spec/ABI doesn't say the table import is required" was wrong (ABI 9.1); spec section 2 now says
+  "no function imports", which resolves the conflict.
+- The verdict lists only `console-ilose`; `long/mission-build-unit` isn't reported (see req15 verdict below).

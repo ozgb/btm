@@ -23,6 +23,13 @@ const M_RULES: u32 = 3508;
 const M_RULE_COUNT: u32 = 3512;
 const M_FEATURES: u32 = 3516;
 const M_FEATURE_COUNT: u32 = 3520;
+const FIGURE_WORDS: u32 = 31;
+const NAME_SIZE: u32 = 256;
+const RULE_SIZE: u32 = 12;
+const UNIT_SIZE: u32 = 36;
+const FEATURE_SIZE: u32 = 136;
+const FEATURE_X: u32 = 128;
+const FEATURE_Z: u32 = 132;
 
 fn rd<T: Copy>(a: u32) -> T {
     unsafe { read_unaligned(a as *const T) }
@@ -39,6 +46,12 @@ fn game() -> u32 {
 fn rec() -> u32 {
     base().wrapping_add(rd::<u32>(game().wrapping_add(G_NET)))
 }
+fn rule_count() -> i32 {
+    rd(rec().wrapping_add(M_RULE_COUNT))
+}
+fn rule_at(i: i32) -> u32 {
+    addr(rd(rec().wrapping_add(M_RULES))).wrapping_add((i as u32).wrapping_mul(RULE_SIZE))
+}
 fn addr(r: u32) -> u32 {
     if r == 0 { 0 } else { base().wrapping_add(r) }
 }
@@ -53,34 +66,31 @@ pub extern "C" fn GetNameSlot(index: i32) -> u32 {
     if (index as u32) > 8 {
         return 0;
     }
-    let a = rec() + M_NAMES + index as u32 * 256;
+    let a = rec().wrapping_add(M_NAMES + index as u32 * NAME_SIZE);
     if rd::<u8>(a) != 0 { a } else { 0 }
 }
 
 #[no_mangle]
 pub extern "C" fn GetMissionIndex() -> i32 {
-    rd(rec() + M_INDEX)
+    rd(rec().wrapping_add(M_INDEX))
 }
 
 #[no_mangle]
 pub extern "C" fn GetMissionName() -> u32 {
-    rec() + M_MISSION_NAME
+    rec().wrapping_add(M_MISSION_NAME)
 }
 
 #[no_mangle]
 pub extern "C" fn HasMissionName() -> i32 {
-    (rd::<u8>(rec() + M_MISSION_NAME) != 0) as i32
+    (rd::<u8>(rec().wrapping_add(M_MISSION_NAME)) != 0) as i32
 }
 
 #[no_mangle]
 pub extern "C" fn CountStartPositions() -> i32 {
-    let r = rec();
-    let n: i32 = rd(r + M_RULE_COUNT);
-    let t = addr(rd(r + M_RULES));
     let mut c = 0;
     let mut i = 0;
-    while i < n {
-        if rd::<i32>(t + i as u32 * 12) == 1 {
+    while i < rule_count() {
+        if rd::<i32>(rule_at(i)) == 1 {
             c += 1;
         }
         i += 1;
@@ -90,18 +100,15 @@ pub extern "C" fn CountStartPositions() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn GetStartPosition(out: u32, id: i32) -> i32 {
-    let r = rec();
-    let n: i32 = rd(r + M_RULE_COUNT);
-    let t = addr(rd(r + M_RULES));
     let mut i = 0;
-    while i < n {
-        let p = t + i as u32 * 12;
-        if rd::<i32>(p) == 1 && rd::<i32>(p + 4) == id {
-            let x = rd::<i16>(p + 8) as i32;
-            let z = rd::<i16>(p + 10) as i32;
+    while i < rule_count() {
+        let p = rule_at(i);
+        if rd::<i32>(p) == 1 && rd::<i32>(p.wrapping_add(4)) == id {
+            let x = rd::<i16>(p.wrapping_add(8)) as i32;
+            let z = rd::<i16>(p.wrapping_add(10)) as i32;
             wr(out, x.wrapping_mul(65536));
-            wr(out + 4, 0i32);
-            wr(out + 8, z.wrapping_mul(65536));
+            wr(out.wrapping_add(4), 0i32);
+            wr(out.wrapping_add(8), z.wrapping_mul(65536));
             return 1;
         }
         i += 1;
@@ -111,58 +118,50 @@ pub extern "C" fn GetStartPosition(out: u32, id: i32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn GetMissionParams(out: u32) {
-    let r = rec() + M_FIGURES;
-    let mut i = 0;
-    while i < 31 {
-        wr(out + i * 4, rd::<u32>(r + i * 4));
-        i += 1;
-    }
+    let r = rec().wrapping_add(M_FIGURES);
+    unsafe { core::ptr::copy_nonoverlapping(r as *const u32, out as *mut u32, FIGURE_WORDS as usize) }
 }
 
 #[no_mangle]
 pub extern "C" fn CountMissionUnits() -> i32 {
-    rd(rec() + M_UNIT_COUNT)
+    rd(rec().wrapping_add(M_UNIT_COUNT))
 }
 
 #[no_mangle]
 pub extern "C" fn GetMissionUnit(index: i32, out: u32) -> i32 {
     let r = rec();
-    if index < 0 || index >= rd::<i32>(r + M_UNIT_COUNT) {
+    if index < 0 || index >= rd::<i32>(r.wrapping_add(M_UNIT_COUNT)) {
         return 0;
     }
-    let u = addr(rd(r + M_UNITS)) + index as u32 * 36;
+    let u = addr(rd(r.wrapping_add(M_UNITS))).wrapping_add((index as u32).wrapping_mul(UNIT_SIZE));
     wr(out, addr(rd(u)));
-    wr(out + 4, addr(rd(u + 4)));
-    wr(out + 8, addr(rd(u + 8)));
-    let mut o = 12;
-    while o < 36 {
-        wr(out + o, rd::<u32>(u + o));
-        o += 4;
-    }
+    wr(out.wrapping_add(4), addr(rd(u.wrapping_add(4))));
+    wr(out.wrapping_add(8), addr(rd(u.wrapping_add(8))));
+    unsafe { core::ptr::copy_nonoverlapping(u.wrapping_add(12) as *const u8, out.wrapping_add(12) as *mut u8, (UNIT_SIZE - 12) as usize) }
     1
 }
 
 #[no_mangle]
 pub extern "C" fn CountMissionFeatures() -> i32 {
-    rd(rec() + M_FEATURE_COUNT)
+    rd(rec().wrapping_add(M_FEATURE_COUNT))
 }
 
 #[no_mangle]
 pub extern "C" fn GetMissionFeature(index: i32, out: u32) -> i32 {
     let r = rec();
-    if index < 0 || index >= rd::<i32>(r + M_FEATURE_COUNT) {
+    if index < 0 || index >= rd::<i32>(r.wrapping_add(M_FEATURE_COUNT)) {
         return 0;
     }
-    let f = addr(rd(r + M_FEATURES)) + index as u32 * 136;
+    let f = addr(rd(r.wrapping_add(M_FEATURES))).wrapping_add((index as u32).wrapping_mul(FEATURE_SIZE));
     wr(out, f);
-    wr(out + 4, rd::<i32>(f + 128));
-    wr(out + 8, rd::<i32>(f + 132));
+    wr(out.wrapping_add(4), rd::<i32>(f.wrapping_add(FEATURE_X)));
+    wr(out.wrapping_add(8), rd::<i32>(f.wrapping_add(FEATURE_Z)));
     1
 }
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
-    loop {}
+    core::arch::wasm32::unreachable()
 }
 
 // A function pointer puts the module's first slot in its table range (496), so that the module imports the table
