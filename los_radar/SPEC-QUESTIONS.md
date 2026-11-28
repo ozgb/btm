@@ -83,6 +83,7 @@ table at `Game.losTable` its `count`, at the time the module reads them? As it i
 cannot be matched by any module.
 
 ## Q-slots: where does the unit-slot limit come from after Init?
+(Answered by spec §4 Apply limits: the module reads Game.poolCount. Closed.)
 Spec section 4 bounds `unit` by `unitSlots` "of Init's map", but section 3 says the module keeps nothing else than the
 region, and `Init` gets only `size`. I use `Game.poolCount` (as `WriteState` does). Recordings agree. Should the
 module store `size / 5` from `Init`?

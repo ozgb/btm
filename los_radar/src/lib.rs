@@ -214,6 +214,15 @@ fn units_end_addr() -> u32 {
 fn slot_of(u: u32) -> u32 {
     u.wrapping_sub(units_addr()) / UNIT_SIZE
 }
+/// Last slot of the table; 0 (no slots) when `unitsEnd` is before `units`.
+fn last_slot() -> u32 {
+    let (a, e) = (units_addr(), units_end_addr());
+    if e < a {
+        0
+    } else {
+        (e - a) / UNIT_SIZE
+    }
+}
 #[inline(always)]
 fn unit_at(slot: u32) -> u32 {
     units_addr().wrapping_add(slot.wrapping_mul(UNIT_SIZE))
@@ -392,6 +401,9 @@ fn add_sight(s: &Sight, delta: i32) {
     let pl = s.pl;
     if ru8(pl + P_INDEX) == view_index() {
         set_viewer_changed();
+    }
+    if ru32(pl + P_EXPLORED) == 0 {
+        return;
     }
     let xa = base() + ru32(pl + P_EXPLORED);
     let xw = ri32(pl + P_EXPW);
@@ -745,6 +757,9 @@ pub extern "C" fn Apply(ev: u32, size: i32) -> i32 {
             if ru8(g + G_NETFLAGS) & 1 == 0 {
                 return 0;
             }
+            if ru32(player_addr(p as u32) + P_INFO) == 0 {
+                return 0;
+            }
             let info = info_of(player_addr(p as u32));
             let (m, t) = if kind == 134 { (0x20, 2) } else { (0x40, 4) };
             let a = info + I_FLAGS97;
@@ -829,7 +844,7 @@ fn recalculate(reset: u32) {
             }
         }
     }
-    let last = slot_of(units_end_addr());
+    let last = last_slot();
     let mut k = 1;
     while k <= last {
         let u = unit_at(k);
@@ -936,7 +951,7 @@ pub extern "C" fn ClampWorldPosToTerrain(x: i32, y: i32, out: u32) {
         q[1] = height_at(q.as_mut_ptr() as u32);
         let s2 = row(&q);
         if (s1 < s2 || y <= s2) && s2 != s1 {
-            p[2] = p[2].wrapping_add(((y - s1).wrapping_mul(1 << 20)) / (s2 - s1));
+            p[2] = p[2].wrapping_add(((y - s1).wrapping_mul(1 << 20)).wrapping_div(s2 - s1));
             p[1] = height_at(pp);
         }
     }
@@ -1007,6 +1022,9 @@ pub extern "C" fn IsPointVisible(player: u32, pos: u32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn UpdateUnitLineOfSight(u: u32) {
+    if slot_of(u) >= ru16(gm(G_POOLCOUNT)) as u32 {
+        return;
+    }
     move_sight(&unit_sight(u));
 }
 
@@ -1056,7 +1074,7 @@ fn capture(bytes: u32) -> (u32, u32) {
 fn record_radar_units() {
     let g = game();
     let enabled = map_flags() & 3 == 0 || ru8(g + G_MATCHFLAGS) & 2 != 0;
-    let last = slot_of(units_end_addr());
+    let last = last_slot();
     let vp = player_addr(view_index());
     let mut nu = 0u32;
     let mut k = 0;
@@ -1228,7 +1246,7 @@ pub extern "C" fn UpdateSensorRadarAndCloak() {
     let v = view_index();
     let pl = player_addr(v);
     let pidx = ru8(pl + P_INDEX);
-    let last = slot_of(units_end_addr());
+    let last = last_slot();
     let sea = sea_level().wrapping_mul(65536);
     // pass 1
     let mut k = 1;
@@ -1408,6 +1426,9 @@ fn list_clear(list: u32) {
 
 #[no_mangle]
 pub extern "C" fn CreateUnitIndex(p: u32) {
+    if p >= 10 {
+        return;
+    }
     if ru32(sim() + S_UNITINDEX) == 0 {
         let a = unsafe { sim_alloc(440) };
         w32(sim() + S_UNITINDEX, a - base());
@@ -1423,7 +1444,7 @@ pub extern "C" fn CreateUnitIndex(p: u32) {
 #[no_mangle]
 pub extern "C" fn FreeUnitIndex(p: u32) {
     let ib = index_base();
-    if ib == 0 {
+    if ib == 0 || p >= 10 {
         return;
     }
     let e = ib + 44 * p;
@@ -1454,7 +1475,7 @@ pub extern "C" fn RefreshUnitIndex(p: u32) {
     list_clear(e + L_KNOWN);
     w32(e + 8, 0);
     let o = player_addr(p);
-    let last = slot_of(units_end_addr());
+    let last = last_slot();
     let mut k = 1;
     while k <= last {
         let u = unit_at(k);
@@ -1530,7 +1551,7 @@ pub extern "C" fn GetSeenUnitsInRadius(p: u32, pos: u32, radius: i32, out: u32, 
 
 fn has_ready(p: u32, pos: u32, range: i32) -> bool {
     let ib = index_base();
-    if ib == 0 {
+    if ib == 0 || p >= 10 {
         return false;
     }
     let e = ib + 44 * p;
@@ -1559,6 +1580,9 @@ pub extern "C" fn HasReadyUnitInRange(p: u32, pos: u32, range: i32) -> i32 {
 pub extern "C" fn ExpireEyeballs() {
     let g = game();
     let n = ri32(g + G_EYECOUNT);
+    if !(0..=20).contains(&n) {
+        return;
+    }
     let eyes = base() + ru32(g + G_EYES);
     let ticks = ru32(g + G_TICKS);
     let mut i = 0;
@@ -1599,8 +1623,7 @@ pub extern "C" fn RegionSize(map: u32) -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn Init(_map: u32, region: u32, _size: i32) {
-    unsafe { g_region = region };
+pub extern "C" fn Init(_map: u32, _region: u32, _size: i32) {
 }
 
 #[no_mangle]
@@ -1608,7 +1631,6 @@ pub extern "C" fn Shutdown() -> u32 {
     let f = unsafe { read_volatile(&raw const NOP) };
     f();
     let r = region();
-    unsafe { g_region = 0 };
     r
 }
 

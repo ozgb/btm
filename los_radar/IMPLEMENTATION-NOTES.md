@@ -79,3 +79,15 @@ req70 is `equal` on all three recordings. Changes for review.md:
 6. Notes brought up to date (this file).
 
 Open question: the `unitSlots` source (item 3), not blocking.
+
+## Review round 2 (submission req80)
+
+1. `has_ready`, `CreateUnitIndex`, `FreeUnitIndex`: `p >= 10` is now a no-op / false. Fixed.
+2. `UpdateUnitLineOfSight`: returns when the slot is not below `Game.poolCount`. Fixed.
+3. `ExpireEyeballs`: returns when the count is outside 0..=20 (as ADD_EYEBALL does). Fixed.
+4. New `last_slot()` gives 0 when `unitsEnd` < `units`; replaces the four wrapping uses. Fixed.
+5. SHARE_MAPPING/SHARE_RADAR return 0 when the player's `info` is 0; `add_sight` returns when `explored` is 0. Fixed.
+6. `ClampWorldPosToTerrain` uses `wrapping_div`. Fixed.
+7. Stale notes: the `poolCount`-versus-`unitSlots` question is answered by spec §4 (Apply limits: the module reads `Game.poolCount`). No longer open; the code was already right.
+8. `Init` no longer writes `g_region` (the host writes the data word); `Shutdown` no longer zeroes it. Fixed.
+9. `build.sh` quotes the linker path. The `/data/tools/wasm_fuel.py` path stays: it is the kit's tool.
