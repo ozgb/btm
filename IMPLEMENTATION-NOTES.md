@@ -31,7 +31,7 @@ req1 to req9 were caused by a fault on the gate host, not by the module (operato
 
 8. req10 (same module, gate fixed): `equal` on all five recordings. Q-gate-1 is resolved.
 
-9. req11 (review fixes, same logic): see the end of this file for its verdict.
+9. req11 (review fixes, same logic): `equal` on all five recordings.
 
 ## Review answers
 - Probe loop (risk 1): a spec gap; written as Q-probe-1 in SPEC-QUESTIONS.md. No guard, as it would change `steps`.
