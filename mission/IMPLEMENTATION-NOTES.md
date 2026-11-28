@@ -10,6 +10,7 @@ and `g_blockBase`, using the offsets of `layout.json`. The engine's slots are no
 3. req3: equal (recording mission/console-ilose; budgets not judged, the entry is blocked).
 4. req4-req14: not recorded by earlier sessions; no verdict is claimed for them.
 5. req15: equal on console-ilose and long/mission-build-unit, after the review fixes and the spec merge.
+6. req16: equal on console-ilose and long/mission-build-unit (after the second review round).
 
 ## Review answers (review.md)
 1. Risk: the notes were wrong; ABI 9.1/2.2/2.3 do require the table import, element segment and data segment. `TABLE_ANCHOR`
