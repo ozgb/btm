@@ -184,8 +184,10 @@ values the module puts in them.
   (u32, a tick), `screenPos` (two i16: *cache x*, *cache y*). `screen` and `flagPtr` are `self` fields: never
   compared (`docs/replay-format.md`, "A pointer into the object itself"); the module writes them as the
   block offsets of the eye's own `screenPos` and `flagB` when it fills an eye.
-- **`Game.visibilityMask`** (`Ref<unsigned short>`): its `Game.width` × `Game.height` / 4 u16 entries, one per
-  cell of the half-size grid (`Game.width` / 2 × `Game.height` / 2). Bit *p* of an entry is set when player
+- **`Game.visibilityMask`** (`Ref<unsigned short>`): its `Game.width` × `Game.height` / 4 u16 entries
+  (`docs/replay-format.md`, "Arrays", gives the length as (`width` >> 1) × (`height` >> 1), the same for even
+  sides, which every recorded map has; the slots below count `Game.width` × `Game.height` / 4, and an odd side is not
+  covered), one per cell of the half-size grid. Bit *p* of an entry is set when player
   *p* has seen the cell. The engine allocates it.
 - **`Player.explored`** of every player (`Ref<unsigned char>`, `Player.exploredSize` bytes, a grid of
   `exploredWidth` × `exploredHeight`): u8 sight counts, the number of sights of that player that cover the
@@ -262,6 +264,11 @@ from is not final (ozgb/btm#41).
   `flags_9b` (u8, the low byte of `flags`).
 - `FrameTable.count` and the masks (above).
 
+The recordings also show reads of `Game.endGameFlags`, `Unit.cell`, `Unit.footprint`, `Unit.weapon0Flags` to
+`weapon2Flags` and `weapon0TargetX`/`Z` to `weapon2TargetX`/`Z`. No slot's writes or imports depend on them: a
+module need not read them, and a read of them that is absent from a module's own reads is not a difference
+the gate sees.
+
 ### Bits of the flags words
 
 - `Game.mapFlags`: bit 0 *mapping* (map flag 1 of `docs/sim-events.md`, Terms), bit 1 *line of sight on*
@@ -270,7 +277,9 @@ from is not final (ozgb/btm#41).
 - `Game.matchFlags` bit 1: match flag 2 (Terms). `matchFlags` is the high byte of the u16
   `Game.uiOptionFlags`, so this is bit 9 of `uiOptionFlags`; the recordings read the u16 (`r Game.uiOptionFlags
   1038`, bit 9 clear).
-- `Game.netGameFlags` bit 0: net game flag 1 (Terms).
+- `Game.netGameFlags` bit 0: net game flag 1 (Terms). `netGameFlags` is the low byte of the u16
+  `Game.flags_2a44` (`layout.json`, both at offset 10820); the recordings read the u16 (`r Game.flags_2a44 12`,
+  bit 0 clear).
 - `Unit.flags`: 0x10000000 alive and 0x4000 dying (Terms); 0x100 shown on radar, 0x200 shown on sonar, 0x300
   the pair (Terms, "unit flags 0x300"); 0x400 jammed; 0x1000 near an enemy that decloaks it; 0x8000 a unit the
   index leaves out of the seen list. A *ready* unit has 0x10000000 set and 0x4000 clear.
@@ -432,7 +441,9 @@ too.
 true type moves it with the old `screenPos` as its cache and *frame* 0; the circle type sets `screenPos` and
 `flagB` from it.
 
-**CELL_HEIGHTS**: *px*, *py*, *sx*, *sy* = the low 16 bits of `cell[0]`, `cell[1]`, `size[0]`, `size[1]` as
+**CELL_HEIGHTS** (no recording holds one, so the field names are those of `LosRadarCellHeights` in
+`interfaces/los_radar.h`; a write to a cell's `low` or `high` names the cell by its index in `Game.cells`, as
+`Cell#N.low`): *px*, *py*, *sx*, *sy* = the low 16 bits of `cell[0]`, `cell[1]`, `size[0]`, `size[1]` as
 signed numbers. *xmax* = *px* + *sx*, *ymax* = *py* + *sy*; *px* and *py* become 0 when below 0; *xmax* becomes
 `Game.width` − 1 when it is `Game.width` or above, *ymax* likewise with `Game.height`. When *px* ≥ *xmax* or
 *py* ≥ *ymax*, nothing. Otherwise, for each cell (*col*, *row*), *px* ≤ *col* < *xmax*, *py* ≤ *row* < *ymax*
@@ -509,6 +520,10 @@ outside the contract.
 
 ### `RecordRadarUnits()`
 
+The slot takes a snapshot whenever it is called and tests nothing about the viewing player (active, type 1 to 3,
+index not 10): the engine's caller calls it for the viewed player in the players phase, as
+`docs/sim-events.md` (SIM_EVENT_RADAR_UNITS) says, and the slot is also called at the end of RECALCULATE.
+
 *enabled* = `Game.mapFlags` bits 0 and 1 both clear, or `Game.matchFlags` bit 1 set. A unit is *shown* when
 its `unitDefIndex` ≠ 0 and at least one of these holds: *enabled*; its `flags` has a bit of 0x300; its
 `playerIndex` = `Game.playerIndex`. The units are those of every slot from 0 (Q12) to the slot of `Game.unitsEnd`, in order.
@@ -531,7 +546,10 @@ when `def.flags1` bit 29 is set), the def's `radardistance`, `sonardistance`, `r
 `sonardistancejam`, and, only when bit 29 is set, for each weapon slot *w* whose `weapon` is not null (any weapon, `weapondef#0` included): coverage =
 the weapon's `coverage`, interceptor = its `flags` bit 30, stocked = 1 when the slot's `stockpile` ≠ 0; a
 record per shown projectile, in order: *px*, *py*, kind, colour. The reserved bytes and the weapons the record
-leaves out stay 0. Then `services.RecordSimEvent(34, 0, [offset], 1)`.
+leaves out stay 0. The snapshot's byte layout (the reserved bytes, the weapons from byte 24 of a unit record) is
+the one in `docs/sim-events.md`, SIM_EVENT_RADAR_UNITS. Then `services.RecordSimEvent(34, 0, [offset], 1)`. The
+offset `SimCaptureAlloc` writes is the u32 the recording gives as the suffix of the arena result
+(`snapshot#1+104`), and the same value is the `RecordSimEvent` argument; the recordings show no `o` line for it.
 
 ### `UpdateSensorRadarAndCloak()`
 
@@ -758,9 +776,16 @@ the allied-share and watch-mode branches of pass 1; interceptor weapon records a
 snapshot; `hasSpecial` = 1 and the `known` fallback; the `Apply` kinds CELL_HEIGHTS, SHARE_MAPPING,
 SHARE_RADAR, SHARE_MAP and SIGHT_LOAD, every outcome 0 of `Apply`, ADD_EYEBALL with 20 eyes or line of sight
 off; a null answer of `SimCaptureAlloc`; `map.UnitsInRange` returning 256; `SimFree` of a freed index; the
-edges of section 5 and Q2's *k* = 0.
+edges of section 5 and Q2's *k* = 0. Also unrecorded: the sensor passes' range max(*R*, *N*), the radius
+(*R* + 2ŷ)², the strict and non-strict comparisons at the edges, the stealth
+bit, the viewing player's skip, the ready and switched-on filters of pass 2, the jammer's `playerIndex` filter and
+the type filter of pass 4; the projectile branch of weapon bits 29 and 30 with its `attacker` test, and weapon bit 6; slot 0's `unitDefIndex` (Q12: whether the unit scan starts at slot 0 or 1 cannot be told); the true
+type's frame threshold of 5, the clamp of the frame to 0 to 255 and the clamps of the line indices, and the
+strict comparison in the line walk; the circle type's move; `numPlayers` below 2; `seaLevel` above 0 (`height`
+above the level against at or above it); `seen` against `explored` with line of sight off; and the compaction
+of `ExpireEyeballs`, whose moved eyes the recordings never compare (only the next call's reads of `Eye`).
 
 ## 8. Kit version
 
-Kit `interfaces-v69` and `reference-traces-v56`, the versions the gate judges against. Interface `los_radar`
+Kit `interfaces-v74` and `reference-traces-v58`, the versions the gate judges against. Interface `los_radar`
 5.1.
