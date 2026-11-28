@@ -4,8 +4,6 @@ use core::ptr::{read_unaligned, read_volatile, write_unaligned};
 
 #[link(wasm_import_module = "weapons")]
 extern "C" {
-    #[link_name = "SpawnProjectile"]
-    fn spawn_projectile(weapon: u32, pos: *const i32, vel: *const i32, flag: i32) -> i32;
     #[link_name = "FindWeaponByName"]
     fn find_weapon_by_name(name: u32) -> u32;
 }
@@ -34,8 +32,8 @@ extern "C" {
     fn get_double(rec: u32, key: *const u8, def: f64) -> f64;
     #[link_name = "TdfRecord_GetFieldString"]
     fn get_string(rec: u32, dst: *mut u8, key: *const u8, size: i32, def: *const u8) -> i32;
-    #[link_name = "CommandArgs_GetIntArg"]
-    fn get_int_arg(args: u32, index: i32, def: i32) -> i32;
+    #[link_name = "Emit"]
+    fn emit(effect: *const i32, size: i32);
     #[link_name = "HapiBank_OpenAccount"]
     fn bank_open(bank: u32, name: *const u8) -> i32;
     #[link_name = "HapiBank_SetIntegerItem"]
@@ -70,19 +68,19 @@ const G_WENABLED: u32 = 229090;
 const G_TICKS: u32 = 232007;
 
 // SimGlobals offsets
-const S_NEXT_STRIKE: u32 = 568;
-const S_NAME: u32 = 576;
-const S_MAGNITUDE: u32 = 608;
-const S_INTERVAL: u32 = 612;
-const S_ACTIVE: u32 = 616;
-const S_STRIKE_END: u32 = 620;
-const S_ORIGIN: u32 = 624;
-const S_DURATION: u32 = 628;
-const S_WEAPON: u32 = 632;
-const S_ENABLED: u32 = 636;
-const S_NEXT_HIT: u32 = 640;
-const S_TARGET: u32 = 644;
-const S_GAP: u32 = 648;
+const S_NEXT_STRIKE: u32 = 564;
+const S_NAME: u32 = 572;
+const S_MAGNITUDE: u32 = 604;
+const S_INTERVAL: u32 = 608;
+const S_ACTIVE: u32 = 612;
+const S_STRIKE_END: u32 = 616;
+const S_ORIGIN: u32 = 620;
+const S_DURATION: u32 = 624;
+const S_WEAPON: u32 = 628;
+const S_ENABLED: u32 = 632;
+const S_NEXT_HIT: u32 = 636;
+const S_TARGET: u32 = 640;
+const S_GAP: u32 = 644;
 
 #[inline(always)]
 fn gp(off: u32) -> u32 {
@@ -127,10 +125,10 @@ fn cosine(a: i32, s: i32) -> i32 {
 
 #[inline(always)]
 fn d2i(x: f64) -> i32 {
-    if x != x || x >= 2147483648.0 || x <= -2147483649.0 {
-        i32::MIN
+    if x != x || x >= 9223372036854775808.0 || x <= -9223372036854775808.0 {
+        0
     } else {
-        x as i32
+        (x as i64) as i32
     }
 }
 
@@ -163,12 +161,7 @@ fn wind(stream: i32) {
 }
 
 #[no_mangle]
-pub extern "C" fn UpdateWind() {
-    wind(0);
-}
-
-#[no_mangle]
-pub extern "C" fn UpdateWindOnStream(stream: i32) {
+pub extern "C" fn UpdateWind(stream: i32) {
     wind(stream);
 }
 
@@ -194,7 +187,7 @@ fn start_shower(t: i32) {
 }
 
 #[inline(always)]
-fn meteor_falls(t: i32) {
+fn meteor_falls() {
     let tx = r16(sp(S_TARGET)) as i32;
     let tz = r16(sp(S_TARGET) + 2) as i32;
     let ox = r16(sp(S_ORIGIN)) as i32;
@@ -214,9 +207,14 @@ fn meteor_falls(t: i32) {
         oz.wrapping_shl(20).wrapping_sub(cosine(a, big_r)),
     ];
     let off = r32(sp(S_WEAPON)) as u32;
-    let wp = if off == 0 { 0 } else { unsafe { read_volatile(&raw const g_blockBase) }.wrapping_add(off) };
-    let _ = t;
-    unsafe { spawn_projectile(wp, pos.as_ptr(), vel.as_ptr(), 1) };
+    let slot = if off == 0 {
+        -1
+    } else {
+        let wp = unsafe { read_volatile(&raw const g_blockBase) }.wrapping_add(off);
+        (wp.wrapping_sub(gp(G_WEAPONS)) as i32) / 277
+    };
+    let fx = [80, slot, pos[0], pos[1], pos[2], vel[0], vel[1], vel[2], 1];
+    unsafe { emit(fx.as_ptr(), 36) };
 }
 
 #[no_mangle]
@@ -231,7 +229,7 @@ pub extern "C" fn UpdateMeteors() {
     if r32(sp(S_ACTIVE)) != 0 {
         if (r32(sp(S_NEXT_HIT)) as u32) <= t as u32 {
             w32(sp(S_NEXT_HIT), r32(sp(S_INTERVAL)).wrapping_add(t));
-            meteor_falls(t);
+            meteor_falls();
         }
         if (r32(sp(S_STRIKE_END)) as u32) <= t as u32 {
             w32(sp(S_ACTIVE), 0);
@@ -239,6 +237,7 @@ pub extern "C" fn UpdateMeteors() {
     }
 }
 
+// Not observable: keeps the table import and element segment ABI 9.1 requires; nothing else uses them.
 static KEEP: [extern "C" fn(); 1] = [EmptyShutdownPreCleanup];
 
 #[no_mangle]
@@ -256,39 +255,50 @@ pub extern "C" fn InitMeteors() {
     w32(sp(S_WEAPON), chosen.wrapping_sub(unsafe { read_volatile(&raw const g_blockBase) }) as i32);
 }
 
-#[no_mangle]
-pub extern "C" fn EnableMeteors() {
-    w32(sp(S_ENABLED), 1);
-}
-
-#[no_mangle]
-pub extern "C" fn DisableMeteors() {
-    w32(sp(S_ENABLED), 0);
-}
-
-#[no_mangle]
-pub extern "C" fn SetMeteorParams(params: u32) {
+fn set_params(ev: u32) {
     let mut i = 0;
     while i < 32 {
-        let c = unsafe { *((params + i) as *const u8) };
+        let c = unsafe { *((ev + 4 + i) as *const u8) };
         unsafe { *((sp(S_NAME) + i) as *mut u8) = c };
         if c == 0 {
             break;
         }
         i += 1;
     }
-    w32(sp(S_MAGNITUDE), r32(params + 32));
-    let f = |o: u32| f32::from_bits(r32(params + o) as u32) as f64;
-    w32(sp(S_INTERVAL), d2i(30.0 / f(36)));
-    w32(sp(S_DURATION), d2i(f(40) * 30.0));
-    w32(sp(S_GAP), d2i(f(44) * 30.0));
+    w32(sp(S_MAGNITUDE), r32(ev + 36));
+    let f = |o: u32| f32::from_bits(r32(ev + o) as u32) as f64;
+    w32(sp(S_INTERVAL), d2i(30.0 / f(40)));
+    w32(sp(S_DURATION), d2i(f(44) * 30.0));
+    w32(sp(S_GAP), d2i(f(48) * 30.0));
+}
+
+#[no_mangle]
+pub extern "C" fn Apply(ev: u32, size: u32) {
+    if size < 4 {
+        return;
+    }
+    match r32(ev) {
+        64 => w32(sp(S_ENABLED), 1),
+        65 => w32(sp(S_ENABLED), 0),
+        66 if size >= 52 => set_params(ev),
+        67 => start_shower(r32(gp(G_TICKS))),
+        68 if size >= 12 => {
+            w32(gp(G_WMIN), r32(ev + 4));
+            w32(gp(G_WMAX), r32(ev + 8));
+        }
+        69 => {
+            w32(gp(G_WDEN), 5000);
+            w32(gp(G_WCOUNTER), 0);
+        }
+        _ => {}
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn LoadMeteorDefaults(params: u32) {
     let mut file = [0u32; 3];
     let f = file.as_mut_ptr();
-    let mut buf = [0u8; 256];
+    let mut buf = [0u8; 32];
     unsafe {
         tdf_construct(f);
         let ext = &raw const g_extTdf as *const u8;
@@ -379,16 +389,6 @@ pub extern "C" fn LoadMeteors(bank: u32) {
             w32(a, v);
         }
         i += 1;
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn CmdMeteor(args: u32) {
-    if r32(args + 0xd0) > 1 {
-        let v = unsafe { get_int_arg(args, 1, 0) };
-        w32(sp(S_ENABLED), (v != 0) as i32);
-    } else {
-        start_shower(r32(gp(G_TICKS)));
     }
 }
 

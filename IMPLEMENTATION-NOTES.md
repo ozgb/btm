@@ -1,73 +1,39 @@
-# pathfinding implementation notes
+# wind_meteors implementation notes
 
 ## What was built
-`pathfinding/` is a `no_std` Rust cdylib (`src/lib.rs`), built by `pathfinding/build.sh`:
-- `ld-wrap.sh` removes rustc's `--stack-first`, `--allow-undefined` and the `__heap_base`/`__data_end` exports from the
-  link line. Link options: data base 327680, table base 176, stack 4096, imported memory and table, `--gc-sections`.
-- Fuel metering is added by the kit's `tools/wasm_fuel.py` as the last build step.
-- Flags: `target-cpu=mvp` with sign-ext and bulk-memory. The module has no float code.
-- The region is read and written in place at the offsets of spec section 3 (unaligned loads and stores); nothing is
-  kept in statics. The five data words start at 1 so that they sit in the data segment and the module has no start
-  function.
-- The three imports no slot calls (`MoveClass`, `LineOfSight`, `TerrainPass`) are called behind a volatile test of a
-  static that is 0, so that they are imported. The same block calls a function through a one-entry static table, which
-  keeps the table import (the element segment is the one at table entry 176). A first version put the three imports
-  themselves in the element segment, and the gate then wrote no result at all.
-- `tools/pfreplay.js` is a local replayer for the recordings (node): it answers the imports from the recording and
-  compares the region after every call. All five recordings are equal locally.
+`wind_meteors/` is a `no_std` Rust cdylib (`src/lib.rs`) built by `wind_meteors/build.sh`:
+- `ld-wrap.sh` is the linker wrapper. rustc passes `--stack-first` and `--allow-undefined`, which the ABI forbids, so the wrapper removes them. The `__heap_base` and `__data_end` exports are removed the same way.
+- `fuel.py` is the fuel pass (ABI 11, rule v1). It works on the `wasm-tools print` text: it inserts the decrement at every function entry and loop top, then adds the counter global, `__fuel_set` and `__fuel_get`.
+- Link options: data base 196608, table base 48, stack 4096.
+- Flags: `target-cpu=mvp` plus sign-ext and bulk-memory, so no non-trapping float conversions. `d2i` does the guarded double-to-int conversion by hand.
+- Every helper is `#[inline(always)]`, to keep the fuel use of a tick small against the 250 budget.
+- Block fields are packed (unaligned), so all accesses are unaligned loads and stores at the offsets in `layout.json`.
+- The sine table is a 512-entry `static` generated from the spec formula.
+- `EmptyShutdownPreCleanup` volatile-reads a static function-pointer table. That keeps the `env.__indirect_function_table` import, which ABI 9.1 requires, and it is the element segment at table base 48.
+- The module is 6850 bytes against a 13100 budget.
+
+## Update to spec v59 / kit interfaces-v59 (wind_meteors 3.1)
+- `UpdateWind(stream)` is one slot now; `Apply(event, size)` replaces the Enable/Disable/SetMeteorParams/CmdMeteor entry points (kinds 64-69, size checks per the spec).
+- A meteor is published with `services.Emit` (a 36-byte SPAWN effect, weapon as a slot in `Game.weapons`, -1 for none) instead of `weapons.SpawnProjectile`. The `CommandArgs_GetIntArg` import is gone.
+- `SimGlobals` meteor offsets moved down by 4 bytes (checked in `layout.json`); `Game` offsets are unchanged.
+- `d2i` now follows the spec: truncate to 64 bits and keep the low 32; NaN, infinity or 2^63 and above gives 0 (the old one gave 0x80000000 on overflow).
 
 ## Verdicts, in order
-1. req1, req2, req3: no result (the gate exited 2 before a result; the element segment listed imported functions).
-2. req4: `failed` on all five recordings, no detail.
-3. req5 (Init takes the region from `g_region`): `failed`.
-4. req6 (diagnostic: the same module with Init/Submit/Cancel/Step as no-ops): `failed`, so the failure does not depend on
-   the slots' logic.
-5. req7 (diagnostic: the old wind_meteors module under `wind_meteors`): `refused`, as its interface moved on.
-6. req8 (data words in the data segment, no start function): `failed`.
+1. req1: `equal` (3 recordings, every scenario, digest and view).
 
-7. req9 (req8 with the custom sections stripped): `failed`.
+2. req2, req3: no verdict. The gate answered at once with `the gate wrote no usable result (exit 2): No such file or directory: .../gate/reqN/out/result.json`. The module submitted is byte-identical to req1's (6850 bytes), so this is a gate fault, not a difference.
+3. req4 (after the review answers, same 6850-byte module): `equal` (3 recordings, every scenario).
 
-req1 to req9 were caused by a fault on the gate host, not by the module (operator's note).
+## Answers to /srv/inbox/review.md
+- 1 (`--no-stack-first`): `ld-wrap.sh` now appends `--no-stack-first` when the linker's help lists it. The local LLD 20.1.8 doesn't, and rejects it, so it's left off there and the stack falls after the data (top 202176, in the window). Not verifiable against 22.1.8 here.
+- 2 (`EmptyShutdownPreCleanup`): kept. The volatile read keeps the table import and element segment ABI 9.1 requires; commented in the source. Unobservable.
+- 3 (unterminated name): the spec calls it undefined; the copy is bounded at 32 bytes. Kept.
+- 4 (weapon slot range): the spec says it never happens in a match. No guard.
+- 5-8: nits, left. The dead `return` and spare NUL in `BAD` are harmless; `d2i` guards follow spec 5; the size-guarded arms are correct.
+- 9: `fuel.py` and `build.sh` now use temporary directories and the unused `ng` is gone.
 
-8. req10 (same module, gate fixed): `equal` on all five recordings. Q-gate-1 is resolved.
-
-9. req11 (review fixes, same logic): `equal` on all five recordings.
-
-## Review answers
-- Probe loop (risk 1): a spec gap; written as Q-probe-1 in SPEC-QUESTIONS.md. No guard, as it would change `steps`.
-- Init with Game.width x Game.height above the map's cells (risk 2): outside the contract (spec section 4 `Init`: they
-  are equal); a partial clamp would still leave `width`/`height` indexing past the cells, so none is added.
-- `RegionSize` loop on a huge `unitSlots` (nit 3): bounded now. Dead code and warnings (nit 4): removed.
-- Notes of wind_meteors (nit 5): kept in that module's own history; this file is pathfinding's.
-- SPEC-QUESTIONS.md (nit 6): the resolved gate entry is dropped (it was a gate-host fault); it now holds Q-probe-1.
-- build.sh (nit 7): intermediate file moved under target/, path quoted. The CI workflow is not changed here.
-- pfreplay.js (nit 8): a local aid only, left as is.
-
-## Unclear points
-- A `failed` verdict has no message; the earlier ones were a gate host fault (Q-gate-1, resolved).
-- `--no-stack-first` is not in the linker's help here (LLD 20.1.8); the default places the stack after the data, and the
-  stack pointer was checked to lie in the window.
-- Spec section 4 is otherwise sufficient: the five recordings replay equal locally from it. Not in any recording and
-  written from the text alone: Shutdown, CellsChanged, PROGRESS, FAILED/PARTIAL outcomes, ring goals, Q5, Q6, event
-  dropping in Cancel, Submit replacing an entry.
-
-## Spec update (merged from spec-pathfinding)
-The spec now states the probe's endless walk (section 7, "Edges") and puts the case outside the contract, so
-Q-probe-1 is resolved and removed. The module's logic is unchanged; the last verdict (req11) is `equal`.
-
-## Second review answers
-- CI build (risk 1): `.github/workflows/module.yml` is shared repository infrastructure, not part of this crate; it knows
-  only `wind_meteors`. `pathfinding/build.sh` is the build used for the gate (base 327680, table 176, checked with
-  wasm-tools). Extending the workflow's `case` is left to its owner.
-- `unitSlots` near 2^31 (nit 2): outside the contract (the recordings use 2501; the spec gives no range). Not guarded.
-- `let _ = n;` (nit 3): removed; the warning is silenced with `#[allow(unused_assignments)]` on `goal_cells`.
-
-10. req12 (after these changes, same logic): `equal` on all five recordings.
-
-## Third review answers
-- Nit 1 (`#[allow(unused_assignments)]` in `goal_cells`): kept. The counter is shared by the early-return check of the
-  macro, and the allow is scoped to that one function. Rewriting the loops would change a verified-equal module for no
-  behavioural gain.
-- Nit 2 (pool and items offsets hard-coded): kept. Spec section 3 fixes both by formula from *N* and the head's
-  `pool`/`items` references are computed from them. The settings words 260 and 264 hold the same values, so the two
-  styles agree on every input of the contract. The module is unchanged since req12, whose verdict is `equal`.
+## Unclear points in the spec or kit
+- ABI 3.1 says `--no-stack-first`; this toolchain's linker default already puts the stack after the data, so the option is not passed. rustc's `--stack-first` is removed by the linker wrapper. The stack top (202176) lies inside the window.
+- `fuel.py` is my own pass (the kit now has `tools/wasm_fuel.py`; its `--check` accepts the module).
+- `SaveMeteors`, `LoadMeteors`, `FatalError` and the Q3 outcomes follow the spec text only; no recording has them.
+- The header's DISABLE comment ("drops no meteor") reads differently from spec Q4 (a due shower starts and is then made inactive); the module follows the spec and was equal.

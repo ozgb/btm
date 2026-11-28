@@ -1,10 +1,9 @@
 """Fuel metering pass, rule v1 (ABI 11.1), over wasm-tools text. Usage: fuel.py in.wasm out.wasm"""
-import re, subprocess, sys
+import os, re, subprocess, sys, tempfile
 
 src, dst = sys.argv[1], sys.argv[2]
 text = subprocess.run(["wasm-tools", "print", src], check=True, capture_output=True, text=True).stdout
 lines = text.split("\n")
-ng = sum(1 for l in lines if re.match(r"\s*\(global ", l))
 ni = sum(1 for l in lines if re.match(r"\s*\(import .*\(global", l))
 assert ni == 0
 STEP = ["global.get $__fuel", "i64.const 1", "i64.sub", "global.set $__fuel",
@@ -34,5 +33,7 @@ extra = [
     '  (export "__fuel_get" (func $__fuel_get))',
 ]
 out[idx:idx] = extra
-open("/tmp/fuel.wat", "w").write("\n".join(out))
-subprocess.run(["wasm-tools", "parse", "/tmp/fuel.wat", "-o", dst], check=True)
+with tempfile.TemporaryDirectory() as d:
+    w = os.path.join(d, "fuel.wat")
+    open(w, "w").write("\n".join(out))
+    subprocess.run(["wasm-tools", "parse", w, "-o", dst], check=True)
