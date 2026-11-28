@@ -25,11 +25,7 @@ result with the kit's `tools/wasm_fuel.py`.
     The module follows the spec (size below the payload: outcome 0), so it cannot match. Question in
     SPEC-QUESTIONS.md (Q-gate-1). The source is unchanged from req10's.
 
-Until that is answered, the module has not been judged beyond the first call: the gate stops at the first difference.
-(Earlier note:) the module had not been judged against the recordings: no `equal` and no `differs` was ever seen. It is
-validated with `wasm-tools validate`; exports are the entry's, plus the data words and `__fuel_*`; imports are the
-eight listed plus `env.memory` and the table. I did not hand the branch over, since it is neither `equal` nor
-blocked on a spec question.
+(Superseded: Q-gate-1 to 3 were answered and the module is now `equal`; see the later sections.)
 
 ## Unclear points
 - The kit's interface tag is `interfaces-v74`, as spec section 8 says (earlier notes saying v69/v70 are obsolete).
@@ -55,13 +51,13 @@ Verdicts: req30 `differs` on `console-sight` at call 505 (tick 30), `Game.visibi
 verdict names; they show the gate's frame and frame table are all zero when read (Q-gate-3).
 
 Change from req10: the mask index reads `FrameTable.count` only when the index is 9 or more, since the reference
-reads it once (call 0) and the replayer's table has no `count` at call 505 (req10 asked for frame −1). (Superseded by the review round below: the clamp now always reads the count.)
+reads it once (call 0) and the replayer's table has no `count` at call 505 (req10 asked for frame −1). (Superseded: the clamp now always reads the count.)
 
 ## Final: req60
 
 req60 (the module as committed, no change) is `equal` on `console-sight`, `console-units` and `sensors-sonar-jam`
 (the gate now maps the load data, so Q-gate-3 is answered). The verdict lists the rule notes `queries:
-services.GetGafFrame` and `unread_arguments: los_radar.GetMapCellAtPosition pos.y`; 
+services.GetGafFrame` and `unread_arguments: los_radar.GetMapCellAtPosition pos.y`.
 
 ## Review round (req70)
 
@@ -91,3 +87,25 @@ Open question: the `unitSlots` source (item 3), not blocking.
 7. Stale notes: the `poolCount`-versus-`unitSlots` question is answered by spec §4 (Apply limits: the module reads `Game.poolCount`). No longer open; the code was already right.
 8. `Init` no longer writes `g_region` (the host writes the data word); `Shutdown` no longer zeroes it. Fixed.
 9. `build.sh` quotes the linker path. The `/data/tools/wasm_fuel.py` path stays: it is the kit's tool.
+
+## Review round 3 (submissions from req90)
+
+req90 is `equal` on all three recordings.
+
+Fixed: (1) `RECALCULATE` step 2 skips a player whose `explored` is null. (5) `RefreshUnitIndex`, `GetVisibleEnemiesInRadius`,
+`GetSeenUnitsInRadius` return at once for `p >= 10`. (6) The panic handler traps with `unreachable`. (7) `last_slot`
+doc comment now says the empty-range edge still scans slot 0. (10) Notes cleaned up (round-1 item 4 `Shutdown`
+zeroing is superseded by round-2 item 8: `Shutdown` leaves `g_region` alone).
+
+Answered, not changed:
+- 2 (bounds against `exploredSize` / mask length): the spec's contract gives `exploredWidth`/`Height` of the map's half
+  grid and the writes follow §4 as specified; adding bounds would silently change behaviour the reference has, and
+  Q8 is about which width is used, which the recordings confirm.
+- 3 (slot numbers vs `unitSlots`): the spec bounds `Apply` by `Game.poolCount` (done); the `unitsEnd` slots and
+  `UnitsInRange` ids are the map's own and are within the table by the contract.
+- 4 (SHARE_* with null `info`): a null `info` is outside the spec's state contract; without the guard the module
+  would write at the block base. The spec lists no outcome for it, so the guard stays.
+- 8 (`proj_shown` null type / owner > 9): garbage-in cases outside the contract, no trap.
+- 9 (`Shutdown` NOP call, empty `Init`): the function pointer is what keeps the table import and element segment
+  (ABI 9.1); `Init` is empty because the host writes the `g_region` data word (ABI 8.2).
+- Import order (10): ABI 9.1 requires only the set.

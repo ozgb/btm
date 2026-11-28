@@ -43,7 +43,7 @@ pub static mut g_region: u32 = 0;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
-    loop {}
+    core::arch::wasm32::unreachable()
 }
 
 // ---- memory access -------------------------------------------------------
@@ -214,7 +214,8 @@ fn units_end_addr() -> u32 {
 fn slot_of(u: u32) -> u32 {
     u.wrapping_sub(units_addr()) / UNIT_SIZE
 }
-/// Last slot of the table; 0 (no slots) when `unitsEnd` is before `units`.
+/// Last slot of the table; 0 when `unitsEnd` is before `units` (slot 0 is then still scanned, a harmless
+/// edge outside the contract).
 fn last_slot() -> u32 {
     let (a, e) = (units_addr(), units_end_addr());
     if e < a {
@@ -834,7 +835,11 @@ fn recalculate(reset: u32) {
     for p in 0..10 {
         let pa = player_addr(p);
         let ty = ru8(pa + P_TYPE);
-        if ru32(pa + P_ACTIVE) != 0 && (1..=3).contains(&ty) && ru8(pa + P_INDEX) != 10 {
+        if ru32(pa + P_ACTIVE) != 0
+            && (1..=3).contains(&ty)
+            && ru8(pa + P_INDEX) != 10
+            && ru32(pa + P_EXPLORED) != 0
+        {
             let xa = base() + ru32(pa + P_EXPLORED);
             let n = ri32(pa + P_EXPSIZE);
             let mut i = 0;
@@ -1463,7 +1468,7 @@ pub extern "C" fn FreeUnitIndex(p: u32) {
 #[no_mangle]
 pub extern "C" fn RefreshUnitIndex(p: u32) {
     let ib = index_base();
-    if ib == 0 {
+    if ib == 0 || p >= 10 {
         return;
     }
     let e = ib + 44 * p;
@@ -1522,7 +1527,7 @@ fn scan_list(list: u32, ax: i32, az: i32, r2: i32, need_ready: bool, out: u32, c
 #[no_mangle]
 pub extern "C" fn GetVisibleEnemiesInRadius(p: u32, pos: u32, radius: i32, _flags: i32, out: u32, cap: i32) -> i32 {
     let ib = index_base();
-    if ib == 0 {
+    if ib == 0 || p >= 10 {
         return 0;
     }
     let e = ib + 44 * p;
@@ -1539,7 +1544,7 @@ pub extern "C" fn GetVisibleEnemiesInRadius(p: u32, pos: u32, radius: i32, _flag
 #[no_mangle]
 pub extern "C" fn GetSeenUnitsInRadius(p: u32, pos: u32, radius: i32, out: u32, cap: i32) -> i32 {
     let ib = index_base();
-    if ib == 0 {
+    if ib == 0 || p >= 10 {
         return 0;
     }
     let e = ib + 44 * p;
