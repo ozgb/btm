@@ -162,7 +162,9 @@ the entry:
   the import is a divergence. A search makes the import once in the recordings, then draws, and the draws
   use the full count. Holding the whole list, and the capacity and place of the buffer, are the build's
   choice. No search in the recordings lists more than 52 candidates, and the kit bounds the list only by
-  the unit pool (section 7, gaps).
+  the unit pool (section 7, gaps). ABI section 7.3 says only that the count may be above the capacity
+  and that a buffer of one entry per slot never gets such a count: the kit does not say what the host answers
+  to a repeat call, which only the replay is described to answer.
   The constraints the ABI sets on that memory: the module allocates no heap and uses no scratch (ABI
   sections 2.1 and 2.2), and the buffer, and any list the module derives from it, is on its stack or in its
   statics. The stack is 4096 bytes with no guard below it (ABI section 2.2), room for at most 1024 offsets
@@ -222,7 +224,9 @@ and so a block offset (ABI section 7.1: 32 bits, 0 for null): `Game.units`, `Uni
 (three offsets). The record it names is at `g_blockBase` plus the offset, and a *null* field in this spec
 (a null `motion`, a null `weapon{w}Def`) is one whose offset is 0. The recordings write these fields as
 object names (`r Unit#1.motion UnitMotion#1`, `null` for 0), as they do the event's. The module writes
-no pointer field.
+no pointer field. No recording has an `r Game.units` line: the field is the base that the `Unit#N` names of
+the recordings count from (`Unit#N` is at `Game.units` + 280 *N*), and the module reads it from the block as it
+reads any other `Ref`.
 
 ### Read
 
@@ -380,7 +384,8 @@ when no candidate is left. Pick *k* (from 1) draws *i* = `services.RandomInt(n)`
 length less *k* − 1, and its candidate is the one at position *i* (from 0) of the candidates not yet
 picked. Those stand in this order (Q3): the list's order for pick 1; after a
 pick the last candidate moves into the picked position (unless it was the last) and the list shortens by
-one. The pick *t* is *eligible* when:
+one. In each pick the calls come in this order: the index draw, then the reach import when it is made
+(below), then the distance draw when the pick is eligible. The pick *t* is *eligible* when:
 
 1. *t* has `alive` (bit 28 of `t.flags`) set and `killPending` (bit 14) clear;
 2. `t.def` has `flags1` bit 15 set, or `u`'s player is computer-controlled, or bit 10 of
