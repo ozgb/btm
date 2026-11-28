@@ -64,7 +64,7 @@ The kit's entry for mission is the module's entry, and this spec follows it:
   `g_blockBase` only.
 - `data_base` 655360 and `table_base` 496: the module's window is the `window` bytes (32768, the manifest's top-level
   `window`) from 655360, and its table range the 32 entries (`table_slots`) from 496 (ABI 2).
-- `imports`: none (`{}`). No slot of the module calls the engine.
+- `imports`: none (`{}`): no function imports. No slot of the module calls the engine. The table import every module has (`env.__indirect_function_table`, `docs/module-abi.md`) is not an entry of `imports`.
 - Slot kinds (the entry's `slots`, also `signatures.mission`):
 
 | Slot | Kinds |
@@ -90,7 +90,7 @@ field's offset, or 0 for "none". `HasMissionName` returns 0 or 1.
 
 The engine's slots reach these engine calls. All but items 1 and 2 are calls that no import of the kit's
 `interfaces/services.h` (version 4.3) or of an interface offers. The list is for ozgb/btm#43, which moves the slots
-into the module: the module of this spec exports none of them and imports nothing.
+into the module: the module of this spec exports none of them and has no function imports.
 
 1. **Allocation in the block:** the record itself, the units and their strings, the start position rules, the
    features and the briefing's text; and their release, with the release of the conditions object players made.
