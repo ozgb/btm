@@ -311,11 +311,11 @@ A SET_UNIT reads `t.id` and nothing else of *t*: the target's own `netDirtyFlags
 reads (for example `r Unit#3.netDirtyFlags 1024` at tick 138 of `orders-guard-attacked`), is not changed,
 and no result depends on it.
 
-**The limits of each kind** (ozgb/btm#25). An event outside its kind's limits changes nothing, writes nothing,
-publishes nothing and does not trap. A nonzero block offset is *a unit* when it is the offset of a slot of the
-unit pool: from `Game.units` to `Game.unitsEnd`, the pool's last slot, in steps of 280, the size of `Unit`
-(`docs/replay-format.md`, the paragraph on `Game.unitsEnd`), whether or not the slot's unit is alive or holds
-a unit type.
+**The limits of each kind** (ozgb/btm#25). An event outside the limits below that the module enforces (all but
+*a unit*, see the end of this subsection) changes nothing, writes nothing, publishes nothing and does not trap.
+A nonzero block offset is *a unit* when it is the offset of a slot of the unit pool: from `Game.units` to
+`Game.unitsEnd`, the pool's last slot (`docs/replay-format.md`, the paragraph on `Game.unitsEnd`), in steps of
+280, the size of `Unit` (`layout.json`, `Unit`), whether or not the slot's unit is alive or holds a unit type.
 
 | Kind | `size` at least | `unit` | `weapon` | The payload |
 | --- | --- | --- | --- | --- |
