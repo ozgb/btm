@@ -47,7 +47,7 @@ pub static mut g_game: u32 = 0;
 #[no_mangle]
 pub static mut g_simGlobals: u32 = 0;
 #[no_mangle]
-pub static mut g_extTdf: [u8; 8] = [0; 8];
+pub static mut g_extTdf: [u8; 8] = *b"tdf\0\0\0\0\0";
 #[no_mangle]
 pub static mut g_blockBase: u32 = 0;
 #[no_mangle]
