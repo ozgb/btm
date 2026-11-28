@@ -47,3 +47,14 @@ again, with the gate passing the recorded event): `failed` on all three recordin
 `import SimCaptureAlloc: returned a pointer outside the module memory`; req21 (probe, `SimCaptureAlloc(8, ..)`):
 `differs` at call 44 on the import's arguments, so the failure comes from the gate's answer to the recorded call
 (5724 bytes). Q-gate-2 in SPEC-QUESTIONS.md asks about it. The module itself is unchanged.
+
+## Update after the Q-gate-2 fix
+
+Verdicts: req30 `differs` on `console-sight` at call 505 (tick 30), `Game.visibilityMask`; `console-units` and
+`sensors-sonar-jam` `equal`. req31 to req46 were probes (not the module) that write diagnostics into the mask entry the
+verdict names; they show the gate's frame and frame table are all zero when read (Q-gate-3).
+
+Change from req10: the mask index reads `FrameTable.count` only when the index is 9 or more, since the reference
+reads it once (call 0) and the replayer's table has no `count` at call 505 (req10 asked for frame −1). With a real table
+the result is the spec's clamp.
+The module is otherwise unchanged and follows the spec; it is blocked on Q-gate-3.

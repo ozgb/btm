@@ -305,13 +305,15 @@ fn mask_count() -> i32 {
 }
 
 fn mask_index(s: &Sight) -> i32 {
-    let m = mask_count();
     let mut i = s.d / 32 - 5;
     if i < 0 {
         i = 0;
     }
-    if i >= m - 1 {
-        i = m - 1;
+    if i >= 9 {
+        let m = mask_count();
+        if i >= m - 1 {
+            i = m - 1;
+        }
     }
     i
 }

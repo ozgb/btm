@@ -52,3 +52,32 @@ in the shared memory. It looks like the same kind of fault as Q-gate-1 (the gene
 call (5724 bytes at offset 0) inside the shared memory? If the arena is meant to be in the module's own window,
 how large must the window's free part be (my data+stack use under 32768 bytes of it, the snapshot is 5728 bytes)?
 Everything after this call is hidden behind it.
+
+**Answered (Q-gate-2):** the gate now places the `SimCaptureAlloc` arena inside the module memory; req30 onwards run past call 44.
+
+## Q-gate-3: the frames and the frame table that the gate gives are all zero
+
+**Evidence.** `console-sight`, call 505 (tick 30, `Apply` RECALCULATE, circle type). The first module (req10) asked for
+frame -1: it read `FrameTable.count` (u16 at `Game.losTable`) as 0, so the clamp *M* − 1 gave −1. The recording has
+`r FrameTable#1.count 10` once, in call 0 (line 3965), and never again (the recorder writes a read only when it
+changes).
+req30 reads `count` only when the mask index could need the clamp: the queries then equal the recording's
+(`GetGafFrame FrameTable#1 4`, six of them), and the verdict moves to `Game.visibilityMask`, `byte 22: 00`.
+Probes (req33 to req46, each writing a value of mine into `visibilityMask` entry 11, whose byte the verdict names and
+shows as the replayed value; the real module is req30 / the committed source):
+- the frame returned by `GetGafFrame(Game.losTable, 4)` (address 0x42axxxx) has `width` 0, `xOffset` 0 and
+  `pixelsOrLayers` 0, and the sum of its first 48 bytes is 0, read straight after the call, and again after the
+  call's last import;
+- `Game.losTable` is about 0x41xxxxx; both addresses are above the block's 32 MiB, so they are the replayer's own objects.
+The recording says `o GafFrame#1.width 19`, `o GafFrame#1.xOffset 9`, `transparency 9`, `pixelsOrLayers alloc#2` and 361
+pixel bytes after each of those calls. With a frame of zeros, the cell is (17, 7 − 0) − (0, 0) instead of (8, −2) and no
+pixel is read, so no module can write the recorded `visibilityMask` entries (the expected ring: entries 11 and 23 of row 0,
+10 and 24 of row 1, ... around cell (8, −2) of a 19 × 19 mask).
+
+**Reading.** Same kind of fault as Q-gate-1 and Q-gate-2: the gate's answer to the query (replay-format.md, "Queries")
+does not write the `o` lines of the recorded answer into the object it returns, or writes them to a copy the module does
+not see; likewise `r FrameTable#1.count 10` is not in the table the module reads at call 505.
+
+**Question.** Should the replayed frame at the address `GetGafFrame` returns hold the recorded fields and pixels, and the
+table at `Game.losTable` its `count`, at the time the module reads them? As it is, circle type (`mapFlags` bit 2 clear)
+cannot be matched by any module.
