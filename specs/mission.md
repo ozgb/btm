@@ -609,5 +609,5 @@ leaves in the record (section 3).
 
 ## 8. Kit version
 
-Kit `interfaces-v70` (ozgb/byte-tactics-moddable ce2d932de) and `reference-traces-v56` (7311500c1), the versions
+Kit `interfaces-v75` (ozgb/byte-tactics-moddable 80ddffd86) and `reference-traces-v58` (58285ea1b), the versions
 the gate judges against. Services 4.3. Interface `mission` 2.0.
