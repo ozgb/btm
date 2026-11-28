@@ -43,7 +43,7 @@ The kit's manifest (`wasm/modules.json`) has an entry for targeting, which `tool
 interface header, the replay schema and the recordings (ABI section 4.2), and its `signatures` give the kinds
 of every slot and import below (ABI section 10.1). The entry is `blocked` (`true` in the kit: the default does
 not build to WASM yet), so it has no `fuel_budget` or `size_budget`, and the gate judges a module of it on its
-recordings alone: ABI section 15, the `recordings` route, one replay of each recording of
+recordings alone: ABI section 15, the `recordings` route, one replay of each recording below
 `tests/replay/targeting/` against the module, with `scenarios` and `budgets` not judged. The module must match
 the entry:
 
@@ -226,7 +226,7 @@ no pointer field.
 
 ### Read
 
-- `Game`: `units`, `seaLevel` (unsigned byte), `uiOptionFlags` (bit 10, value 0x400).
+- `Game`: `units`, `poolCount` (unsigned 16-bit), `seaLevel` (unsigned byte), `uiOptionFlags` (bit 10, value 0x400).
 - `Unit`: `pos` (`Vec3`: 32-bit *x*, *y*, *z*, 65536 to a map unit), `id`, `def`, `player`,
   `playerIndex`, `unitDefIndex`, `killCount`, `motion`, `activateFlags`, `flags`.
 - `UnitMotion`: `velocity` (`Vec3`).
@@ -290,9 +290,9 @@ result is the event's *outcome*.
 | The event | Imports, in order | Writes | Outcome |
 | --- | --- | --- | --- |
 | `size` below 12 | none | none | 0 |
-| any kind, with *u* null or *w* outside 0 to 2 | none | none | 0 |
+| any kind, with *u* not a unit (below) or *w* outside 0 to 2 | none | none | 0 |
 | SET_UNIT, SET_POS or LOAD with `size` below its kind's payload size (section 2) | none | none | 0 |
-| SET_UNIT with *t* null | none | none | 0 |
+| SET_UNIT with *t* not a unit (below) | none | none | 0 |
 | SET_UNIT | none | TargetX = the low 16 bits of `t.id`, TargetZ = −32768; `u.netDirtyFlags` cleared as in section 3 | 1 |
 | SET_POS | none | TargetX = `pos[0]` >> 16 and TargetZ = `pos[2]` >> 16, each as its low 16 bits (section 5), except that a TargetZ of −32768 is stored as −32767 (Q1); `u.netDirtyFlags` cleared as in section 3 | 1 |
 | CLEAR, the slot with no target | none | none | 0 |
@@ -305,17 +305,19 @@ result is the event's *outcome*.
 `pos[1]` is not read. A LOAD writes the two fields and nothing else: `u.netDirtyFlags` is kept, a
 TargetZ of −32768 is stored as it is (Q1 is SET_POS's alone), and no CLEARED is published. A SET_UNIT
 whose `t.id` is 0 leaves the slot with no target (section 3), with outcome 1. The `event` record is not
-written. A nonzero `event.unit` or `event.target` that is not a unit (below) is outside the contract for the
-module (section 7).
+written.
 A SET_UNIT reads `t.id` and nothing else of *t*: the target's own `netDirtyFlags` appears among the recorded
 reads (for example `r Unit#3.netDirtyFlags 1024` at tick 138 of `orders-guard-attacked`), is not changed,
 and no result depends on it.
 
-**The limits of each kind** (ozgb/btm#25). An event outside the limits below that the module enforces (all but
-*a unit*, see the end of this subsection) changes nothing, writes nothing, publishes nothing and does not trap.
-A nonzero block offset is *a unit* when it is the offset of a slot of the unit pool: from `Game.units` to
-`Game.unitsEnd`, the pool's last slot (`docs/replay-format.md`, the paragraph on `Game.unitsEnd`), in steps of
-280, the size of `Unit` (`layout.json`, `Unit`), whether or not the slot's unit is alive or holds a unit type.
+**The limits of each kind** (ozgb/btm#25). An event outside the limits below changes nothing, writes nothing,
+publishes nothing and does not trap, and its outcome is 0.
+A block offset is *a unit* when it is not 0 and equals `Game.units` + 280 *k* for a slot 0 ≤ *k* <
+`Game.poolCount` (`Game.poolCount` is unsigned 16-bit; 280 is the size of `Unit`, `layout.json`), whether or
+not the slot's unit is alive or holds a unit type. The module reads `Game.poolCount` and stores nothing:
+every targeting slot reads it, and each recording's first call records it, `r Game.poolCount 2501`, its first
+line (`docs/replay-format.md`, the paragraph on the recordings of targeting). The pool's last slot, `Game.unitsEnd`
+(`docs/replay-format.md`, the paragraph on `Game.unitsEnd`), is then slot 2500 of 2501.
 
 | Kind | `size` at least | `unit` | `weapon` | The payload |
 | --- | --- | --- | --- | --- |
@@ -325,14 +327,12 @@ A nonzero block offset is *a unit* when it is the offset of a slot of the unit p
 | RESET (99) | 12 | a unit | 0 to 2 | none |
 | LOAD (100) | 20 | a unit | 0 to 2 | `xOrUnit` and `zOrSentinel`: any 32-bit values (section 5 keeps their low 16 bits) |
 
-No kind names a player. A kind other than these five is outside every limit. The module enforces every limit
-but *a unit* by the rows above, with outcome 0. Whether the host's delivery or the module checks that a nonzero
-`unit` or `target` is a unit is left open by ozgb/btm#25, which prefers delivery; this module does not check
-it: targeting's recordings carry neither `Game.unitsEnd` nor `Game.poolCount`, which the replayer derives the
-pool's end from (`docs/replay-format.md`, the paragraph on `Game.unitsEnd`), so a replay gives no pool end to
-check against (section 7, gaps). The CLEARED effect
-the module publishes is within its kind's limits: its `unit` is the unit of the event or slot call it answers,
-and its `weapon` 0 to 2.
+No kind names a player. A kind other than these five is outside every limit and has outcome 0 with no change.
+The module enforces every limit by the rows above, the check that a `unit` or `target` is a unit
+included: ozgb/btm#25 leaves it to the host's delivery or to the module, and the kit's recordings carry the
+pool's bound so that a module can do it. The recordings hold only events inside the limits, so no
+replay shows the outcome of one outside them (section 7). The CLEARED effect the module publishes is within its
+kind's limits: its `unit` is the unit of the event or slot call it answers, and its `weapon` 0 to 2.
 
 ### `GetWeaponTargetUnit(u, w)`
 
@@ -453,8 +453,10 @@ saves `save-midgame` and `save-targets` make in the same run).
 - **The distance of a lead:** *d*.x, *d*.y and *d*.z are 32-bit differences that wrap. *D* is the
   square root of *d*.x² + *d*.y² + *d*.z², in double precision (64-bit IEEE): each square is rounded to
   double, the sum is rounded as (x² + y²) + z² in that order, and the root is truncated toward zero to a
-  signed 32-bit integer. A root of 2^31 or more gives *D* = −2^31; nothing in the engine bounds it, and no
-  recording reaches it (they stay below 2^25). The order of the rounding is part of the result: the replay
+  64-bit integer whose low 32 bits, read as a signed value, are *D* (the reference converts a double to an
+  integer this way everywhere). The root is never a NaN, and it is below 2^32 (each square is at most 2^62),
+  so a root of 2^31 or more wraps to the root less 2^32. Nothing in the engine bounds it, and no recording
+  reaches it (they stay below 2^25). The order of the rounding is part of the result: the replay
   compares `pos` exactly.
 - **The time of a lead:** *T* is signed. It is the quotient of *D* × 65536 by `speed` (both signed, the
   product exact in 64 bits) truncated toward zero, then reduced to its low 32 bits as a signed value, so a
@@ -564,8 +566,8 @@ each with the kit's reason:
   attack order, which runs only for a unit with the armed bit, and such a unit has a slot with a weapon.
 - An `Apply` of a SET_POS with a *z* of −32768 (Q1): it needs a world *z* of 32768, and scenarios and the
   harness reject positions off the map.
-- An `Apply` of an event it rejects (a null unit, a weapon outside 0 to 2, or a SET_UNIT with a null
-  target): every publisher passes a live unit and its own weapon number.
+- An `Apply` of an event it rejects (a unit that is not one, a weapon outside 0 to 2, or a SET_UNIT with a
+  target that is not a unit): every publisher passes a live unit and its own weapon number.
 - A candidate with `alive` clear or `killPending` set: the candidate list holds only live
   units, so neither check can fail.
 - `FindBestTargetIfFireAtWill` with a fire order of 3. The kit's reason: a unit's fire order comes from its
@@ -591,8 +593,6 @@ Not recorded, and the kit gives no reason and does not say whether a scenario re
 - A unit target with a negative TargetX, or with a TargetX outside the unit pool: outside the contract.
 - A weapon index above 2 in `GetWeaponTargetUnit`, `GetWeaponTargetPos` or `SavedTargetPair`, and in
   `FindWeaponTarget` a weapon index whose low 8 bits (section 5) are above 2: outside the contract.
-- An `Apply` whose `event.unit` or `event.target` is nonzero and not a unit (section 4): outside the contract
-  for the module, which ozgb/btm#25 may move to the host's delivery.
 - A ground target with a negative coordinate (section 5 gives the shift).
 - A `unitDefIndex` of 512 or more (a `UnitTypeSet` holds 512 bits) given to a set test, and a null
   `categories`, `weaponCategories`, `u.def`, `t.def` or `u.player`: outside the contract.
@@ -632,9 +632,6 @@ Gaps in the kit, which this spec does not fill:
 - The candidate list's maximum: ABI section 7.3 bounds it by the slots of the unit pool, but the kit gives
   no fixed number of them that a module must hold, against the 4096-byte stack of ABI section 2.2
   (section 2).
-- The pool's end in the replay: targeting's recordings carry neither `Game.unitsEnd` nor `Game.poolCount`,
-  so the kit does not say that a replay's block holds the pool's end, and a module cannot rely on it there to
-  check that a nonzero `event.unit` or `event.target` is a unit (section 4, the limits of each kind).
 - The update rule of the `rng.seed` generator: `docs/replay-format.md` says a draw returns the recorded
   result and the stream words advance as the game's do, and ABI section 9.3 gives the range-below-2 case,
   but neither states how the generator is updated. The `w rng.seed` lines are the recorded result.
@@ -653,5 +650,5 @@ else of alignment.
 
 ## 8. Kit version
 
-Kit `interfaces-v68` and `reference-traces-v55`, the versions the gate judges against. Interface
+Kit `interfaces-v75` and `reference-traces-v58`, the versions the gate judges against. Interface
 `targeting` 4.0.
