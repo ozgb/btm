@@ -164,3 +164,8 @@ pub extern "C" fn GetMissionFeature(index: i32, out: u32) -> i32 {
 fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
 }
+
+// A function pointer puts the module's first slot in its table range (496), so that the module imports the table
+// and has a data segment, as the loader's checks expect.
+#[used]
+static TABLE_ANCHOR: [extern "C" fn() -> i32; 1] = [GetGameType];
