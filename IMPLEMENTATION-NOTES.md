@@ -63,3 +63,11 @@ Q-probe-1 is resolved and removed. The module's logic is unchanged; the last ver
 - `let _ = n;` (nit 3): removed; the warning is silenced with `#[allow(unused_assignments)]` on `goal_cells`.
 
 10. req12 (after these changes, same logic): `equal` on all five recordings.
+
+## Third review answers
+- Nit 1 (`#[allow(unused_assignments)]` in `goal_cells`): kept. The counter is shared by the early-return check of the
+  macro, and the allow is scoped to that one function. Rewriting the loops would change a verified-equal module for no
+  behavioural gain.
+- Nit 2 (pool and items offsets hard-coded): kept. Spec section 3 fixes both by formula from *N* and the head's
+  `pool`/`items` references are computed from them. The settings words 260 and 264 hold the same values, so the two
+  styles agree on every input of the contract. The module is unchanged since req12, whose verdict is `equal`.
