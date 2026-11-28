@@ -912,7 +912,7 @@ lines, or the last value an earlier line gave).
 
 Not covered by any recording: `UpdateAllUnits` (K1), `KillUnit`, `FreeFactoryIndex`, `GetFactoriesInRadius`,
 `UnitRefUnlink`; `Apply` of FINISH_CONSTRUCTION, BUILD_DECAY, REPAIR,
-SET_STANCE, SET_BUILD_STATE, CHANGE_CELL, SEND, CAPTURE, FORGET_ATTACKER, KILL_ALL and RELOAD_TYPE; the water
+SET_STANCE, SET_BUILD_STATE, SEND, CAPTURE, FORGET_ATTACKER, KILL_ALL and RELOAD_TYPE; the water
 damage and the selection reset of `UpdateUnitBody`; the wind of `UpdateUnitHead`; `FindUnitType` and
 `FindUnitTypeId` with a name that is no type; a wreck (both rows of Wreck); the credit of kill types 1, 5 and 6,
 a rank change and PLAYER_TOOK_LEAD; the last unit of a player; the cargo of a dying transport; a vector that
