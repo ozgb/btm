@@ -1605,5 +1605,11 @@ pub extern "C" fn Init(_map: u32, region: u32, _size: i32) {
 
 #[no_mangle]
 pub extern "C" fn Shutdown() -> u32 {
+    let f = unsafe { read_volatile(&raw const NOP) };
+    f();
     region()
 }
+
+// A function pointer keeps the table import (ABI 9.1).
+fn nop() {}
+static NOP: fn() = nop;
