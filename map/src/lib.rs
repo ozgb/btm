@@ -37,8 +37,9 @@ pub static mut g_extTdf: u32 = 1;
 #[no_mangle]
 pub static mut g_blockBase: u32 = 1;
 
-static NEVER: u32 = 0;
+// A function pointer in the data keeps the table import and its element segment (ABI 2.3, 9.1).
 fn noop() {}
+#[used]
 static TABLE: [fn(); 1] = [noop];
 
 #[panic_handler]
@@ -450,6 +451,11 @@ fn report(k: u32, cx: i32, cy: i32, sx: i32, sy: i32, cause: u32) {
     unsafe { svc_emit(p.as_ptr(), 32) };
 }
 
+fn rebuild_report(k: u32, x: i32, y: i32, w: i32, h: i32) {
+    rebuild(k, x, y, w, h);
+    report(k, x, y, w, h, 2);
+}
+
 fn defined(k: u32) -> bool {
     r32(pm_addr(k) + 12) != 0
 }
@@ -487,8 +493,7 @@ fn stamp_update(e: &Env, u: u32) {
     let mut k = 0;
     while k < 32 {
         if r32(pm_addr(k) + 28) > s {
-            rebuild(k, x, y, w, h);
-            report(k, x, y, w, h, 2);
+            rebuild_report(k, x, y, w, h);
         }
         k += 1;
     }
@@ -809,11 +814,6 @@ fn apply_set_yard(e: &Env, uo: u32, open: i32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn Apply(ev: u32, size: u32) -> i32 {
-    // Keeps the function table import alive.
-    if unsafe { read_volatile(&NEVER) } != 0 {
-        let f = unsafe { read_volatile(&TABLE[0]) };
-        f();
-    }
     if size < 8 {
         return 0;
     }
@@ -1498,8 +1498,7 @@ pub extern "C" fn RefreshMovedUnits(k: i32, unit: u32) {
     w32(sa, t);
     let (x, y, w, h) = unit_rect(unit);
     if p < o {
-        rebuild(k, x, y, w, h);
-        report(k, x, y, w, h, 2);
+        rebuild_report(k, x, y, w, h);
     }
     if s != o {
         let end = e.off(r32(e.game + G_UNITS_END));
@@ -1511,8 +1510,7 @@ pub extern "C" fn RefreshMovedUnits(k: i32, unit: u32) {
                     let q = r32(ms);
                     if o <= q && q < s {
                         let (mx, my, mw, mh) = unit_rect(m);
-                        rebuild(k, mx, my, mw, mh);
-                        report(k, mx, my, mw, mh, 2);
+                        rebuild_report(k, mx, my, mw, mh);
                     }
                 }
             }
@@ -1532,8 +1530,7 @@ pub extern "C" fn RefreshUnitIfStale(k: i32, unit: u32) {
     }
     if r32(sa) < r32(pm_addr(k) + 28) {
         let (x, y, w, h) = unit_rect(unit);
-        rebuild(k, x, y, w, h);
-        report(k, x, y, w, h, 2);
+        rebuild_report(k, x, y, w, h);
     }
 }
 

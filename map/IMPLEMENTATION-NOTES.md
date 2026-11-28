@@ -23,6 +23,7 @@ kit's `wasm_fuel.py` (rule v1). `ld-wrap.sh` adds `--no-stack-first` when the li
 2. req1 (after the review fixes, resubmitted as req1 in a fresh outbox): `equal` on all five recordings.
 3. req1 (after merging the spec's X36 wrap text and the second review): `equal` on all five recordings.
 4. req1 (kit interfaces-v69 / reference-traces-v56, after merging the spec's v69 pin and its off-map removal clause): `equal` on all five recordings.
+5. req1 (kit interfaces-v72 / reference-traces-v57, after the third review): `equal` on all five recordings.
 
 ## Where the spec or kit was unclear
 
@@ -56,3 +57,10 @@ kit's `wasm_fuel.py` (rule v1). `ld-wrap.sh` adds `--no-stack-first` when the li
    footprint and a null bucket cannot write outside `Game.cells`. The spec is silent; in-map cells behave as before.
 3. The three dead guards on `SimAlloc` results are removed.
 4. The panic handler executes `unreachable`, so a panic traps at once.
+
+## Third review answers
+
+1. Dead `NEVER` branch: removed. A `#[used]` static holding a function pointer keeps the table import and an element
+   segment at entry 400 (inside the range), with no cost in `Apply`. The no-op entry stays: the reference `imports` check
+   requires the table import (ABI 9.1) and wasm-ld drops it when nothing uses the table.
+2. `rebuild` then `report` is now one helper, `rebuild_report`; behaviour and import order are unchanged.
