@@ -53,6 +53,12 @@ pub static mut g_blockBase: u32 = 0;
 #[no_mangle]
 pub static mut g_region: u32 = 0;
 
+fn ident(x: u32) -> u32 {
+    x
+}
+// A function pointer, so that the module imports the table as its manifest entry lists.
+static IDENT: fn(u32) -> u32 = ident;
+
 // Set once by Init (before the first tick).
 static mut UNIT_SLOTS: i32 = 0;
 
@@ -189,7 +195,8 @@ pub extern "C" fn Init(map: u32, _world: u32, _region: u32, _size: u32) {
 
 #[no_mangle]
 pub extern "C" fn Shutdown() -> u32 {
-    region()
+    let f = unsafe { read_volatile(&raw const IDENT) };
+    f(region())
 }
 
 // Common refusal checks and account lookup. Returns the account address, or None for a refusal.
