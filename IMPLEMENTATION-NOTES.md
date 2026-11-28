@@ -31,6 +31,18 @@ req1 to req9 were caused by a fault on the gate host, not by the module (operato
 
 8. req10 (same module, gate fixed): `equal` on all five recordings. Q-gate-1 is resolved.
 
+9. req11 (review fixes, same logic): see the end of this file for its verdict.
+
+## Review answers
+- Probe loop (risk 1): a spec gap; written as Q-probe-1 in SPEC-QUESTIONS.md. No guard, as it would change `steps`.
+- Init with Game.width x Game.height above the map's cells (risk 2): outside the contract (spec section 4 `Init`: they
+  are equal); a partial clamp would still leave `width`/`height` indexing past the cells, so none is added.
+- `RegionSize` loop on a huge `unitSlots` (nit 3): bounded now. Dead code and warnings (nit 4): removed.
+- Notes of wind_meteors (nit 5): kept in that module's own history; this file is pathfinding's.
+- SPEC-QUESTIONS.md (nit 6): the resolved gate entry is dropped (it was a gate-host fault); it now holds Q-probe-1.
+- build.sh (nit 7): intermediate file moved under target/, path quoted. The CI workflow is not changed here.
+- pfreplay.js (nit 8): a local aid only, left as is.
+
 ## Unclear points
 - A `failed` verdict has no message; the earlier ones were a gate host fault (Q-gate-1, resolved).
 - `--no-stack-first` is not in the linker's help here (LLD 20.1.8); the default places the stack after the data, and the

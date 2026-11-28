@@ -312,6 +312,7 @@ impl Pf {
                     return;
                 }
                 n += 1;
+                let _ = n;
                 f(($x) as i16 as i32, ($y) as i16 as i32);
             };
         }
@@ -841,8 +842,6 @@ impl Pf {
     // ---- search start ----
     fn start_search(&self, goal: u32, state: u32) {
         self.s(H_OWNER, r32(state + 12));
-        let copy_target = self.g(H_TARGET);
-        let _ = copy_target;
         for i in 0..8 {
             w32(self.b + S_GOAL + 4 * i, r32(goal + 4 * i));
         }
@@ -1021,7 +1020,7 @@ fn layout(w: i32, h: i32, s: i32) -> [u32; 12] {
     let n = if c + 1 < 65536 { c + 1 } else { 65536 };
     let p = (s as u32).wrapping_add(16);
     let mut b = 16;
-    while b < p {
+    while b < p && b < 0x8000_0000 {
         b *= 2;
     }
     let items = POOL_OFF + 20 * n;
