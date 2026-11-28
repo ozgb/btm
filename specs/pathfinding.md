@@ -759,7 +759,13 @@ records.
   who stopped playing with a positive bank is served until the bank is spent.
 - A requester or a unit of 0 is a number like any other in `Submit`, `Cancel` and the chains (a free entry
   is in no chain). The engine's handles are block offsets and never 0.
-- The probe has no limit of its own on its turns: it ends only by the rules of section 4.
+- The probe has no limit of its own on its turns: it ends only by the rules of section 4. A search whose
+  goal gives no goal cell keeps the `goalX`, `goalY` of an earlier search (section 4, "The start of a
+  search"). When the greedy walk starts at or reaches that cell with *best* above 0, the cell by direction
+  0 from it is passable, and *H* of that cell is above 0, the walk steps off by direction 0 and back by
+  direction 4 without end: the probe never ends, and neither does the `Step` that runs it, which in a
+  module is running out of fuel (ABI section 13). The case is outside the contract: no recording reaches
+  it, and a module need not end the probe any other way.
 
 **Gaps in the kit.**
 - The kit's pathfinding entry is blocked, so it has no budgets, and the kit has no pathfinding `.wasm`. No
