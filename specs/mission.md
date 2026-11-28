@@ -79,14 +79,17 @@ The kit's entry for mission is the module's entry, and this spec follows it:
 A text a slot returns points into the record, in the block: a `linear` address, the record's address plus the
 field's offset, or 0 for "none". `HasMissionName` returns 0 or 1.
 
-- The kit's entry has no `fuel_budget` or `size_budget` (ABI 4.2). A module built from this spec meters itself by
-  rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`; its budgets come with a later entry.
+- `blocked`: `true` in the kit's entry, and it has no `fuel_budget` or `size_budget` (ABI 4.2). The gate judges a
+  module of it on the recordings route, without budgets (ABI section 15, "A blocked entry is judged without
+  budgets"): every recording of `tests/replay/mission/`, with `budgets: not_judged`. A module built from this spec
+  still meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`; its fuel and
+  size are judged once the entry has budgets.
 - Hooks: every slot of `interfaces/mission.h` says "Hooks: none", so the module raises none.
 
 ### What the engine's slots need
 
 The engine's slots reach these engine calls. All but items 1 and 2 are calls that no import of the kit's
-`interfaces/services.h` (version 4.2) or of an interface offers. The list is for ozgb/btm#43, which moves the slots
+`interfaces/services.h` (version 4.3) or of an interface offers. The list is for ozgb/btm#43, which moves the slots
 into the module: the module of this spec exports none of them and imports nothing.
 
 1. **Allocation in the block:** the record itself, the units and their strings, the start position rules, the
@@ -606,5 +609,5 @@ leaves in the record (section 3).
 
 ## 8. Kit version
 
-Kit `interfaces-v65` (ozgb/byte-tactics-moddable d577bfcb6) and `reference-traces-v54` (25f3a49bc), the versions
-the gate judges against. Services 4.2. Interface `mission` 2.0.
+Kit `interfaces-v70` (ozgb/byte-tactics-moddable ce2d932de) and `reference-traces-v56` (7311500c1), the versions
+the gate judges against. Services 4.3. Interface `mission` 2.0.
