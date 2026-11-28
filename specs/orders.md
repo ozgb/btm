@@ -102,7 +102,7 @@ and only its low byte is used.
 | `movement.UnitTarget` | `[block] -> int` | "the end of an order": whether the unit's goal steers to the order's target |
 | `units.CreateUnit` | `[int, int, linear, int, int, int] -> block` | `BuildingBuild`, `MobileBuild`, `VTOL_MobileBuild` and `Resurrect`: the unit started |
 | `units.FindUnitTypeId` | `[linear] -> int` | QUEUE_BUILD's type number; `Resurrect` state 3 |
-| `units.AddBuildProgress` | `[block, block, f32] -> int` | "the build step", `BuildingBuild` state 3, `VTOL_HelpBuild` and `VTOL_MobileBuild` |
+| `units.AddBuildProgress` | `[block, block, f32] -> int` | "the build step" (`HelpBuild` and `MobileBuild` state 3); `BuildingBuild` state 3, its own row (the target box, no BUSY); "the air build pass" (`VTOL_HelpBuild` and `VTOL_MobileBuild`) |
 | `units.AddRepairProgress` | `[block, block, f32] -> int` | `SelfRepair`, `RepairUnit`, `RepairUnitNoMove` |
 | `units.CanLoad` | `[block, block] -> int` | `GetOrderType` modes 1, 2 and 6 |
 | `units.CanReclaim` | `[block, block] -> int` | `ReclaimUnit` and `VTOL_ReclaimUnit` |
@@ -149,10 +149,20 @@ The recordings carry `services.Emit` as `services.SchedPublish 3 <size>` (3 is o
 as `services.ScheduleTargetingTargetUnit` and `map.CanPlaceUnitFootprint` as
 `services.ScheduleMapCanPlaceUnitFootprint` (ABI 9.3, "Routes in the recordings").
 
+**Two calls that are not in the entry.** Section 4 names two more calls: "the reclaim pick"
+(`map.PickRandomReclaimableResourcesInRadius`, whose signature the manifest has under `signatures.map`, and which
+`docs/schedule.md` lists among the imports of `orders.RunOrders`), in `RepairPatrol` and `VTOL_RepairPatrol`, and
+`economy.RequestGranted`, in `BuildWeapon` state 1. Neither is an import of the entry above, which the module must
+match exactly, so the entry stays as the kit has it. Until the entry lists them, a module of it can't import them
+(ABI 9.1: the module imports the entry's imports and nothing else), so it can't make these calls and can't produce
+the rows of section 4 that follow them. The host runs the engine's native orders for a `blocked` entry (ABI 4.2),
+and the gate judges the module on the recordings alone, none of which reaches either call (section 7), so those rows
+are judged by no check until the kit lists the imports ("Gaps in the kit").
+
 - Hooks: `interfaces/orders.h` names AllowBuild, AircraftSeekRepair, GuardResponse and IdleBuilderAction on
   `RunOrders`, and AllowCommand on `GetOrderType` and on the event kind COMMAND; every other slot says "Hooks:
-  none". The lines only fix where each hook runs (ABI section 6, "Hook points"): Milestone 3 decides how a module
-  calls one, so in this kit version the module calls none and behaves as section 4 states.
+  none". The lines only fix where each hook runs (ABI section 6, "Hook points"); in this kit version the module
+  calls none and behaves as section 4 states.
 
 ### Arguments outside the block
 
@@ -191,7 +201,36 @@ All in the caller's memory (`linear`), little-endian, read in place:
 
 A recorded line shows the arguments the recording keeps: a cell or size passed by address is written by value
 (`(x,y)`), a position by address as its three words (`(x,y,z)`), and a buffer the import writes as `?`
-(`docs/replay-format.md`).
+(`docs/replay-format.md`). Two names of the recordings stand for addresses of a new order:
+
+- `alloc#n` is the address `services.SimAlloc` answered (`docs/replay-format.md`, "Services", the `alloc` result:
+  `= alloc#1`; `alloc#?` names a block no earlier allocation of the file returned, as in `i services.SimFree alloc#?`
+  for an order the file did not see made). Once a later line names the block as an order, it is `Order#n`.
+- `PathOrderAttach#n` is the address of the new order's `Order.link` (the order + 18), an embedded `PathOrderAttach`
+  record, named on its own while the recording has not yet named the order (`i units.UnitRefInit PathOrderAttach#1
+  Unit#1 null`, then `i units.UnitRefSetValue PathOrderAttach#1 Order#5`). Once the order is named, its link is
+  `Order#n.link` (`docs/replay-format.md`, "An embedded polymorphic object").
+
+### Effects of other modules that reach `Apply`
+
+`data/routes.csv` delivers to orders, besides orders' own event kinds, six effect kinds of other modules, all
+synchronous. The engine turns each into the orders event below before `Apply` is called, so `Apply` only ever sees
+kinds 288 to 296 (and `ExpandGroupCommand` 297 and 298). The kit states what each effect asks (`interfaces/ai.h`,
+`interfaces/weapons.h`, `interfaces/movement.h`) but not how its fields become the event's; the mapping as `Apply`
+receives it:
+
+| Effect (publisher, kind) | Event `Apply` receives | Fields |
+| --- | --- | --- |
+| ai's ADD_ORDER 240 (`AiAddOrder`, 44) | ADD 288 (`OrdersAdd`, 44) | `unit`, `type`, `queue`, `target`, `hasPos`, `pos`, `params` copied |
+| ai's QUEUE_BUILD 241 (`AiQueueBuild`, 16) | QUEUE_BUILD 289 (`OrdersQueueBuild`, 44) | `unit`, `count` copied; `name` the first 31 bytes of the `UnitDef.unitname` of entry `type` of `Game.defs`, the rest of the 32 bytes 0 |
+| ai's STOP 243 (`AiStop`, 12) | STOP 290 (`OrdersStop`, 12) | `unit`, `all` copied |
+| weapons' ATTACKED 272 (`WeaponsAttacked`, 16) | ATTACKED 293 (`OrdersAttacked`, 12) | `unit`, `attacker` copied (`amount` dropped) |
+| weapons' PARALYZE 277 (`WeaponsParalyze`, 12) | PARALYZE 294 (`OrdersParalyze`, 12) | `unit`, `ticks` copied |
+| movement's ORDER_FLAGS 336 (`MovementOrderFlags`, 16) | STATUS_FLAGS 292 (`OrdersStatusFlags`, 16) | `unit`, `order`, `flags` copied |
+
+An effect shorter than its payload reaches no `Apply` call. Each event is delivered at once (the route is
+synchronous), inside the publisher's call: a STATUS_FLAGS from movement's `New*` imports reaches `Apply` while the
+import runs (section 4, "Imports that change the order").
 
 ### Events
 
@@ -294,10 +333,10 @@ The recordings carry it whole at the first call (`r SimGlobals.g_missionOrderTab
 
 **Which behaviour runs.** The run of an order of kind K is the behaviour of the code table entry `orderNotify[j]` that
 entry K's `notify` names (`r SimGlobals.g_missionOrderTableVec[K].notify orderNotify[j]`); `data/replay_schema.json`
-(`annotations.code_tables.orderNotify.entries`) names entry j by the order type it stands for. A module stores its
-own function for each index j, and section 4, "Order kinds", gives each. `QMove` and `QPatrol` share
-`orderNotify[64]`, `SelfDestruct` and `SelfDestructFG` share `orderNotify[54]`. The run is called as (the order's
-`Order.unit`, the order, the code) and answers a *result*.
+(`annotations.code_tables.orderNotify.entries`) names entry j by the order type it stands for. Section 4, "Order
+kinds", gives the behaviour each index j runs, under the kind whose entry names it: `orderNotify[64]` is the behaviour
+of both `QMove` and `QPatrol`, and `orderNotify[54]` of both `SelfDestruct` and `SelfDestructFG`. The run is given (the
+order's `Order.unit`, the order, the code) and answers a *result*.
 
 The table as the recordings hold it (flags in hex; `notify` as the `orderNotify` index):
 
@@ -381,6 +420,7 @@ import's own write.
 | Field | Owner | Use |
 | --- | --- | --- |
 | `Game.ticks` (the *tick*), `Game.units`, `Game.unitsEnd` (the last unit record), `Game.defs`, `Game.features`, `Game.featureCount`, `Game.cells`, `Game.spots`, `Game.width`, `Game.players`, `Game.seaLevel` (unsigned byte), `Game.overflowBucket`, `Game.mapWidth`, `Game.mapHeight`, `Game.visibilityMask`, `Game.playerIndex`, `Game.localPlayer`, `Game.interfaceType` | game | the tick; the unit array (280-byte records), the unit types, the features (256-byte records), the cells (13-byte records), the spots and the map; the queries' visibility tests |
+| `Game.width_142a3`, `Game.height_142a7` | game | the columns and rows of the table of spatial buckets that `Unit.spatialBucket` and `Game.overflowBucket` point into; the recordings read them to size that table and name the buckets (`r Game.width_142a3 28`). The module only compares the two offsets ("the off-map return") and need not read them |
 | `SimGlobals.g_missionOrderTableVec` | engine | the order type table |
 | `Unit.list`, `list2`, `netDirtyFlags`, `motion` (whether it is 0, and its `UnitMotion.flags` low two bits, the flight mode), `def`, `player`, `playerIndex`, `unitDefIndex`, `id`, `flags`, `activateFlags`, `cobStateFlags`, `pos` (`posX`, `posY`, `posZ`; `xWhole`, `zWhole` the high halves), `heading`, `cell`, `footprint`, `spatialBucket`, `carrier`, `cargo`, `script`, `buildLeft` (f32), `health` (signed 16-bit), `killCount` (unsigned 16-bit), `attacker`, `lastAttackerSlot`, `lastDamageType`, `postTransferHoldoff`, `moveOrder`, `fireOrder`, `group`, `weapons[i]` (`weapon<i>Flags`, `weapon<i>Def`, `weapon<i>Stockpile`) | units | the running unit, its target and the units the kinds look at |
 | `UnitDef.flags1`, `flags2` (and `flags2Byte`), `categories`, `weaponCategories` (`weaponCategories0` to `2`, `UnitTypeSet` records), `weapons` (`weapons0`), `defaultmissiontype`, `ids`, `range`, `buildRange` (unsigned 16-bit), `buildRate` (unsigned 16-bit), `buildtime`, `maxHealth` (unsigned 32-bit), `metalCost`, `energyCost` (f32), `maneuverleashlength` (unsigned 16-bit), `kamikazedistance`, `attackrunlength`, `altitude` (signed 16-bit), `maxvelocity`, `capacity`, `height180`, `radius184`, `minwaterdepth`, `footprintx`, `footprintz`, `modelMinX` to `modelMaxZ`, `modelMaxYHigh`, `selfdestructcountdown` | units | the unit type of a unit, or entry `ticks` of `Game.defs` |
@@ -414,6 +454,22 @@ read and write the module's records in the block, so they must be laid out exact
 
 Within one call, only the order of import calls (and so of `services.RandomInt` draws and of publishes) is
 observable. The block writes are compared at the end of the call, so the order they are listed in carries no meaning.
+Two rules of the replay bound that comparison:
+
+- **An order freed in the call.** An object that `services.SimFree` frees is not walked again until
+  `services.SimAlloc` hands its address out again (`docs/replay-format.md`, "An object field that an import
+  changes"), and the end-of-call walk reaches only the objects that the call's arguments and their pointer fields lead
+  to ("Objects"). So the writes a run makes
+  to an order that is then deleted in the same call (its `state`, `flags`, `wakeFrame`, ...) have no `w` lines and are
+  not compared; only the imports and publishes of its end are. A new order allocated at a freed order's address is a
+  new object (`Order#5`, not the name of the order freed there).
+- **Imports that change the order.** An import can change the order's own fields before it returns. Movement's `New*`
+  imports deliver movement's ORDER_FLAGS at once, which reaches `Apply` as STATUS_FLAGS (section 2) and ORs its `flags`
+  into `Order.subFlags`; the recording shows it as an `o` line after the import (`i movement.NewApproachRadius Order#4
+  45878325 19689825 16 = ApproachRadius#1`, then `o Order#4.subFlags 128`; `docs/replay-format.md`, "An object field
+  that an import changes"). The module reads such a field from the block after the import, never from a copy taken
+  before it: the end-of-call `w` line compares the value the block holds at the end, the import's bits included, and
+  the next pass of `RunOrders` sees them (a condition the run then waits on may already be pending).
 
 Every publish is `services.Emit(payload, size)`, recorded as `services.SchedPublish 3 <size>`, and named here KIND
 (size) with its payload. Whether a publish is delivered at once (its subscriber's writes follow it in the recording) or
@@ -495,8 +551,9 @@ Each term is defined once; section 4 uses it by its name, in quotes where the na
      step began;
   3. when `O.flags_42` lacks 0x40000: while the unit's first order has `flags_42` bit 0x4000, it is removed (measured
      against itself, so it gains no 0x10000);
-  4. the result: `O.flags_42` has gained 0x1, and 0x2000 (`ORDER_FLAG_ANNOUNCE`) when *q* is 0; O is then at the front
-     of the unit's orders when its `flags_42` has any of 0x40020, else inserted after the marked order.
+  4. the result: `O.flags_42` has gained 0x1, and 0x2000 (`ORDER_FLAG_ANNOUNCE`) when *q* is 0; O is then inserted at
+     the front (of its list: the second list when it has 0x40000) when its `flags_42` has any of 0x40020, else inserted
+     after the marked order (always in the first list).
 
   *q* is compared with 0 only. The bits looked at are `O.flags_42`'s: the table flags with 0x200 cleared when T is 0
   and 0x400 cleared when P is none.
@@ -542,18 +599,18 @@ Each term is defined once; section 4 uses it by its name, in quotes where the na
 #### Orders a run issues
 
 - **The attack order (V, forced)** answers 1 when it added orders, 0 otherwise:
-  1. 0 (no import) when V is *U*; when forced is 0 and `U.flags` AND 0xc0000 is 0; or when forced is 0 and `U.flags`
-     AND 0x300000 is 0;
+  1. 0 (no import) when V is *U*; when forced is 0 and `U.flags` AND 0xc0000 (`moveOrder`) is 0; or when forced is 0 and `U.flags`
+     AND 0x300000 (`fireOrder`) is 0;
   2. K = `GetOrderType(3, U, V, none)` (this module's own rule, run inside the call; mode 3 makes no import); 0 when K
      is 0;
-  3. when forced is 0 and `U.flags` AND 0xc0000 is 0x40000: R = `GetOrderType(2, U, none, U.pos)` (its imports here); a
+  3. when forced is 0 and `U.flags` AND 0xc0000 (`moveOrder`) is 0x40000: R = `GetOrderType(2, U, none, U.pos)` (its imports here); a
      new order (kind R, no target, position `U.pos`, 0, 0, 0) at the front; then a new order (kind K, target V, no
      position, 0, 0, `D.maneuverleashlength`) whose `start` becomes (`U.xWhole`, `U.zWhole`), at the front. So the
      attack is first and the move second. R is not checked: an R of 0 makes an order of kind 0 (Q11);
   4. otherwise a new order (kind K, target V, no position, 0, 0, 0) at the front;
   5. 1.
 - **The repair order (V)** answers 1 when it added orders, 0 otherwise. K = `GetOrderType(8, U, V, none)` (its imports
-  here); 0 when K is 0. Then by m = `U.flags` AND 0xc0000:
+  here); 0 when K is 0. Then by m = `U.flags` AND 0xc0000 (`moveOrder`):
 
   | m | Effects | Answer |
   |---|---|---|
@@ -586,7 +643,7 @@ Each term is defined once; section 4 uses it by its name, in quotes where the na
   *U*, `mode` *m*.
 - **The climb preparation**, in order: CLAIM (3); when `U.carrier` is not 0, ATTACH_TO_PIECE (*U*, 0, −1, 2);
   SET_STATE_BITS (1, 1); then, only when `UnitMotion.flags` of `U.motion` (as the block holds it after those
-  synchronous effects) has its low two bits equal to 1: SET_FLIGHT_MODE (2), a path target to `U.pos`, SET_ALTITUDE
+  synchronous effects) has its low two bits (`UnitMotion.mode`) equal to 1: SET_FLIGHT_MODE (2), a path target to `U.pos`, SET_ALTITUDE
   (*t*, `D.altitude` / 2, truncated toward zero), attach target *t*, and `flags` gains 0xe0.
 - **The off-map return** (a test and its effects): when `U.spatialBucket` equals `Game.overflowBucket`: with the centre
   M = ((`Game.mapWidth` / 2) << 16, 0, (`Game.mapHeight` / 2) << 16) (divisions truncated toward zero), the move goal
@@ -594,7 +651,7 @@ Each term is defined once; section 4 uses it by its name, in quotes where the na
 
 #### Speech, particles and scripts
 
-- **Speech (k, t)**: when `U.flags` has unit flag 0x10000000 and lacks unit flag 0x4000,
+- **Speech (k, t)**: when `U.flags` has unit flag 0x10000000 (`alive`) and lacks unit flag 0x4000,
   `services.RecordSimEvent(1, 0, [U.id, k, t], 3)`: `SIM_EVENT_UNIT_SPEECH`, voice slot *k*, speech text number *t*
   (`interfaces/sim_events.h`; 0 is the kind's text), flags 0. Otherwise no import.
 - **Announce (t)**: when `flags_42` has `ORDER_FLAG_ANNOUNCE` (0x2000): the bit is cleared and speech (5, t).
@@ -664,7 +721,7 @@ SET_BUILD_STATE, and orders' COMMAND, CLEAR_NET_DIRTY, UNLINK) are written out w
   number *n* of a call's answer names unit *n* of the unit array, in order.
 - **The repairable list (r)**: the units in range (`U.pos`, r) that are repairable, in order.
 - **The ground allies (r)**: the units in range (`U.pos`, r) V for which V's player's `Player.allied[` *U*'s
-  `Player.index` `]` is not 0, V's `UnitDef.flags1` lacks 0x800, and V is not *U*, in order.
+  `Player.index` `]` is not 0, V's `UnitDef.flags1` lacks 0x800 (`flying`), and V is not *U*, in order.
 - **The enemy count (P, r)**: `los_radar.GetVisibleEnemiesInRadius(U.playerIndex, P, r, 0, buf, 64)`, *buf* a buffer
   of 64 unit words; the answer is the count. **The enemy list (P, r)**: the enemy count gives *n*; when *n* > 64, a
   second call with a buffer of *n* words and capacity *n* gives *n2* (else there is no second call and *n2* = *n*). The
@@ -687,10 +744,21 @@ SET_BUILD_STATE, and orders' COMMAND, CLEAR_NET_DIRTY, UNLINK) are written out w
 
 #### Builds and features
 
-- **The build step** (with V = the target): `units.AddBuildProgress(U, V, a)`, *a* the float of (`D.buildRate` / 30,
-  integer division); when it answers not 0: the nano point of *U*, then the nano spray (that point, the model box of V),
-  V read after the import; then BUSY (300); then when `V.buildLeft` (read after the import) is not 0.0: a wake delay
-  of 1, `flags` gains 0xa, result 2; when it is 0.0: result 1.
+- **The build step** (with V = the target), the state 3 of `HelpBuild` and `MobileBuild`: `units.AddBuildProgress(U,
+  V, a)`, *a* the float of (`D.buildRate` / 30, integer division); when it answers not 0: the nano point of *U*, then
+  the nano spray (that point, the model box of V), V read after the import; then BUSY (300); then when `V.buildLeft`
+  (read after the import) is not 0.0: a wake delay of 1, `flags` gains 0xa, result 2; when it is 0.0: result 1.
+  `BuildingBuild` state 3 is not the build step: its own row has the target box and no BUSY.
+- **The air build pass (d)** (with T the target), `VTOL_HelpBuild` state 3 and `VTOL_MobileBuild` states 3 and 4. Imports,
+  in order: when the tick (unsigned) mod 150 is 0: with *a* = Head(`U.pos`, T.pos) + 0xdb6e (32-bit), a path target to
+  T.pos − Step(*a*, `D.buildRange` << 16), SET_HEADING (*t*, the low 16 bits of *a*, signed), attach target *t*; then
+  `units.AddBuildProgress(U, T, a2)`, *a2* the float of (`D.buildRate` / 30, integer division); when it answers not 0:
+  the nano point of *U*, then the nano spray (that point, the model box of T), T read as the block now holds it. Then:
+
+  | `T.buildLeft` after the imports | Writes | Result |
+  | --- | --- | --- |
+  | not 0.0 | a wake delay of 1; `flags` gains 0xa | 2 |
+  | 0.0 (either sign) | none | *d* |
 - **The site cell and size**: `features.FindFeatureAtPos(O.pos, cell, size)`, two `Point16` outputs; its answer is a
   feature number (0xffff for none, `docs/sim-events.md`, Terms, "feature number 0xfffb"). F is then the `Feature`
   record of that number in `Game.features`.
@@ -721,7 +789,7 @@ The checks, in order, each refusing with outcome 0, no change and no import:
 2. `kind` outside 288 to 296 (so GROUP_COMMAND 297 and GROUP_BUILD 298 are refused here);
 3. `size` below the kind's payload (section 2): ADD and COMMAND 44, QUEUE_BUILD 44, STOP 12, BE_CARRIED 8,
    STATUS_FLAGS 16, ATTACKED 12, PARALYZE 12, CANCEL 12;
-4. the event's limits, which a malformed event fails, without a trap (ozgb/btm#25):
+4. the event's limits, which a malformed event fails, without a trap:
    - a *unit* is valid when it is not 0, at least `Game.units`, at most `Game.unitsEnd`, and a multiple of 280 bytes
      (the `Unit` record) from `Game.units`;
    - an *order* is valid when it is not 0 and its 86 bytes lie inside the block (its class word can't be checked:
@@ -775,16 +843,22 @@ equals *id* (32-bit compare):
 
 - **C above 0:** let Z be the last order of L. When Z exists, `Z.kind` is K and `Z.ticks` is *id*: `Z.radius` (here:
   the count queued) += C, signed 32-bit, wrapping, and nothing else. Otherwise: adding an order (K, queue 1, no target,
-  no position, *id*, C) (Q4).
+  no position, *id*, C), which places it as "adding an order" says: a `BuildWeapon` order (table flags 0xc0140, with
+  0x40000) at the front of the second list; a `MobileBuild` (0x100508) or `BuildingBuild` (0x10010c) order, with
+  neither 0x20 nor 0x40000, after the marked order of the first list (at its end when no order is marked) (Q4).
 - **C 0 or below:** repeat: let B be the *last* build order of *id* in L. None: stop. When `B.radius` > −C (signed
   32-bit, −C wrapping): `B.radius` += C, and stop. Otherwise C += `B.radius` (wrapping), B is removed (measured against
   the unit's first order at that moment), and repeat with the new C. So with C 0, a last build order of *id* whose
   count is above 0 is left as it is, and one whose count is 0 or below is removed (Q5).
 
 **The attack response (ATTACKED).** Let *u* be the unit, A the unit at `attacker` (none for 0, and none when
-`A.unitDefIndex` is 0), *D* *u*'s `UnitDef` and Q *u*'s `Player`. A *type set* is a `UnitTypeSet`; a set *contains*
-type number *t* (an unsigned 16-bit `unitDefIndex`) when bit (*t* AND 31) of its word `bits[t >> 5]` is set.
-`UnitDef.categories` and `UnitDef.weaponCategories0` to `2` are type sets.
+`A.unitDefIndex` is 0), *D* *u*'s `UnitDef` and Q *u*'s `Player`. A *type set* is a `UnitTypeSet` record (64 bytes,
+`bits` 16 words); `UnitDef.categories` and `UnitDef.weaponCategories0` to `2` hold the block offset of one each. A set
+at offset *s* *contains* type number *t* (an unsigned 16-bit `unitDefIndex`, 0 to 65535) when bit (*t* AND 31) of the
+32-bit word at block offset *s* + 4 × (*t* >> 5) is set. The word is read with no bound: for *t* below 512 it is
+`bits[t >> 5]`; for *t* of 512 or more it lies past the record (up to 8188 bytes past its start), and that word of
+the block is tested as it is. With *s* 0 (no set) the word is read at linear address 4 × (*t* >> 5), outside the
+block, where the reference build faults; no recording and no scenario has a unit type with no set.
 
 Nothing happens (no imports) unless all of these hold: A is not none; `Q.active` is not 0; `Q.type` is 1 or 2;
 `D.flags1` AND 0x10010000 is not 0; `Unit.buildLeft` equals 0.0 (either sign); and `Q.allied[` A's `Player.index` `]`
@@ -794,7 +868,7 @@ is 0. Then, with *u* as the running unit *U*:
    `D.categories` does not contain `A.unitDefIndex`, and `D.weaponCategories0` does not contain it:
    `weapons.WeaponCanReachUnit(u, A, 0)`; when it is not 0, the attack order (A, 0). Its answer is *ordered* (0 when
    it was not asked).
-2. **Free weapons.** When *ordered* is 0 and `Unit.flags` AND 0x300000 is not 0, for each weapon *i* = 0, 1, 2 in turn:
+2. **Free weapons.** When *ordered* is 0 and `Unit.flags` AND 0x300000 (`fireOrder`) is not 0, for each weapon *i* = 0, 1, 2 in turn:
    when `Unit.weapon{i}Flags` has bits 0x2 and 0x10: `weapons.WeaponCanReachUnit(u, A, i)`; when that is not 0 and the
    `WeaponDef` at `Unit.weapon{i}Def` lacks `flags` bit 0x4000000 (`commandFire`): `targeting.GetWeaponTargetUnit(u,
    i)` (recorded as `services.ScheduleTargetingTargetUnit`) gives W; when W is 0, or `weapons.WeaponCanReachUnit(u, W,
@@ -855,8 +929,8 @@ with *D* its `UnitDef`:
 | When | Published |
 | --- | --- |
 | `D.flags1` lacks 0x40 (`canbuild`) | nothing |
-| `D.flags1` has 0x40, lacks 0x800 | COMMAND: type `MOBILEBUILD` (25), target 0, the position |
-| `D.flags1` has 0x40 and 0x800 | COMMAND: type `VTOL_MOBILEBUILD` (`VTOL_MobileBuild`, 54), target 0, the position |
+| `D.flags1` has 0x40 (`canbuild`), lacks 0x800 | COMMAND: type `MOBILEBUILD` (25), target 0, the position |
+| `D.flags1` has 0x40 (`canbuild`) and 0x800 | COMMAND: type `VTOL_MOBILEBUILD` (`VTOL_MobileBuild`, 54), target 0, the position |
 
 (`flying` in `layout.json` is the bit 0x800 of `flags1`.)
 
@@ -869,9 +943,9 @@ The arguments are (`mode`, `unit`, `target`, `pos`).
 name is that name's index. The same rule runs inside the module wherever section 4 names `GetOrderType(...)`, with the
 same imports at that point. Hooks: AllowCommand names this slot (section 2).
 
-**Picking.** "Pick(*a*, *b*)" is *a* when `D.flags1` has 0x800 and *b* otherwise.
+**Picking.** "Pick(*a*, *b*)" is *a* when `D.flags1` has 0x800 (`flying`) and *b* otherwise.
 
-**Relation.** When T is not 0: when `T.flags` lacks unit flag 0x10000000 the answer is 0 at once (no imports).
+**Relation.** When T is not 0: when `T.flags` lacks unit flag 0x10000000 (`alive`) the answer is 0 at once (no imports).
 Otherwise T is *friendly* when *u*'s `Player.allied[` T's `Player.index` `]` is not 0, and *enemy* when it is 0. With T
 0, neither holds.
 
@@ -885,7 +959,9 @@ Otherwise T is *friendly* when *u*'s `Player.allied[` T's `Player.index` `]` is 
   (16-bit). *f* below 0xfffb: no feature when *f* ≥ `Game.featureCount`, else the `Feature` record *f* of
   `Game.features` (256 bytes each). *f* = 0xfffe: the owner cell is the cell (`Cell.offsetY` × `Game.width` +
   `Cell.offsetX`) records before this one (13 bytes each); with *g* its `feature`, no feature when *g* ≥ 0xfffb, else
-  `Feature` record *g* (no count check). Any other *f*: no feature.
+  `Feature` record *g* (no count check). Any other *f*: no feature. A recorded answer with no `r` lines of its
+  fields (`= Cell#4072` in `ui-right-click.txt`) is a cell the replayer makes zeroed (`docs/replay-format.md`, "An
+  object returned as its offset"), so its `feature` is 0.
 - *marked*: there is a feature and its `Feature.flags` byte has bit 0x80.
 - *the feature check (bit m)*: `D.flags2` has *m*, P is not 0, P is visible, and the feature at P is marked, tested in
   that order; the import is made only when the first three hold.
@@ -895,11 +971,11 @@ named, and only when the tests before them did not answer.
 
 | Mode | Rule |
 | --- | --- |
-| 1 | when `Game.interfaceType` is 1: (a) `D.flags2` has 0x10 and enemy: the mode-3 answer (same arguments); (b) `D.flags2` has 0x400 and enemy: Pick(`VTOL_RECLAIMUNIT` 59, `RECLAIMUNIT` 33); (c) friendly and `units.CanRepair(u, T)` not 0 and `T.buildLeft` ≠ 0.0: Pick(`VTOL_HELPBUILD` 51, `HELPBUILD` 23); (d) friendly and `units.CanRepair(u, T)` not 0 (asked again): Pick(`VTOL_REPAIRUNIT` 61, `REPAIRUNIT` 35); (e) `D.flags1` has 0x800, friendly, and T's `UnitDef.flags1` has 0x200: `VTOL_LANDING` (53); (f) T not 0 and `units.CanLoad(u, T)` not 0: Pick(`VTOL_PICKUP` 57, `GROUND_PICKUP` 20); (g) `D.flags2` has 0x20 and friendly: Pick(`VTOL_FOLLOW` 49, `FOLLOW_GROUND` 18); (h) the feature check (0x800): `RESURRECT` (37); (i) the feature check (0x400): Pick(`VTOL_RECLAIM` 58, `RECLAIM` 32); (j) `D.flags2` lacks 0x80 or `Unit.motion` is 0: 0; (k) Pick(`VTOL_MOVE` 55, `MOVE_GROUND` 26). Otherwise (`interfaceType` not 1): (a) `D.flags2` has 0x10 and enemy: the mode-3 answer; (b) `D.flags2` has 0x400 and enemy: the mode-12 answer; (c) T not 0 and `units.CanRepair(u, T)` not 0 and `T.buildLeft` ≠ 0.0: the mode-8 answer (which asks `CanRepair` again); (d) T not 0, `T.playerIndex` equals `Game.localPlayer`, `T.flags` has 0x20, `T.buildLeft` = 0.0, `T.postTransferHoldoff` is 0, and either `T.carrier` is 0 or the carrier's `Unit.flags` has 0x40000000: 0; (e) the feature check (0x800): `RESURRECT`; (f) the feature check (0x400): Pick(`VTOL_RECLAIM`, `RECLAIM`); (g) `D.flags2` lacks 0x80 or `Unit.motion` is 0: 0; (h) Pick(`VTOL_MOVE`, `MOVE_GROUND`) |
-| 2 | `D.flags2` lacks 0x80: 0; `Unit.motion` 0: `QMOVE` (30); T 0: Pick(`VTOL_MOVE`, `MOVE_GROUND`); `D.flags2` has 0x1000 and enemy: `CAPTURE` (14); `D.flags2` has 0x400 and enemy: Pick(`VTOL_RECLAIMUNIT`, `RECLAIMUNIT`); friendly and `units.CanRepair(u, T)` not 0 and `T.buildLeft` ≠ 0.0: Pick(`VTOL_HELPBUILD`, `HELPBUILD`); friendly and `units.CanRepair(u, T)` not 0 (asked again) and T's health below T's `UnitDef.maxHealth`: Pick(`VTOL_REPAIRUNIT`, `REPAIRUNIT`); `D.flags1` has 0x800, friendly, and T's `UnitDef.flags1` has 0x200: `VTOL_LANDING`; `units.CanLoad(u, T)` not 0: Pick(`VTOL_PICKUP`, `GROUND_PICKUP`); `D.flags2` has 0x20 and friendly: Pick(`VTOL_FOLLOW`, `FOLLOW_GROUND`); else Pick(`VTOL_MOVE`, `MOVE_GROUND`) |
+| 1 | when `Game.interfaceType` is 1: (a) `D.flags2` has 0x10 and enemy: the mode-3 answer (same arguments); (b) `D.flags2` has 0x400 and enemy: Pick(`VTOL_RECLAIMUNIT` 59, `RECLAIMUNIT` 33); (c) friendly and `units.CanRepair(u, T)` not 0 and `T.buildLeft` ≠ 0.0: Pick(`VTOL_HELPBUILD` 51, `HELPBUILD` 23); (d) friendly and `units.CanRepair(u, T)` not 0 (asked again): Pick(`VTOL_REPAIRUNIT` 61, `REPAIRUNIT` 35); (e) `D.flags1` has 0x800 (`flying`), friendly, and T's `UnitDef.flags1` has 0x200: `VTOL_LANDING` (53); (f) T not 0 and `units.CanLoad(u, T)` not 0: Pick(`VTOL_PICKUP` 57, `GROUND_PICKUP` 20); (g) `D.flags2` has 0x20 and friendly: Pick(`VTOL_FOLLOW` 49, `FOLLOW_GROUND` 18); (h) the feature check (0x800): `RESURRECT` (37); (i) the feature check (0x400): Pick(`VTOL_RECLAIM` 58, `RECLAIM` 32); (j) `D.flags2` lacks 0x80 or `Unit.motion` is 0: 0; (k) Pick(`VTOL_MOVE` 55, `MOVE_GROUND` 26). Otherwise (`interfaceType` not 1): (a) `D.flags2` has 0x10 and enemy: the mode-3 answer; (b) `D.flags2` has 0x400 and enemy: the mode-12 answer; (c) T not 0 and `units.CanRepair(u, T)` not 0 and `T.buildLeft` ≠ 0.0: the mode-8 answer (which asks `CanRepair` again); (d) T not 0, `T.playerIndex` equals `Game.localPlayer`, `T.flags` has 0x20 (`selectable`), `T.buildLeft` = 0.0, `T.postTransferHoldoff` is 0, and either `T.carrier` is 0 or the carrier's `Unit.flags` has 0x40000000 (`cargoSelectable`): 0; (e) the feature check (0x800): `RESURRECT`; (f) the feature check (0x400): Pick(`VTOL_RECLAIM`, `RECLAIM`); (g) `D.flags2` lacks 0x80 or `Unit.motion` is 0: 0; (h) Pick(`VTOL_MOVE`, `MOVE_GROUND`) |
+| 2 | `D.flags2` lacks 0x80: 0; `Unit.motion` 0: `QMOVE` (30); T 0: Pick(`VTOL_MOVE`, `MOVE_GROUND`); `D.flags2` has 0x1000 (`capture`) and enemy: `CAPTURE` (14); `D.flags2` has 0x400 and enemy: Pick(`VTOL_RECLAIMUNIT`, `RECLAIMUNIT`); friendly and `units.CanRepair(u, T)` not 0 and `T.buildLeft` ≠ 0.0: Pick(`VTOL_HELPBUILD`, `HELPBUILD`); friendly and `units.CanRepair(u, T)` not 0 (asked again) and T's health below T's `UnitDef.maxHealth`: Pick(`VTOL_REPAIRUNIT`, `REPAIRUNIT`); `D.flags1` has 0x800 (`flying`), friendly, and T's `UnitDef.flags1` has 0x200: `VTOL_LANDING`; `units.CanLoad(u, T)` not 0: Pick(`VTOL_PICKUP`, `GROUND_PICKUP`); `D.flags2` has 0x20 and friendly: Pick(`VTOL_FOLLOW`, `FOLLOW_GROUND`); else Pick(`VTOL_MOVE`, `MOVE_GROUND`) |
 | 3 | the mode-3 rule (below) |
 | 4 | `D.flags2` has 0x4000: `ATTACKSPECIAL` (9); else 0 |
-| 5 | `D.flags2` has 0x100, `D.flags1` has 0x800, T not 0, and T's `UnitDef.flags1` has 0x200: `VTOL_LANDING`; else `D.flags2` has 0x100: Pick(`VTOL_UNLOAD` 65, `GROUND_UNLOAD` 21); else 0 |
+| 5 | `D.flags2` has 0x100, `D.flags1` has 0x800 (`flying`), T not 0, and T's `UnitDef.flags1` has 0x200: `VTOL_LANDING`; else `D.flags2` has 0x100: Pick(`VTOL_UNLOAD` 65, `GROUND_UNLOAD` 21); else 0 |
 | 6 | T 0: 0; `units.CanLoad(u, T)` 0: 0; else Pick(`VTOL_PICKUP`, `GROUND_PICKUP`) |
 | 7 | `D.flags2` has 0x20 and friendly: Pick(`VTOL_FOLLOW`, `FOLLOW_GROUND`); else 0 |
 | 8 | `units.CanRepair(u, T)` (asked even when T is 0) is 0: 0; `T.buildLeft` ≠ 0.0: Pick(`VTOL_HELPBUILD`, `HELPBUILD`); else Pick(`VTOL_REPAIRUNIT`, `REPAIRUNIT`) |
@@ -907,7 +983,7 @@ named, and only when the tests before them did not answer.
 | 10 | `STOP` (45) |
 | 11 | `TELEPORT` (47) |
 | 12 | `D.flags2` lacks 0x400: 0. Otherwise the feature at P is looked up first (`los_radar.GetMapCellAtPosition(P)` is asked even when P is 0, with the address 0, Q7). Then: P not 0, `D.flags2` has 0x800, P visible and the feature marked: `RESURRECT`; P not 0, P visible and the feature marked: Pick(`VTOL_RECLAIM`, `RECLAIM`); T 0: 0; else Pick(`VTOL_RECLAIMUNIT`, `RECLAIMUNIT`) |
-| 13 | `D.flags2` has 0x1000, T not 0, and `T.player` is not *u*'s `Unit.player` (offsets compared): `CAPTURE`; else 0 |
+| 13 | `D.flags2` has 0x1000 (`capture`), T not 0, and `T.player` is not *u*'s `Unit.player` (offsets compared): `CAPTURE`; else 0 |
 | 14 | `UnitDef.ids` is 0 or `Unit.motion` is 0: 0; else Pick(`VTOL_MOBILEBUILD` 54, `MOBILEBUILD` 25) |
 | 0, 15 to 255 | 0 |
 
@@ -919,31 +995,29 @@ Modes 1 and 2 can ask `units.CanRepair` twice, and mode 8 asks it even with no t
 `WeaponDef` at `D.weapons0`. "Below water" means T's `UnitDef.modelMaxYHigh` + whole(`T.posY`) (signed 16-bit values,
 summed in 32 bits) is below `Game.seaLevel` (an unsigned byte). No import.
 
-1. `D.flags2` lacks 0x10: 0.
-2. When `Unit.flags` has bit 0x80000000, the first row that holds answers (no row holding: go to 3):
+The answer is the first row that holds, from the top. The rows marked *armed* hold only when `Unit.flags` has
+0x80000000 (`armed`); *air* is Dw's `flags` bit 0x100 and *tv* is T's `UnitDef.flags1` bit 0x800 (`flying`).
 
-   | Condition | Answer |
-   | --- | --- |
-   | T is not an enemy (T 0 or friendly) and W0's `flags` has 0x20000 (`toAirWeapon`) | 0 |
-   | T is not an enemy, `D.flags1` lacks 0x800 | `SUPPRESS` (46) |
-   | T is not an enemy, Dw's `flags` has 0x100 (`dropped`) | `AIRSTRIKE` (2) |
-   | T is not an enemy | `AIRTOGROUND` (4) |
-   | T is an enemy, `T.flags` AND 3 is not 2, W0's `flags` has 0x20000 | 0 |
-   | below water, W0's `flags` lacks 0x10000 (`waterWeapon`), and (`Unit.weapon1Flags` lacks 0x2 or W1's `flags` lacks 0x10000) | 0 |
-   | not below water, `D.flags1` has 0x1000, W0's `flags` has 0x10000 | 0 |
-   | not below water, `D.flags1` has 0x1000, `Unit.weapon1Flags` has 0x2 and W1's `flags` has 0x10000 | 0 |
-   | `D.flags1` has 0x800, *air* and not *tv* | `AIRSTRIKE` |
-   | `D.flags1` has 0x800, not *air* and *tv* | `AIRTOAIR` (3) |
-   | `D.flags1` has 0x800, not *tv*, `D.flags1` lacks 0x8000000 | `AIRTOGROUND` |
-   | `D.flags1` has 0x800, not *tv*, `D.flags1` has 0x8000000 | `AIRTOGROUNDHOVER` (5) |
-   | `D.flags1` has 0x800 (*air* and *tv*) | 0 |
-   | `Unit.motion` not 0 | `ATTACK_CHASE` (6) |
-   | `Unit.flags` has 0x20000000 | `ATTACK_NOMOVE` (8) |
-
-   *air* is Dw's `flags` bit 0x100 and *tv* is T's `UnitDef.flags1` bit 0x800.
-3. `D.flags1` has 0x10000000: `ATTACK_KAMIKAZE` (7). Else 0.
-
-Step 3 is reached only when bit 0x80000000 is clear or no row of step 2's table holds.
+| Armed | Condition | Answer |
+| --- | --- | --- |
+| | `D.flags2` lacks 0x10 | 0 |
+| *armed* | T is not an enemy (T 0 or friendly) and W0's `flags` has 0x20000 (`toAirWeapon`) | 0 |
+| *armed* | T is not an enemy, `D.flags1` lacks 0x800 (`flying`) | `SUPPRESS` (46) |
+| *armed* | T is not an enemy, Dw's `flags` has 0x100 (`dropped`) | `AIRSTRIKE` (2) |
+| *armed* | T is not an enemy | `AIRTOGROUND` (4) |
+| *armed* | T is an enemy, `T.flags` AND 3 is not 2, W0's `flags` has 0x20000 | 0 |
+| *armed* | below water, W0's `flags` lacks 0x10000 (`waterWeapon`), and (`Unit.weapon1Flags` lacks 0x2 or W1's `flags` lacks 0x10000) | 0 |
+| *armed* | not below water, `D.flags1` has 0x1000, W0's `flags` has 0x10000 | 0 |
+| *armed* | not below water, `D.flags1` has 0x1000, `Unit.weapon1Flags` has 0x2 and W1's `flags` has 0x10000 | 0 |
+| *armed* | `D.flags1` has 0x800 (`flying`), *air* and not *tv* | `AIRSTRIKE` |
+| *armed* | `D.flags1` has 0x800 (`flying`), not *air* and *tv* | `AIRTOAIR` (3) |
+| *armed* | `D.flags1` has 0x800 (`flying`), not *tv*, `D.flags1` lacks 0x8000000 | `AIRTOGROUND` |
+| *armed* | `D.flags1` has 0x800 (`flying`), not *tv*, `D.flags1` has 0x8000000 | `AIRTOGROUNDHOVER` (5) |
+| *armed* | `D.flags1` has 0x800 (`flying`) (*air* and *tv*) | 0 |
+| *armed* | `Unit.motion` not 0 | `ATTACK_CHASE` (6) |
+| *armed* | `Unit.flags` has 0x20000000 (`immobile`) | `ATTACK_NOMOVE` (8) |
+| | `D.flags1` has 0x10000000 | `ATTACK_KAMIKAZE` (7) |
+| | otherwise | 0 |
 
 **Failure answers.** `units.CanRepair` and `units.CanLoad` answer 0 for "cannot", which moves on to the next test.
 `los_radar.GetMapCellAtPosition` answering 0 means no feature.
@@ -967,40 +1041,44 @@ import, no write. "Order type names" (above) is this rule.
 ### `RunOrders(unit)`
 
 The input is the unit. Hooks: AllowBuild, AircraftSeekRepair, GuardResponse and IdleBuilderAction name this slot
-(section 2). The call repeats the frame below while `Unit.list` is not 0; each pass looks at the order that is first
-*at that moment*:
+(section 2).
 
-1. Let O be `Unit.list`. When the tick, as an unsigned 32-bit number, is at least `O.wakeFrame`: `O.wakeFrame`
-   becomes 0xffffffff and `O.subFlags` gains 0x1.
-2. pending = (`O.subFlags` OR `Unit.netDirtyFlags`) AND `O.flags`.
-3. When `O.flags` is not 0 and pending is 0: the call ends (no default order is inserted).
-4. Otherwise, in this order:
-   - CLEAR_NET_DIRTY (12): `unit` the unit, `mask` pending (also when pending is 0, Q8);
-   - `O.subFlags` loses the pending bits; `O.flags` becomes 0;
-   - when pending has 0x10000: CLEAR (0), CLEAR (1), CLEAR (2);
-   - the run of O with code pending;
-   - the result, by the table below, applied to O whatever the run did to the lists meanwhile.
+The call is a series of *passes*. Each pass looks at O, the order at `Unit.list` at the start of that pass. When O is
+not 0 and the tick, as an unsigned 32-bit number, is at least `O.wakeFrame`, the pass first wakes O: `O.wakeFrame` becomes
+0xffffffff and `O.subFlags` gains 0x1. Then, with pending = (`O.subFlags` OR `Unit.netDirtyFlags`) AND `O.flags`:
 
-| Result | Effect on O | Then |
+| When | Imports, in order | Writes | Then |
+|---|---|---|---|
+| `Unit.list` is 0 | the default order (below) | its writes | the call ends |
+| `O.flags` is not 0 and pending is 0 | none | the wake's, if any | the call ends; no default order |
+| otherwise | CLEAR_NET_DIRTY (12): `unit` the unit, `mask` pending (also when pending is 0, Q8); when pending has 0x10000: CLEAR (0), CLEAR (1), CLEAR (2); the run of O with code pending; then the result's imports (below) | before the run: `O.subFlags` loses the pending bits and `O.flags` becomes 0; after it: the result's writes | as the result says |
+
+The result applies to O whatever the run did to the lists meanwhile:
+
+| Result | Imports and writes on O | Then |
 |---|---|---|
 | 0 | `state` becomes 0 | the next pass |
 | 1 | `state` gains 1 (8-bit, wrapping) | the next pass |
 | 2, 4 | nothing | the next pass |
-| 3 | `flags` gains 0x1 and `wakeFrame` becomes the tick + 30 + `services.RandomInt(15)` | the next pass |
+| 3 | `services.RandomInt(15)` = *r*; `flags` gains 0x1 and `wakeFrame` becomes the tick + 30 + *r* | the next pass |
 | 5, 8 | deleting the order | the next pass |
 | 6 | moving O to the back | the next pass |
 | 7 | deleting the unit's orders (all 1) | the call ends; no default order |
-| 9 | `flags_42` gains 0x800000; then when `next` is not 0, deleting the order; when `next` is 0, `state` becomes 0, `flags` gains 0x1 and `wakeFrame` becomes the tick + 30 + `services.RandomInt(30)` | the next pass |
-| any other | as 7 | the call ends |
+| 9, `O.next` not 0 | `flags_42` gains 0x800000; deleting the order | the next pass |
+| 9, `O.next` 0 | `flags_42` gains 0x800000; `state` becomes 0; `services.RandomInt(30)` = *r*; `flags` gains 0x1 and `wakeFrame` becomes the tick + 30 + *r* | the next pass |
+| any other | as 7 | the call ends; no default order |
 
 So the next pass runs the order that is now first, at once, when its `flags` is 0 or one of its conditions is pending:
 a run that ends with result 0, 1, 2 or 4 and leaves `flags` 0 runs again in the same call (its next `state` for result
 1), and one that has set `flags` (a wake delay, or a condition to wait on) ends the call unless that condition is
 already pending (Q9).
 
-When `Unit.list` is 0 (it was empty, or became empty), and `Player.active` of `Unit.player` is not 0, `Player.type` is 1
-or 2 and `UnitDef.defaultmissiontype` of `Unit.def` is not 0: inserting a command of kind `defaultmissiontype` (its
-byte, unsigned). The new order is not run in this call. Otherwise nothing.
+**The default order** (`Unit.list` 0 at a pass, whether it was empty or became empty):
+
+| When | Imports and writes |
+|---|---|
+| `Player.active` of `Unit.player` is not 0, its `Player.type` is 1 or 2, and `UnitDef.defaultmissiontype` of `Unit.def` is not 0 | inserting a command of kind `defaultmissiontype` (its byte, unsigned); the new order is not run in this call |
+| otherwise | none |
 
 ### `RunSecondaryOrders(unit)`
 
@@ -1025,10 +1103,12 @@ is not read or written (Q10).
 
 ### Order kinds
 
-One subsection per entry of the order type table, in index order. Each gives the table entry's flags (the bits that
-matter) and what the order's words mean for the kind; the fields its run reads beyond section 3's "Read" table; then
-its outcomes, a table whose rows are tested from the top (the first that holds is the outcome) unless it says
-otherwise. "Result r" is the run's result. "Recorded" names the calls of `tests/replay/orders/` in which an order of the
+One subsection per entry of the order type table, in index order, except that two pairs of kinds with one behaviour
+share a subsection (`QMove` and `QPatrol`, `SelfDestruct` and `SelfDestructFG`). Each gives the table entry's flags (the
+bits that matter) and what the order's words mean for the kind; the fields its run reads beyond section 3's "Read"
+table; then its outcomes, a table whose rows are tested from the top (the first that holds is the outcome) unless it
+says otherwise. A test that asks an import makes it when its row is tested, whether or not the row holds, so the
+outcomes of later rows come after that import. "Result r" is the run's result. "Recorded" names the calls of `tests/replay/orders/` in which an order of the
 kind is the first order run, or says "unrecorded". The runs of `RunOrders` start with `flags` 0 (the frame clears it),
 so "`flags` becomes X" and "`flags` gains X" differ only after an earlier write of the same run.
 
@@ -1053,7 +1133,7 @@ Before the state, in this order:
 
 | When | Effects | Result |
 | --- | --- | --- |
-| *c* has any of 0x1000a | when `O.next` is 0 and `U.flags` has any of 0x300000: a new order (`VTOL_SEEKATTACK` (`VTOL_SeekAttack`, 62), target T, position `O.pos`, 0, 0, 0) at the tail | 5 |
+| *c* has any of 0x1000a | when `O.next` is 0 and `U.flags` has any of 0x300000 (`fireOrder`): a new order (`VTOL_SEEKATTACK` (`VTOL_SeekAttack`, 62), target T, position `O.pos`, 0, 0, 0) at the tail | 5 |
 | T is 0 and `flags_42` has 0x200 | when `O.next` is 0: a new order (`VTOL_SEEKATTACK`, no target, position `U.pos`, 0, 0, 0) at the tail | 5 |
 | T is not 0 | `O.pos` becomes T's `pos` (all three words); go on | |
 | the leash test holds | none further | 5 |
@@ -1062,7 +1142,7 @@ Then, with *d* = ftol(hyp(`O.posX` − `U.posX`, `O.posZ` − `U.posZ`)) and *a*
 
 | State | When | Imports and writes | Result |
 | --- | --- | --- | --- |
-| 0 | `U.motion` not 0 and `D.flags1` has 0x800 | announce (1); the climb preparation | 1 |
+| 0 | `U.motion` not 0 and `D.flags1` has 0x800 (`flying`) | announce (1); the climb preparation | 1 |
 | 0 | otherwise | none | 7 |
 | 1 | *d* < 0x1e00000 | RELEASE (3); CLAIM (0); the move goal (`U.pos` + Step(*a*, 0x8c00000), 0x3c0); `flags` gains 0xe2 | 1 |
 | 1 | otherwise | RELEASE (3); CLAIM (0) | 1 |
@@ -1085,7 +1165,7 @@ Table entry: flags 0x200. `Order.ticks` (here: the pursuit counter); `Order.star
 Reads: `UnitDef.maxvelocity` and `altitude` of *U*; T's `pos`, `heading`, `UnitDef.maxvelocity`, and its
 `UnitMotion.velocityX`, `velocityY` and `velocityZ`.
 
-Before the state, in this order: *c* has any of 0x10008: when `O.next` is 0 and `U.flags` has any of 0x300000, a new
+Before the state, in this order: *c* has any of 0x10008: when `O.next` is 0 and `U.flags` has any of 0x300000 (`fireOrder`), a new
 order (`VTOL_SEEKATTACK`, target T, position `O.pos`, 0, 0, 0) at the tail; result 5. T is 0 and `flags_42` has 0x200:
 when `O.next` is 0, a new order (`VTOL_SEEKATTACK`, no target, position `U.pos`, 0, 0, 0) at the tail; result 5. The
 off-map return (result 2). The leash test: result 5.
@@ -1095,7 +1175,7 @@ whole(*f*.x) + whole(*u*.z) × whole(*f*.z) (32-bit), kept as its low 16 bits si
 
 | State | When | Imports and writes | Result |
 | --- | --- | --- | --- |
-| 0 | `U.motion` not 0 and `D.flags1` has 0x800 | announce (1); the climb preparation; a wake delay of 1; `ticks` becomes 0 | 1 |
+| 0 | `U.motion` not 0 and `D.flags1` has 0x800 (`flying`) | announce (1); the climb preparation; a wake delay of 1; `ticks` becomes 0 | 1 |
 | 0 | otherwise | none | 7 |
 | 1 | (always first) | RELEASE (3); CLAIM (0); SET_UNIT (0, T); then the rows below | |
 | 1 | *c* has any of 0xe0 and ahead | `movement.NewAirManeuverOrder(O, U.pos + Step(U.heading, D.maxvelocity × 30), Step(U.heading, D.maxvelocity))` = *t*; SET_ALTITUDE (*t*, `D.altitude`); attach target *t*; `services.RandomInt(30)` = *r*; a wake delay of *r* + 60; `ticks` becomes 0 | 2 |
@@ -1111,7 +1191,7 @@ unrecorded.
 Table entry: flags 0x200. `Order.start`, `Order.progress` (here: the leash). Let *w* be the `WeaponDef.range` at
 `Unit.weapon0Def`, read at the start of every run.
 
-Before the state, in this order: *c* has any of 0x1000a: when `O.next` is 0 and `U.flags` has any of 0x300000, a new
+Before the state, in this order: *c* has any of 0x1000a: when `O.next` is 0 and `U.flags` has any of 0x300000 (`fireOrder`), a new
 order (`VTOL_SEEKATTACK`, target T, position `O.pos`, 0, 0, 0) at the tail; result 5. T is 0 and `flags_42` has 0x200:
 when `O.next` is 0, a new order (`VTOL_SEEKATTACK`, no target, position `U.pos`, 0, 0, 0) at the tail; result 5. T not
 0: `O.pos` becomes T's `pos`. When `U.spatialBucket` equals `Game.overflowBucket`: a wake delay of 30 and `state`
@@ -1121,7 +1201,7 @@ With *d* and *a* as in `AirStrike`:
 
 | State | Imports and writes | Result |
 | --- | --- | --- |
-| 0, `U.motion` not 0 and `D.flags1` has 0x800 | announce (1); the climb preparation | 1 |
+| 0, `U.motion` not 0 and `D.flags1` has 0x800 (`flying`) | announce (1); the climb preparation | 1 |
 | 0, otherwise | none | 7 |
 | 1 | RELEASE (3); `services.RandomInt(0x4000)` = *q*; the move goal (`U.pos` + Step(*q* + *a* − 0x2000, *d* / 2), 0x80); `flags` becomes 0x100e8 | 1 |
 | 2 | CLAIM (0); when T is not 0 SET_UNIT (0, T), else SET_POS (0); the move goal (`O.pos`, *w*); `flags` becomes 0x100e8 | 1 |
@@ -1141,7 +1221,7 @@ Checked first, in this order:
 
 | When | Effects | Result |
 | --- | --- | --- |
-| *c* has any of 0x10008 | when `O.next` is 0 and `U.flags` has any of 0x300000: a new order (`VTOL_SEEKATTACK`, target T, position `O.pos`, 0, 0, 0) at the tail | 5 |
+| *c* has any of 0x10008 | when `O.next` is 0 and `U.flags` has any of 0x300000 (`fireOrder`): a new order (`VTOL_SEEKATTACK`, target T, position `O.pos`, 0, 0, 0) at the tail | 5 |
 | T is 0 and `flags_42` has 0x200 | when `O.next` is 0: a new order (`VTOL_SEEKATTACK`, no target, position `U.pos`, 0, 0, 0) at the tail | 5 |
 | the off-map return | as there | 2 |
 | the leash test holds | none | 5 |
@@ -1150,7 +1230,7 @@ Then by state, with *Dt* = ftol(hyp(T.posX − `U.posX`, T.posZ − `U.posZ`)):
 
 | When | Imports and writes | Result |
 | --- | --- | --- |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | 7 |
 | state 0 | announce (1); the climb preparation | 1 |
 | state 1 | RELEASE (3); `services.RandomInt(0x4000)` = *r*; the move goal (`U.pos` + Step(*r* + Head(`U.pos`, T.pos) − 0x2000, *Dt* / 2), 0x80) (truncated toward zero); `flags` becomes 0x100e8 | 1 |
 | state 2 | CLAIM (0); SET_UNIT (0, T); the move goal (T.pos, *W*); `flags` becomes 0x100e8; `ticks` and `radius` become 0 | 1 |
@@ -1175,13 +1255,13 @@ Table entry: flags 0x280 (target; order flag 0x80). `Order.ticks` (here: the wea
 (here: the chase step, 0 to 8), `Order.progress` (here: the leash, 0 for none) with `Order.start` its centre, and
 `Order.pos` (here: the unit's position when the chase started).
 
-Let *w* be `ticks` as the run starts (a change this run makes is not seen by the rest of it, Q19). Before the table: the
+Let *w* be `ticks` as the run starts (Q19). Before the table: the
 result is 5, with nothing else done, when *c* has 0x800, when T is 0, when *c* has any of 0x10008, or when the leash
 test holds. "The reach import" is `weapons.WeaponCanReachUnit(U, T, w)`.
 
 | When | Imports | Writes | Result |
 | --- | --- | --- | --- |
-| state 0, `U.motion` 0, or `D.flags1` has 0x800, or `U.flags` lacks 0x80000000 | none | none | 7 |
+| state 0, `U.motion` 0, or `D.flags1` has 0x800 (`flying`), or `U.flags` lacks 0x80000000 (`armed`) | none | none | 7 |
 | state 0, otherwise | announce (0); when *w* is 0, `targeting.ChooseWeapon(U)` | `O.pos` becomes `U.pos`; `radius` 0; when *w* is 0, `ticks` becomes the answer | 1 |
 | state 1, *c* has any of 0x3000 | release the target | none | 1 |
 | state 1, the reach import answers 0 | release the target; the reach import | none | 1 |
@@ -1299,9 +1379,9 @@ piece's position), T (here: the unit being built). A factory's build order.
 | --- | --- | --- | --- |
 | *c* has 0x2 (the order is deleted) | when T = V is not 0: economy's INCOME 4 (24): `player` `U.playerIndex`, `unit` *U*, `resources` 2, `energy` 0.0, `metal` F; FINISH_CONSTRUCTION (V); DAMAGE (V, 30000, 9). Then always: SET_STATE_BITS (9, 0); the build menu update | none | 5 |
 | *c* has 0x8 | speech (7, 6); the build menu update | `radius` − 1 | 0 |
-| state 0, `U.flags` has 0x20000000, `radius` ≤ 0 | `units.UnitRefSetUnit(link, 0)`; SET_STATE_BITS (1, 0) | T 0 | 5 |
-| state 0, `U.flags` has 0x20000000, `radius` > 0 | `units.UnitRefSetUnit(link, 0)`; SET_STATE_BITS (1, 1) | T 0 | 1 |
-| state 0, `U.flags` lacks 0x20000000 | `units.UnitRefSetUnit(link, 0)` | T 0 | 7 |
+| state 0, `U.flags` has 0x20000000 (`immobile`), `radius` ≤ 0 | `units.UnitRefSetUnit(link, 0)`; SET_STATE_BITS (1, 0) | T 0 | 5 |
+| state 0, `U.flags` has 0x20000000 (`immobile`), `radius` > 0 | `units.UnitRefSetUnit(link, 0)`; SET_STATE_BITS (1, 1) | T 0 | 1 |
+| state 0, `U.flags` lacks 0x20000000 (`immobile`) | `units.UnitRefSetUnit(link, 0)` | T 0 | 7 |
 | state 1 | takes the build stance wait (2) | its writes | its answer |
 | state 2, the footprint refused | `scripts.QueryScript(U.script, "QueryBuildInfo", &p, 0, 0, 0)` with *p* = −1 before the call; `scripts.GetPiecePosition(U, p, out)`; `map.CanPlaceUnitFootprint(E, 0, cell, U.flags AND 3)` (recorded as `services.ScheduleMapCanPlaceUnitFootprint`) answers 0 | `O.pos` becomes *out*; a wake delay of 15; `flags` gains 0x2 | 2 |
 | state 2, placed, no unit made | as above, the footprint answer not 0; `units.CreateUnit(U.playerIndex, ticks, &O.pos, 0, 1, 0)` = N; `units.UnitRefSetUnit(link, N)`; then T is 0: speech (7, 36) | `O.pos` as above; a wake delay of 300; `flags` gains 0x2 | 2 |
@@ -1351,8 +1431,8 @@ Every run starts with `units.UnitRefGet(link)` = V. When V is 0 or *c* has any o
 | When | Imports (after `UnitRefGet`) | Writes | Result |
 | --- | --- | --- | --- |
 | state 0, `U.motion` is 0 | none | none | 7 |
-| state 0, `D.flags2` lacks 0x1000 | none | none | 7 |
-| state 0, V's `UnitDef.flags2` has 0x1000 | speech (7, 32) | none | 8 |
+| state 0, `D.flags2` lacks 0x1000 (`capture`) | none | none | 7 |
+| state 0, V's `UnitDef.flags2` has 0x1000 (`capture`) | speech (7, 32) | none | 8 |
 | state 0, `V.buildLeft` is not 0.0 (either sign) | speech (7, 34) | none | 8 |
 | state 0, otherwise | announce (5); CLAIM (3); the footprint marker (`V.cell`, `V.footprint`) | `radius` becomes the capture time (below); `flags` becomes 0x100e8 | 1 |
 | state 1, *c* has 0x40 | none | none | 8 |
@@ -1396,7 +1476,7 @@ Table entry: flags 0x10060. When `D.flags2` has bit 0x4: SET_STATE_BITS (1, 0). 
 Table entry: flags 0x200 (target). T (here: the guarded unit G); `Order.ticks` (here: the guard radius); `Order.pos`
 (here: an offset from G, not a position).
 
-Checked first, in every state: T 0: result 5; `U.carrier` not 0: result 7; G's `UnitDef.flags1` has 0x800: result 8.
+Checked first, in every state: T 0: result 5; `U.carrier` not 0: result 7; G's `UnitDef.flags1` has 0x800 (`flying`): result 8.
 
 State 0: announce (9); RELEASE (3); `ticks` becomes (*u* + *g* + 2) << 4 with *u*, *g* the first
 words of `U.footprint` and `G.footprint`; `services.RandomInt(65536)` = *a*, taken as signed 16-bit; `O.pos` becomes
@@ -1407,8 +1487,8 @@ State 1, the first row that applies (A = `G.attacker`):
 | When | Imports, in order | Writes | Result |
 | --- | --- | --- | --- |
 | A is not 0, A's player's `Player.allied[` *U*'s `Player.index` `]` is 0, *c* has 0x10, `D.categories` does not contain `A.unitDefIndex`, and the attack order (A, 1) answers 1 | the attack order's imports | its orders; `flags` becomes 0 | 3 |
-| the same test on A, the attack order answering 0 | the attack order's imports; then, when `U.flags` has any of 0x300000, the free weapons of ATTACKED (with A as the attacker, and no first `WeaponCanReachUnit(U, A, i)`: a weapon whose `weapon{i}Flags` has 0x2 and 0x10 and whose `WeaponDef.flags` lacks 0x4000000 goes straight to `targeting.GetWeaponTargetUnit`); then the rows below | as below | as below |
-| G is not repaired, `D.flags1` has 0x40, and `GetOrderType(8, U, G, none)` = K is not 0 | its imports | release the target; a new order (K, target G, no position, 0, 0, 0) at the front; `flags` becomes 0 | 3 |
+| the same test on A, the attack order answering 0 | the attack order's imports; then, when `U.flags` has any of 0x300000 (`fireOrder`), the free weapons of ATTACKED (with A as the attacker, and no first `WeaponCanReachUnit(U, A, i)`: a weapon whose `weapon{i}Flags` has 0x2 and 0x10 and whose `WeaponDef.flags` lacks 0x4000000 goes straight to `targeting.GetWeaponTargetUnit`); then the rows below | as below | as below |
+| G is not repaired, `D.flags1` has 0x40 (`canbuild`), and `GetOrderType(8, U, G, none)` = K is not 0 | its imports | release the target; a new order (K, target G, no position, 0, 0, 0) at the front; `flags` becomes 0 | 3 |
 | the copy test (below), L's kind is neither `MobileBuild` (25) nor `BuildingBuild` (12), and L is actionable | the release of the target, then the new order's imports | release the target; a new order (L's `kind`, L's target, position L's `pos`, 0, 0, 0) at the front; `flags` becomes 0 | 3 |
 | the copy test, L's kind is `MobileBuild` or `BuildingBuild`, and L's target is not 0 | the release of the target, then the new order's imports | release the target; a new order (`HELPBUILD` (`HelpBuild`, 23), L's target, position L's `pos`, 0, 0, 0) at the front; `flags` becomes 0 | 3 |
 | otherwise | the approach goal (G's `pos` + `O.pos`, `ticks` / 2) | a wake delay of 30; `flags` gains 0x18 | 2 |
@@ -1438,16 +1518,30 @@ gains bit 0x8000 (`Order.waiting`).
 | state 2, neither | none | waits | 2 |
 | other | none | none | 7 |
 
-The finish rule, with B = T:
+The finish rule, with B = T. First, when B is not 0, for each order *q* of B's first list in order (from `B.list`
+along `next`; the orders added are *U*'s, so B's list does not change):
 
-1. When B ≠ 0: for each order *q* of B's first list, from `B.list` along `next`: when `q.kind` is `QMove` (30), K =
-   `GetOrderType(2, U, none, q.pos)`; when it is `QPatrol` (31), K = `GetOrderType(9, U, none, q.pos)`; otherwise K = 0.
-   When K ≠ 0: adding an order (K, queue 1, no target, position `q.pos`, 0, 0) to *U*, and the rule has *queued*.
-2. Still with B ≠ 0: when both *U* and B have unit flag 0x10000000 and lack unit flag 0x4000: SET_STANCE (*U*, 3,
-   `B.moveOrder`, `B.fireOrder`, 0); then, when `U.player`'s `active` is not 0 and its `type` is 1: SET_STANCE (*U*, 4,
-   0, 0, `B.group`).
-3. When nothing was queued (B = 0 included): adding an order (`PARK` (`Park`, 28), queue 1, no target, no position, 0,
-   0) to *U*.
+| *q*'s `kind` | Imports | Effect |
+| --- | --- | --- |
+| `QMove` (30) | `GetOrderType(2, U, none, q.pos)` (its imports) = K | when K is not 0: adding an order (K, queue 1, no target, position `q.pos`, 0, 0) to *U* |
+| `QPatrol` (31) | `GetOrderType(9, U, none, q.pos)` (its imports) = K | the same |
+| any other | none | none |
+
+Then the stance, with *live* (V) = `V.flags` has unit flag 0x10000000 (`alive`) and lacks unit flag 0x4000
+(`killPending`):
+
+| When | Publishes, in order |
+| --- | --- |
+| B is not 0, *live* (*U*) and *live* (B), and `U.player`'s `active` is not 0 and its `type` is 1 | SET_STANCE (*U*, 3, `B.moveOrder`, `B.fireOrder`, 0); SET_STANCE (*U*, 4, 0, 0, `B.group`) |
+| B is not 0, *live* (*U*) and *live* (B) | SET_STANCE (*U*, 3, `B.moveOrder`, `B.fireOrder`, 0) |
+| otherwise | none |
+
+Last:
+
+| When | Effect |
+| --- | --- |
+| the walk over B's list added no order (B = 0 included) | adding an order (`PARK` (`Park`, 28), queue 1, no target, no position, 0, 0) to *U* |
+| it added at least one | none |
 
 Recorded: `orders-air.txt` ticks 4090 to 4102 (`Unit#6` with `Order#4` and `Unit#7` with `Order#2`, state 2, the code
 with 0x8000); `orders-build-patrol.txt` ticks 148 to 162 (`Unit#2` with `Order#2`); `orders-factory.txt` ticks 19 to 22
@@ -1496,7 +1590,8 @@ Before the table: when *c* has 8: speech (7, 42), result 8.
 | state 3 | none | none | 0 |
 | any other state | none | none | 7 |
 
-`O.posZ` >> 16 is arithmetic; the sum wraps. Recorded: unrecorded.
+`O.posZ` >> 16 is arithmetic; the sum wraps. Recorded: `units-transport.txt` tick 4415, `Unit#3` with `Order#3`
+(state 1, the script busy wait, run twice in the call; section 7).
 
 #### `Guard_NoMove` (kind 22)
 
@@ -1524,7 +1619,7 @@ Table entry: flags 0x100208 (target, build kind). T (here: the unit under constr
 | --- | --- | --- | --- |
 | *c* has 0x2 | the orders dirty mark | none | 5 |
 | T is 0 | speech (7, 7) | none | 8 |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x40 | none | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x40 (`canbuild`) | none | none | 7 |
 | state 0, otherwise | the ring goal (T's `pos`, `D.buildRange` + *r*, *r*) | `flags` becomes 0xe8 | 1 |
 | state 1, *c* has 0x40 | speech (7, 10) | none | 8 |
 | state 1, `T.buildLeft` is 0.0 | none | none | 5 |
@@ -1609,7 +1704,7 @@ Table entry: flags 0. The unit clears a space around itself.
 | When | Imports | Writes | Result |
 | --- | --- | --- | --- |
 | state 0, `U.motion` is 0 | none | none | 7 |
-| state 0, `D.flags1` has 0x800 | none | `O.pos` becomes `U.pos`; taking kind `VTOL_MOVE` (`VTOL_Move`, 55)'s table flags | 0 |
+| state 0, `D.flags1` has 0x800 (`flying`) | none | `O.pos` becomes `U.pos`; taking kind `VTOL_MOVE` (`VTOL_Move`, 55)'s table flags | 0 |
 | state 0, otherwise | the footprint marker (P, E), below | `flags` becomes 0xe0 | 1 |
 | state 1, *c* has 0x20 | none | none | 5 |
 | state 1, `O.next` is not 0 | none | none | 5 |
@@ -1618,8 +1713,9 @@ Table entry: flags 0. The unit clears a space around itself.
 
 The marker: *n* = `U.footprint.x`, plus 3 when `D.minwaterdepth` ≥ 0 (signed); the unit's cell is (`U.posX` >> 20,
 `U.posZ` >> 20), the words shifted as unsigned; P = (cell x − *n* × 4, cell z − *n* × 3) and E = (*n* × 8, *n* × 6), each
-kept to its low 16 bits. A flying unit's `Park` becomes `VTOL_Move` with result 0, so that kind runs from state 0 in
-the same call. Recorded: unrecorded.
+kept to its low 16 bits. In the flying row the order's `kind` becomes `VTOL_MOVE` (55) with that entry's table flags (the
+row's "taking"); with result 0 its `state` is 0 and its `flags` 0, so the next pass of `RunOrders` runs it, in the same
+call, as an order of that kind in state 0. Recorded: unrecorded.
 
 #### `Patrol` (kind 29)
 
@@ -1637,14 +1733,10 @@ Table entry: flags 0x412 (position). `Order.pos` (here: the patrol point).
 
 Recorded: unrecorded.
 
-#### `QMove` (kind 30)
+#### `QMove` (kind 30) and `QPatrol` (kind 31)
 
-Table entry: flags 0x400 (position). The run is `orderNotify[64]`: a wake delay of 60; result 6. No imports.
-Recorded: unrecorded.
-
-#### `QPatrol` (kind 31)
-
-Table entry: flags 0x400. The same run as `QMove`. Recorded: unrecorded.
+Table entries: flags 0x400 (position) for both; both name `orderNotify[64]`. For any code and state: a wake delay of
+60; result 6. No imports. Recorded: unrecorded.
 
 #### `Reclaim` (kind 32)
 
@@ -1662,10 +1754,9 @@ Every run starts with the site cell and size (one `features.FindFeatureAtPos`), 
 | state 1, *c* has 0x40 | none | none | 8 |
 | state 1, otherwise | the site point (one draw, one `GetGroundHeight`); start the building script (the build heading to the site point) | `ticks` becomes ftol(15 + (`F.energy` + `F.metal`) × 0.5) | 1 |
 | state 2 | takes the build stance wait (0) | its writes | its answer |
-| state 3 | speech (11, 0), then as state 4 | as state 4 | as state 4 |
-| state 4, `ticks` − 2 is 0 or less | none | a wake delay of 2; `ticks` − 2 | 1 |
-| state 4, `ticks` − 2 in 1 to 15 | BUSY (300) | a wake delay of 2; `ticks` − 2 | 2 |
-| state 4, `ticks` − 2 above 15 | BUSY (300); the nano point of *U*; the feature box (one `GetGroundHeight`); the reverse spray (the feature box, that point), recorded twice | a wake delay of 2; `ticks` − 2 | 2 |
+| state 3 or 4, `ticks` − 2 is 0 or less | state 3 only: speech (11, 0) | a wake delay of 2; `ticks` − 2 | 1 |
+| state 3 or 4, `ticks` − 2 in 1 to 15 | state 3 only: speech (11, 0); then BUSY (300) | a wake delay of 2; `ticks` − 2 | 2 |
+| state 3 or 4, `ticks` − 2 above 15 | state 3 only: speech (11, 0); then BUSY (300); the nano point of *U*; the feature box (one `GetGroundHeight`); the reverse spray (the feature box, that point), recorded twice | a wake delay of 2; `ticks` − 2 | 2 |
 | state 5 | features' RECLAIM 35 (20): `unit` *U*, `pos` `O.pos` | none | 5 |
 | any other state | none | none | 7 |
 
@@ -1710,25 +1801,25 @@ becomes the point). P is `U.player`.
 | state 1 | the state 1 run (below) | below | 6, 3 or 2 |
 | any other state | none | none | 7 |
 
-The state 1 run, in order:
+The state 1 run. It always starts with the approach goal (`O.pos`, 16), a wake delay of 60 and `flags` gaining 0xe0.
+Then, with *low* = `P.energy` < `P.energyCapacity` × 0.2 or `P.metal` < `P.metalCapacity` × 0.2 (in double):
 
-1. The approach goal (`O.pos`, 16); a wake delay of 60; `flags` gains 0xe0.
-2. **Repair**, when `P.energy` ≥ `P.energyCapacity` × 0.2 (in double): the repairable list (`D.range` << 16). When it is
-   not empty: `services.RandomInt(n)` = *i* (*n* its length, drawn even when *n* is 1), V = entry *i*; when
-   `P.allied[` V's `Player.index` `]` is not 0 (Q30) and `GetOrderType(8, U, V, none)` (its imports) is not 0: the
-   repair order (V) (which asks `GetOrderType(8, ...)` again); result 6 when it answers 1, 3 when it answers 0.
-   Otherwise the run goes on.
-3. **Reclaim**, when `P.energy` < `P.energyCapacity` × 0.2 or `P.metal` < `P.metalCapacity` × 0.2 (read after step 2):
-   the reclaim pick (`U.pos`, `D.range` << 16) giving the energy point E and amount *e*, the metal point M and amount *m*.
-   When it answers 1, the first that holds:
-   1. M not none and `P.metal` < `P.metalCapacity` × 0.2: release the target; a new order (`RECLAIM` (`Reclaim`, 32), no
-      target, position M, 0, 0, 0) at the front; release the target again (it publishes nothing);
-   2. E not none and `P.energy` < `P.energyCapacity` × 0.2: release the target; the same order at E, at the front;
-   3. M not none and `P.metal` + *m* ≤ `P.metalCapacity` (the sum in double): as 2 at M;
-   4. E not none and `P.energy` + *e* ≤ `P.energyCapacity`: as 2 at E;
+- *the repair test*: when `P.energy` ≥ `P.energyCapacity` × 0.2 (in double): the repairable list (`D.range` << 16);
+  when it is not empty, `services.RandomInt(n)` = *i* (*n* its length, drawn even when *n* is 1) and V = entry *i*;
+  when `P.allied[` V's `Player.index` `]` is not 0 (Q30): `GetOrderType(8, U, V, none)` (its imports) = K. The test
+  *finds* V when K is not 0; it makes the imports it reaches either way;
+- *the reclaim rows*, given the pick's E, *e*, M, *m*, the first that holds gives the point X: (1) M not none and
+  `P.metal` < `P.metalCapacity` × 0.2; (2) E not none and `P.energy` < `P.energyCapacity` × 0.2; (3) M not none and
+  `P.metal` + *m* ≤ `P.metalCapacity` (the sum in double); (4) E not none and `P.energy` + *e* ≤ `P.energyCapacity`.
+  X is M for rows 1 and 3, E for rows 2 and 4.
 
-   and then `flags` becomes 0, result 3.
-4. Otherwise result 2.
+| When | Imports after the goal, in order | Writes | Result |
+| --- | --- | --- | --- |
+| the repair test finds V, and the repair order (V) answers 1 | the repair test's; the repair order's (it asks `GetOrderType(8, ...)` again) | its orders | 6 |
+| the repair test finds V, and the repair order answers 0 | the same | none | 3 |
+| it finds none, *low*, the reclaim pick (`U.pos`, `D.range` << 16) answers 1, and reclaim row 1 holds | the repair test's; the pick; release the target; a new order (`RECLAIM` (`Reclaim`, 32), no target, position M, 0, 0, 0) at the front; release the target again (it publishes nothing) | `flags` becomes 0 | 3 |
+| the same, the pick answering 1 and row 2, 3 or 4 giving X | the repair test's; the pick; release the target; a new order (`RECLAIM`, no target, position X, 0, 0, 0) at the front | `flags` becomes 0 | 3 |
+| otherwise | the repair test's; when *low*: the pick | none | 2 |
 
 Failure answers: `map.UnitsInRange` 0 gives an empty list (no draw); a goal answer of 0 attaches nothing; the pick
 answering 0, or none of its four rows holding, is result 2. Recorded: `orders-build-patrol.txt`, `Unit#1`, `Order#4`,
@@ -1744,7 +1835,7 @@ not 1: speech (7, 26), result 5.
 
 | When | Imports | Writes | Result |
 | --- | --- | --- | --- |
-| state 0, `U.motion` is not 0, `D.flags1` has 0x40 and `T.buildLeft` is 0.0 (either sign) | announce (24) | none | 1 |
+| state 0, `U.motion` is not 0, `D.flags1` has 0x40 (`canbuild`) and `T.buildLeft` is 0.0 (either sign) | announce (24) | none | 1 |
 | state 0, otherwise | none | none | 7 |
 | state 1, *c* has 0x40 | none | none | 8 |
 | state 1, `T.pos` out of build range (the build gap (`T.pos`, `T.footprint`)) | the footprint marker (`T.cell`, `T.footprint`); `services.RandomInt(30)` = *r* | a wake delay of *r* + 30; `flags` gains 0xe8 | 2 |
@@ -1766,7 +1857,7 @@ Every run starts with `units.UnitRefGet(link)` = V. When V is 0: speech (7, 26),
 
 | When | Imports (after `UnitRefGet`) | Writes | Result |
 | --- | --- | --- | --- |
-| state 0, `D.flags1` lacks 0x40 | none | none | 7 |
+| state 0, `D.flags1` lacks 0x40 (`canbuild`) | none | none | 7 |
 | state 0, `V.buildLeft` is 0.0 (either sign) and `U.activateFlags` has activation bit 0 | CLAIM (3) | none | 1 |
 | state 0, otherwise | none | none | 8 |
 | state 1, V is repaired | none | none | 1 |
@@ -1809,10 +1900,10 @@ the spot of the cell the import answers without testing it, and a cell feature o
 already made (Q32). Failure answers: `CreateUnit` 0 keeps the state at 5 (the next run retries); `GetGameType` is only
 compared with 3. Recorded: unrecorded.
 
-#### `SelfDestruct` (kind 38)
+#### `SelfDestruct` (kind 38) and `SelfDestructFG` (kind 39)
 
-Table entry: flags 0x40040 (second list, so it runs from `RunSecondaryOrders` with code 0). The run is
-`orderNotify[54]`. `Order.radius` (here: the countdown word: bits 28 to 31 all set once it is armed, the count in bits
+Table entries: `SelfDestruct` flags 0x40040 (second list, so it runs from `RunSecondaryOrders` with code 0);
+`SelfDestructFG` flags 0 (first list, so it runs from `RunOrders`). Both name `orderNotify[54]`, and both run as below. `Order.radius` (here: the countdown word: bits 28 to 31 all set once it is armed, the count in bits
 0 to 27), `Order.ticks` (here: the done mark). *n* = `D.selfdestructcountdown` (3 bits, 0 to 7).
 
 First, always: when `radius` AND 0xf0000000 is 0, `radius` becomes *n* OR 0xf0000000. Then, with *k* = `radius` AND
@@ -1821,16 +1912,12 @@ First, always: when `radius` AND 0xf0000000 is 0, `radius` becomes *n* OR 0xf000
 | When | Imports in order | Writes | Result |
 | --- | --- | --- | --- |
 | `ticks` ≠ 0, or *n* = 0 | DAMAGE (*U*, 30000, 3) | none | 5 |
-| `ticks` = 0, *n* > 0, *c* has 0x2, `U.flags` lacks unit flag 0x4000 | speech (23, 0) | none | 5 |
-| `ticks` = 0, *n* > 0, *c* has 0x2, `U.flags` has 0x4000 | none | none | 5 |
+| `ticks` = 0, *n* > 0, *c* has 0x2, `U.flags` lacks unit flag 0x4000 (`killPending`) | speech (23, 0) | none | 5 |
+| `ticks` = 0, *n* > 0, *c* has 0x2, `U.flags` has 0x4000 (`killPending`) | none | none | 5 |
 | `ticks` = 0, *n* > 0, *c* lacks 0x2, *k* > 0 | speech (L(*k*), 0) | `radius` becomes (*k* − 1) OR 0xf0000000; a wake delay of 30; `flags` gains 0x2 | 1 |
 | `ticks` = 0, *n* > 0, *c* lacks 0x2, *k* = 0 | speech (L(0), 0); `services.RandomInt(15)` = *g* | `ticks` becomes 1; a wake delay of *g*; `flags` gains 0x2 | 1 |
 
 L(*k*) is 22 − *k* for *k* from 0 to 5. For *k* 6 and 7 the slot is not defined ("Gaps in the kit"). Recorded: unrecorded.
-
-#### `SelfDestructFG` (kind 39)
-
-Table entry: flags 0 (first list). The same run as `SelfDestruct`. Recorded: unrecorded.
 
 #### `SelfRepair` (kind 40)
 
@@ -1839,7 +1926,7 @@ Table entry: flags 0x1000204 (target). T (here: the unit that repairs *U*, a rep
 | When | Imports in order | Writes | Result |
 | --- | --- | --- | --- |
 | T = 0 | speech (7, 23) | none | 8 |
-| state 0, T's `UnitDef.flags1` lacks 0x40 | none | none | 7 |
+| state 0, T's `UnitDef.flags1` lacks 0x40 (`canbuild`) | none | none | 7 |
 | state 0, `T.buildLeft` = 0.0 and `U.activateFlags` has activation bit 0 | CLAIM (3) | none | 1 |
 | state 0, otherwise | none | none | 8 |
 | state 1, *U* is repaired | none | none | 1 |
@@ -1872,9 +1959,9 @@ Table entry: flags 0x1020000 (idle). The idle order of a mine: it self-destructs
 
 | When | Imports | Writes | Result |
 | --- | --- | --- | --- |
-| state 0, `U.flags` lacks 0x20000000 | none | none | 7 |
+| state 0, `U.flags` lacks 0x20000000 (`immobile`) | none | none | 7 |
 | state 0, otherwise | RELEASE (3) | `flags` gains 0x10000; a wake delay of 1 | 1 |
-| state 1, `targeting.FindBestTargetIfFireAtWill(U)` answers V ≠ 0, `V.flags` AND 3 is 1 and `U.flags` has any of 0x300000 | the targeting import; a new order (`SELFDESTRUCT` (`SelfDestruct`, 38), no target, no position, 1, 0, 0) at the front | none | 5 |
+| state 1, `targeting.FindBestTargetIfFireAtWill(U)` answers V ≠ 0, `V.flags` AND 3 is 1 and `U.flags` has any of 0x300000 (`fireOrder`) | the targeting import; a new order (`SELFDESTRUCT` (`SelfDestruct`, 38), no target, no position, 1, 0, 0) at the front | none | 5 |
 | state 1, otherwise | the targeting import; `services.RandomInt(30)` = *r* | `flags` gains 0x10000; a wake delay of *r* + 30 | 2 |
 | any other state | none | none | 7 |
 
@@ -1894,7 +1981,7 @@ Recorded: unrecorded.
 #### `Stop` (kind 45)
 
 Table entry: flags 0. The run, always: announce (0); CLEAR (0), CLEAR (1), CLEAR (2); then, when `U.flags` AND 3 is 2
-and `D.flags1` has bit 0x800: a new order (`VTOL_LANDIFCAN` (`VTOL_LandIfCan`, 52), no target, position `U.pos`, 0,
+and `D.flags1` has bit 0x800 (`flying`): a new order (`VTOL_LANDIFCAN` (`VTOL_LandIfCan`, 52), no target, position `U.pos`, 0,
 0, 0) at the front. Result 5. Recorded: unrecorded.
 
 #### `Suppress` (kind 46)
@@ -1906,7 +1993,7 @@ Before the table: when *c* has 0x800 the result is 5 and nothing else happens. L
 
 | When | Imports | Writes | Result |
 | --- | --- | --- | --- |
-| state 0, `D.flags1` has 0x800 | none | none | 8 |
+| state 0, `D.flags1` has 0x800 (`flying`) | none | none | 8 |
 | state 0, otherwise | announce (0); `weapons.GetWeaponRange(U, wb)` | `radius` becomes the answer | 1 |
 | state 1, `ticks` is 2 | CLAIM (3); SET_POS (2) | `flags` becomes 0x1c00 | 1 |
 | state 1, otherwise | CLAIM (0); CLAIM (1); SET_POS (0); SET_POS (1) | `flags` becomes 0x1c00 | 1 |
@@ -1936,7 +2023,7 @@ side's heading is `U.heading` − 0x4000 when `ticks` is not 0, else `U.heading`
 | When | Imports, in order | Writes | Result |
 | --- | --- | --- | --- |
 | T is 0, or *c* has any of 0x10008 | none | none | 5 |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | none | 7 |
 | state 0 | `services.RandomInt(2)` = *s*; the move goal (`U.pos` + Step(the side's heading, *W* << 16), 128) | `ticks` becomes *s* (before the heading is chosen); `flags` becomes 0x100e8 | 1 |
 | state 1 | the move goal (`U.pos` + Step(the side's heading, *W* << 17), 128) | `flags` becomes 0x100e8 | 1 |
 | state 2 | none | none | 5 |
@@ -1958,37 +2045,37 @@ Otherwise `O.pos` becomes T's `pos`, and:
 
 | When | Imports, in order | Writes | Result |
 | --- | --- | --- | --- |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | none | 7 |
 | state 0 | announce (9); the climb preparation; `services.RandomInt(0x10000)` = *a* | `ticks` *a*; `radius` *a* AND 1 | 1 |
 | state 1 | RELEASE (3) | none | 1 |
 | state 2 | the guard pass (below) | as below | 3 or 2 |
 | any other state | none | none | 7 |
 
-The guard pass, in order, stopping at the first step that gives a result:
+The guard pass (state 2), with X = `T.attacker` and L = T's first order:
 
-1. **The defence.** Let X be `T.attacker`. When X is not 0, X's player's `Player.allied[` *U*'s `Player.index` `]` is 0,
-   *c* has 0x10, and `D.categories` does not contain `X.unitDefIndex`: the attack order (X, 1); when it answers 1:
-   `flags` becomes 0, result 3. When it answers 0 and `U.flags` has any of 0x300000: for each weapon *i* = 0, 1, 2 whose
-   `Unit.weapon{i}Flags` has bits 0x2 and 0x10 and whose `WeaponDef.flags` (at `Unit.weapon{i}Def`) lacks 0x4000000:
-   `targeting.GetWeaponTargetUnit(U, i)` (recorded as `services.ScheduleTargetingTargetUnit`) = V; when V is not 0,
-   `weapons.WeaponCanReachUnit(U, V, i)`; when V is 0, or that answers 0, or `D.weaponCategories{i}` contains
-   `V.unitDefIndex`: SET_UNIT (*i*, X).
-2. **The repair.** `units.CanRepair(U, T)`; when it answers not 0: K = `GetOrderType(8, U, T, none)`; when K is not 0:
-   release the target; a new order (K, target T, no position, 0, 0, 0) at the front; `flags` becomes 0; result 3.
-3. **The help.** Tested in this order, each only when the ones before held: `T.list` is not 0; L = T's first order has
-   `kind` not 0; `D.flags1` has 0x40; `units.CanRepair(U, L's target)` (L's target may be 0, Q33) is not 0; T's
-   `UnitDef.flags1` has 0x40; L's `flags_42` has 0x100000; *U* is not L's target. When all hold: *building* = L's kind is
-   `MobileBuild` (25), `BuildingBuild` (12) or `VTOL_MobileBuild` (54); *actionable* = (L's `flags_42` has 0x200 and L's
-   target is not 0) or L's `flags_42` has 0x400.
-   - not *building* and *actionable*: K = L's kind, with `RepairUnit` (35) changed to `VTOL_RepairUnit` (61), `Reclaim`
-     (32) to `VTOL_Reclaim` (58), `ReclaimUnit` (33) to `VTOL_ReclaimUnit` (59) and `HelpBuild` (23) to `VTOL_HelpBuild`
-     (51); release the target; a new order (K, L's target, position L's `pos`, 0, 0, 0) at the front; `flags` becomes 0;
-     result 3;
-   - *building* and L's target not 0: release the target; a new order (`VTOL_HELPBUILD` (`VTOL_HelpBuild`, 51), L's target, position L's
-     `pos`, 0, 0, 0) at the front; `flags` becomes 0; result 3.
-4. **The circle.** When *c* has any of 0xe0: `ticks` becomes `ticks` − `services.RandomInt(0x2000)` − 0x4000 (wrapping).
-   The distance is (*W* + 160) << 16 when `U.flags` has bit 0x80000000, else 0x1400000. The move goal (T.pos +
-   Step(`ticks`, distance), 128); a wake delay of 30; `flags` gains 0xf8 (so 0xf9); result 2.
+- *the defence* applies when X is not 0, X's player's `Player.allied[` *U*'s `Player.index` `]` is 0, *c* has 0x10, and
+  `D.categories` does not contain `X.unitDefIndex`; it asks the attack order (X, 1). When that answers 0 and `U.flags`
+  has any of 0x300000 (`fireOrder`), *the free weapons* follow: for each weapon *i* = 0, 1, 2 in turn whose
+  `Unit.weapon{i}Flags` has bits 0x2 and 0x10 and whose `WeaponDef.flags` (at `Unit.weapon{i}Def`) lacks 0x4000000
+  (`commandFire`): `targeting.GetWeaponTargetUnit(U, i)` (recorded as `services.ScheduleTargetingTargetUnit`) = V; when
+  V is not 0, `weapons.WeaponCanReachUnit(U, V, i)`; when V is 0, or that answers 0, or `D.weaponCategories{i}`
+  contains `V.unitDefIndex`: SET_UNIT (*i*, X);
+- *the repair test*: `units.CanRepair(U, T)`; when it answers not 0, K = `GetOrderType(8, U, T, none)` (its imports);
+- *the help test*, its parts asked in this order, each only when the ones before held: `T.list` is not 0; L's `kind` is
+  not 0; `D.flags1` has 0x40 (`canbuild`); `units.CanRepair(U, L's target)` is not 0 (L's target may be 0, Q33); T's
+  `UnitDef.flags1` has 0x40 (`canbuild`); L's `flags_42` has 0x100000; *U* is not L's target. With all held: *building* = L's kind is
+  `MobileBuild` (25), `BuildingBuild` (12) or `VTOL_MobileBuild` (54); *actionable* = (L's `flags_42` has 0x200 and L's
+  target is not 0) or L's `flags_42` has 0x400.
+
+| When | Imports, in order | Writes | Result |
+| --- | --- | --- | --- |
+| the defence applies and the attack order answers 1 | the attack order's | its orders; `flags` becomes 0 | 3 |
+| K is not 0 | the defence's (when it applies: the attack order's, then the free weapons'); the repair test's; release the target; a new order (K, target T, no position, 0, 0, 0) at the front | `flags` becomes 0 | 3 |
+| the help test holds, not *building*, *actionable* | the defence's; the repair test's; the help test's; release the target; a new order (K2, L's target, position L's `pos`, 0, 0, 0) at the front, K2 being L's kind with `RepairUnit` (35) changed to `VTOL_RepairUnit` (61), `Reclaim` (32) to `VTOL_Reclaim` (58), `ReclaimUnit` (33) to `VTOL_ReclaimUnit` (59) and `HelpBuild` (23) to `VTOL_HelpBuild` (51) | `flags` becomes 0 | 3 |
+| the help test holds, *building*, L's target not 0 | the same tests' imports; release the target; a new order (`VTOL_HELPBUILD` (`VTOL_HelpBuild`, 51), L's target, position L's `pos`, 0, 0, 0) at the front | `flags` becomes 0 | 3 |
+| otherwise (the circle) | the tests' imports; when *c* has any of 0xe0: `services.RandomInt(0x2000)` = *r*; the move goal (T.pos + Step(`ticks`, distance), 128) with `ticks` as now written | when *c* has any of 0xe0, `ticks` becomes `ticks` − *r* − 0x4000 (wrapping); a wake delay of 30; `flags` gains 0xf8 (so 0xf9) | 2 |
+
+The distance is (*W* + 160) << 16 when `U.flags` has bit 0x80000000 (`armed`), else 0x1400000.
 
 Recorded: `orders-air-repair.txt`, tick 852, `Unit#4` (`Order#5`, made in the same call).
 
@@ -2015,14 +2102,14 @@ count, set to 0).
 | --- | --- | --- |
 | T is 0, or *c* has 8 | speech (7, 8); the orders dirty mark | 8 |
 | *c* has 2 | the orders dirty mark | 5 |
-| state 0, `U.motion` not 0, `D.flags1` has 0x800, `D.ids` 0 | none | 7 |
-| state 0, `U.motion` not 0, `D.flags1` has 0x800 | announce (2); the climb preparation | 1 |
+| state 0, `U.motion` not 0, `D.flags1` has 0x800 (`flying`), `D.ids` 0 | none | 7 |
+| state 0, `U.motion` not 0, `D.flags1` has 0x800 (`flying`) | announce (2); the climb preparation | 1 |
 | state 0, otherwise | none | 7 |
 | state 1 | `progress` becomes 0; the move goal (T's `pos`, `D.buildRange`); `flags` becomes 0xe0 | 1 |
 | state 2, *c* has 0x40 | none | 8 |
 | state 2, `T.buildLeft` is 0.0 | none | 5 |
 | state 2 | start the building script (the low 16 bits of Head(`U.pos`, T.pos), with no heading subtracted, Q34); the orders dirty mark | 1 |
-| state 3 | the build pass (as `VTOL_MobileBuild`'s, with result 5 in place of result 1) | 2 or 5 |
+| state 3 | the air build pass (5) | 2 or 5 |
 | other states | none | 7 |
 
 Failure answers: `AddBuildProgress` 0: no particles; the result still follows `buildLeft`. Recorded: unrecorded.
@@ -2037,7 +2124,7 @@ Table entry: flags 0x400 (position). `Order.ticks` (here: the circling angle), `
 | `O.next` is not 0 | none | none | 5 |
 | *c* has 0x40 | none | none | 5 |
 | the off-map return | as there | as there | 2 |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | none | 7 |
 | state 0 | `services.RandomInt(0x10000)` = *a*; the climb preparation | when `O.pos` is (0, 0, 0), `O.pos` becomes `U.pos`; `ticks` *a*; `radius` *a* AND 1 | 1 |
 | state 1, `map.CanPlaceFootprintAt(U, &U.pos)` not 0 | that import; START_SCRIPT "EndTransport" (0, 1, 0, 0); a path target to `U.pos`; the ground height (below) = *v*; SET_ALTITUDE (*t*, *v*); attach target *t*; SET_STATE_BITS (1, 0) | `flags` becomes 0xe0 | 1 |
 | state 1, that answer 0 | that import; then the spot search (below) | as below | 2 |
@@ -2048,12 +2135,17 @@ Table entry: flags 0x400 (position). `Order.ticks` (here: the circling angle), `
 The ground height: *g1* = `map.GetGroundHeight(&U.pos)`. When *g1* > *S* (signed): *g2* = a second call; *v* = 0 when
 *g2* > *S*, else a third call *g3* and *v* = *g3* − *S*. When *g1* ≤ *S*: a second call *g2*, and *v* = *g2* − *S* (Q35).
 
-The spot search: for *r* = 0x40, 0x50, ..., 0xf0 (12 tries, in that order): P = `U.pos`; P.x gains
-(`services.RandomInt(2r + 1)` − *r*) << 16, then P.z gains (`services.RandomInt(2r + 1)` − *r*) << 16 (the x draw first);
-P is snapped to `U.footprint`; then `map.CanPlaceFootprintAt(U, P)`. On the first answer not 0: a path target to P,
-attach target *t* (no SET_ event), `flags` becomes 0xe0, result 2. When all 12 fail: when the low byte of *c* has any of
-0xe0, `ticks` becomes `ticks` − 0x5555 (wrapping); the move goal (`O.pos` + Step(`ticks`, 0xa00000), 0x40); `flags`
-gains 0xe0; result 2. Recorded: unrecorded.
+The spot search: for each try *r* = 0x40, 0x50, ..., 0xf0 in that order (at most 12), until a try fits: P = `U.pos`;
+P.x gains (`services.RandomInt(2r + 1)` − *r*) << 16, then P.z gains (`services.RandomInt(2r + 1)` − *r*) << 16 (the x
+draw first); P is snapped to `U.footprint`; `map.CanPlaceFootprintAt(U, P)`; the try *fits* when that answers not 0.
+
+| When | Imports after the tries, in order | Writes | Result |
+| --- | --- | --- | --- |
+| a try fits (no later try is made) | a path target to that try's P; attach target *t* (no SET_ event) | `flags` becomes 0xe0 | 2 |
+| no try fits, the low byte of *c* has any of 0xe0 | the move goal (`O.pos` + Step(`ticks`, 0xa00000), 0x40), with `ticks` as now written | `ticks` becomes `ticks` − 0x5555 (wrapping); `flags` gains 0xe0 | 2 |
+| no try fits, otherwise | the move goal (`O.pos` + Step(`ticks`, 0xa00000), 0x40) | `flags` gains 0xe0 | 2 |
+
+Recorded: unrecorded.
 
 #### `VTOL_Landing` (kind 53)
 
@@ -2063,7 +2155,7 @@ Table entry: flags 0x600. T (here: the pad unit H); `Order.ticks` (here: first t
 | When | Imports and writes | Result |
 | --- | --- | --- |
 | T 0 | speech (7, 13) | 8 |
-| state 0, `U.motion` not 0 and `D.flags1` has 0x800 | announce (12); the climb preparation; `services.RandomInt(0x10000)` = `ticks` | 1 |
+| state 0, `U.motion` not 0 and `D.flags1` has 0x800 (`flying`) | announce (12); the climb preparation; `services.RandomInt(0x10000)` = `ticks` | 1 |
 | state 0, otherwise | none | 7 |
 | state 1, *p* = the landing pad search (H, the landing pad search (H, −1)) is not −1 | the two searches, the inner first (Q36); `state` becomes 2 | 2 |
 | state 1, *p* is −1 | the two searches; a path target to H.pos + Step(`ticks`, *w* << 16); `ticks` + 0x4000 (wrapping); SET_APPROACH_RADIUS (*t*, 0x80); attach target *t*; `flags` becomes 0xe8; `state` becomes 1 | 2 |
@@ -2091,7 +2183,7 @@ Table entry: flags 0x100508. `Order.ticks` (here: the unit type number to build,
 | --- | --- | --- | --- |
 | *c* has 0x2 | the orders dirty mark | none | 5 |
 | *c* has 0x8 | speech (7, 7); the orders dirty mark | none | 8 |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | none | 7 |
 | state 0 | announce (2); the climb preparation | as there | 1 |
 | state 1 | the move goal (`O.pos` as rewritten, `D.buildRange`) | `progress` 0; `O.pos` x and z become Centre(Cell(`O.pos`, *f*), *f*); `flags` becomes 0xe0 | 1 |
 | state 2, *c* has 0x40 | none | none | 8 |
@@ -2099,16 +2191,11 @@ Table entry: flags 0x100508. `Order.ticks` (here: the unit type number to build,
 | the same, `progress` not 0 and at most 10 (signed) | that import | `progress` + 1; a wake delay of 30 | 2 |
 | the same, `progress` > 10 (signed) | that import; speech (7, 31) | none | 8 |
 | state 2, that answer not 0 | that import; `map.SnapWorldPosToFootprint(B, P)` on a copy P of `O.pos` (it rewrites P); `units.CreateUnit(U.playerIndex, the low 16 bits of ticks (unsigned), &O.pos, 0, 1, 0)` = N (`O.pos` already P); `units.UnitRefSetUnit(link, N)`; then, when T (as the block now holds it) is 0: speech (7, 36); otherwise: speech (9, 30), adding an order to T (`GETBUILT` (19), queue 1, target *U*, no position, 0, 0), start the building script (the build heading to T's `pos`), the orders dirty mark | `O.pos` becomes P | 8 when T is 0; else 1 |
-| state 3 | the build stance wait (10), whose answer is ignored; then everything state 4 does, in the same run | the wait's `flags` write stays and state 4's bits are OR'ed onto it (Q37) | as state 4 |
-| state 4 | the build pass (below) | as below | 2 or 1 |
+| state 3, `U.cobStateFlags` lacks 0x1 | the air build pass (1) | `flags` becomes 0xe (10 OR 0x4), and the pass's writes are added to it (Q37) | the pass's |
+| state 3, otherwise | the air build pass (1) | the pass's | the pass's |
+| state 4 | the air build pass (1) | the pass's | 2 or 1 |
 | state 5 | speech (8, 3) | none | 5 |
 | any other state | none | none | 7 |
-
-The build pass: (1) when the tick (unsigned) mod 150 is 0: *a* = Head(`U.pos`, T.pos) + 0xdb6e (32-bit); a path target
-to T.pos − Step(*a*, `D.buildRange` << 16); SET_HEADING (*t*, the low 16 bits of *a*, signed); attach target *t*. (2)
-`units.AddBuildProgress(U, T, a2)`, *a2* the float of (`D.buildRate` / 30, integer division); when it answers not 0:
-the nano point of *U*, then the nano spray (that point, the model box of T), T read as the block now holds it. (3)
-When `T.buildLeft` (now) is not 0.0: a wake delay of 1, `flags` gains 0xa, result 2; otherwise result 1.
 
 Recorded: unrecorded.
 
@@ -2118,7 +2205,7 @@ Table entry: flags 0x402 (position). `Order.pos` (here: the destination).
 
 | When | Imports, in order | Writes | Result |
 | --- | --- | --- | --- |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | none | 7 |
 | state 0 | the climb preparation | as there | 1 |
 | state 1 | announce (0); RELEASE (3); a path target to `O.pos` (after the snap); attach target *t* | `O.pos` snapped to `U.footprint`; `flags` becomes 0xe0 | 1 |
 | state 2 | when `O.next` is 0: speech (6, 0) | none | 5 |
@@ -2132,7 +2219,7 @@ Table entry: flags 0x412 (position). `Order.pos` (here: the patrol point).
 
 | State | When | Imports and writes | Result |
 | --- | --- | --- | --- |
-| 0 | `U.motion` not 0 and `D.flags1` has 0x800 | the patrol return order; announce (19); the climb preparation; RELEASE (3) | 1 |
+| 0 | `U.motion` not 0 and `D.flags1` has 0x800 (`flying`) | the patrol return order; announce (19); the climb preparation; RELEASE (3) | 1 |
 | 0 | otherwise | none | 7 |
 | 1 | | `subFlags` loses 0xe0 | 1 |
 | 2 | *c* has any of 0xe0 | none | 6 |
@@ -2158,7 +2245,7 @@ Then by state:
 
 | When | Imports, in order | Writes | Result |
 | --- | --- | --- | --- |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | none | 7 |
 | state 0, `T.footprint.x` (signed) > `D.capacity` | speech (7, 38) | none | 8 |
 | state 0, otherwise | announce (17); the climb preparation | as there | 1 |
 | state 1 | `movement.NewPathOrderToUnit(O, T)` = *t*; SET_ALTITUDE (*t*, `D.altitude`); SET_APPROACH_RADIUS (*t*, 0x30); attach target *t* | `flags` becomes 0x100e8 | 1 |
@@ -2180,7 +2267,7 @@ Otherwise, when `F.flags` lacks 0x80: result 8.
 
 | State | When | Imports and writes | Result |
 | --- | --- | --- | --- |
-| 0 | `U.motion` not 0, `D.flags1` has 0x800, `D.flags2` has 0x400 | announce (21); the climb preparation | 1 |
+| 0 | `U.motion` not 0, `D.flags1` has 0x800 (`flying`), `D.flags2` has 0x400 | announce (21); the climb preparation | 1 |
 | 0 | otherwise | none | 7 |
 | 1 | | a path target to `O.pos`; attach target *t*; `flags` becomes 0xe0 | 1 |
 | 2 | *c* has 0x40 | none | 8 |
@@ -2199,7 +2286,7 @@ Table entry: flags 0x100200. T (here: the unit reclaimed); `Order.ticks` (here: 
 | When | Imports and writes | Result |
 | --- | --- | --- |
 | T 0, or *c* has any of 0x10008 | none | 5 |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | 7 |
 | state 0, `D.flags2` lacks 0x400 | speech (7, 22) | 7 |
 | state 0, `units.CanReclaim(U, T)` 0 | that import; speech (7, 33) | 8 |
 | state 0 | that import; announce (21); the climb preparation | 1 |
@@ -2217,30 +2304,33 @@ Table entry: flags 0x412 (position). P is `U.player`.
 | When | Imports and writes | Result |
 | --- | --- | --- |
 | *c* has any of 0x48 | a wake delay of 0x1e | 0 |
-| state 0, `U.motion` not 0, `D.flags1` has 0x800, `D.flags2` has 0x200 | when T is not 0, `O.pos` becomes T's `pos`; the patrol return order; announce (19); the climb preparation | 1 |
+| state 0, `U.motion` not 0, `D.flags1` has 0x800 (`flying`), `D.flags2` has 0x200 | when T is not 0, `O.pos` becomes T's `pos`; the patrol return order; announce (19); the climb preparation | 1 |
 | state 0, otherwise | none | 7 |
 | state 1, *c* has any of 0xe0 | none | 6 |
 | state 1 | the state 1 run (below) | 0, 2, 3 or 6 |
 | other | none | 7 |
 
-The state 1 run, in order:
+The state 1 run. It always starts with a path target to `O.pos`, SET_ALTITUDE (*t*, `D.altitude`), attach target
+*t*, a wake delay of 0x2d and `flags` gaining 0xe0. Then:
 
-1. A path target to `O.pos`; SET_ALTITUDE (*t*, `D.altitude`); attach target *t*; a wake delay of 0x2d; `flags` gains
-   0xe0.
-2. The pad diversion: result 0 when it happens.
-3. When `P.energy` ≥ `P.energyCapacity` × 0.2 (in double): the repairable list (`D.range` << 16); with *n* entries,
-   *n* > 0: `services.RandomInt(n)` = *i*, V = entry *i*; when `units.CanRepair(U, V)` is not 0 and `V.buildLeft` is
-   0.0: the repair order (V): result 6 when it answers 1, 3 when it answers 0. Otherwise `units.CanRepair(U, V)` again
-   (Q39); when it is not 0 and `V.buildLeft` is not 0.0: release the target; a new order (`VTOL_HELPBUILD` (`VTOL_HelpBuild`, 51), target
-   V, no position, 0, 0, 0) at the front; `flags` becomes 0; result 3. Otherwise go on.
-4. The reclaim pick (`U.pos`, 0xf00000). When it answers 1, the first that holds: `P.metal` < `P.metalCapacity` × 0.2
-   and M not none: at M; `P.energy` < `P.energyCapacity` × 0.2 and E not none: at E; M not none and `P.metal` + *m* ≤
-   `P.metalCapacity` (in double): at M; E not none and `P.energy` + *e* ≤ `P.energyCapacity`: at E. "At X": release the
-   target; a new order (`VTOL_RECLAIM` (`VTOL_Reclaim`, 58), no target, position X, 0, 0, 0) at the front; `flags`
-   becomes 0; result 3.
-5. Otherwise result 2.
+- *the repair test*: when `P.energy` ≥ `P.energyCapacity` × 0.2 (in double): the repairable list (`D.range` << 16);
+  when it is not empty, `services.RandomInt(n)` = *i* and V = entry *i*; then `units.CanRepair(U, V)` = *a1*; when
+  *a1* is 0, or *a1* is not 0 and `V.buildLeft` is not 0.0, a second `units.CanRepair(U, V)` = *a2* (Q39);
+- *the reclaim rows*, given the pick's E, *e*, M, *m*, the first that holds gives the point X: (1) `P.metal` <
+  `P.metalCapacity` × 0.2 and M not none: M; (2) `P.energy` < `P.energyCapacity` × 0.2 and E not none: E; (3) M not
+  none and `P.metal` + *m* ≤ `P.metalCapacity` (in double): M; (4) E not none and `P.energy` + *e* ≤
+  `P.energyCapacity`: E.
 
-Recorded: unrecorded.
+| When | Imports after the start, in order | Writes | Result |
+| --- | --- | --- | --- |
+| the pad diversion happens | the diversion's | its writes | 0 |
+| *a1* not 0, `V.buildLeft` 0.0, and the repair order (V) answers 1 | the diversion's test; the repair test's; the repair order's | its orders | 6 |
+| *a1* not 0, `V.buildLeft` 0.0, and the repair order answers 0 | the same | none | 3 |
+| *a2* not 0 and `V.buildLeft` not 0.0 | the diversion's test; the repair test's (both `CanRepair`); release the target; a new order (`VTOL_HELPBUILD` (`VTOL_HelpBuild`, 51), target V, no position, 0, 0, 0) at the front | `flags` becomes 0 | 3 |
+| none of the above, the reclaim pick (`U.pos`, 0xf00000) answers 1 and a reclaim row gives X | the diversion's test; the repair test's; the pick; release the target; a new order (`VTOL_RECLAIM` (`VTOL_Reclaim`, 58), no target, position X, 0, 0, 0) at the front | `flags` becomes 0 | 3 |
+| otherwise | the diversion's test; the repair test's; the pick | none | 2 |
+
+The pick is asked whatever the resources are. Recorded: unrecorded.
 
 #### `VTOL_RepairUnit` (kind 61)
 
@@ -2252,7 +2342,7 @@ Checked first, in this order: T is 0: speech (7, 26), result 8; the leash test h
 
 | When | Imports, in order | Writes | Result |
 | --- | --- | --- | --- |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | none | 7 |
 | state 0, `units.CanRepair(U, T)` 0 | that import; speech (7, 25) | none | 8 |
 | state 0, otherwise | that import; announce (24); the climb preparation | as there | 1 |
 | state 1 | a path target to `O.pos`; SET_ALTITUDE (*t*, `D.altitude`); attach target *t* | `flags` becomes 0xe8 | 1 |
@@ -2275,7 +2365,7 @@ Table entry: flags 0x600. `Order.ticks` (here: the circling angle), `Order.radiu
 | --- | --- | --- |
 | *c* has 0x40 | none | 5 |
 | the off-map return | as there | 2 |
-| state 0, `U.motion` not 0, `D.flags1` has 0x800, T not 0, the attack order (T, 0) answers 1 | the attack order; `flags` becomes 0 | 0 |
+| state 0, `U.motion` not 0, `D.flags1` has 0x800 (`flying`), T not 0, the attack order (T, 0) answers 1 | the attack order; `flags` becomes 0 | 0 |
 | state 0, the same, T not 0, the attack order answers 0 | no import (Q40) | 1 |
 | state 0, the same, T 0 | when `O.posX`, `posY`, `posZ` are all 0, `O.pos` becomes `U.pos`; `services.RandomInt(0x10000)` = `ticks`; `radius` `ticks` AND 1; the climb preparation | 1 |
 | state 0, otherwise | none | 7 |
@@ -2292,7 +2382,7 @@ Table entry: flags 0x600. `Order.ticks`, `Order.radius` as in `VTOL_SeekAttack`;
 | --- | --- | --- |
 | *c* has 0x40 | none | 5 |
 | the off-map return | as there | 2 |
-| state 0, `U.motion` not 0 and `D.flags1` has 0x800 | when the three `O.pos` words are 0, `O.pos` becomes `U.pos`; `services.RandomInt(0x10000)` = `ticks`; `radius` `ticks` AND 1 | 1 |
+| state 0, `U.motion` not 0 and `D.flags1` has 0x800 (`flying`) | when the three `O.pos` words are 0, `O.pos` becomes `U.pos`; `services.RandomInt(0x10000)` = `ticks`; `radius` `ticks` AND 1 | 1 |
 | state 0, otherwise | none | 7 |
 | state 1 | the guard sweep (below) | 0, 2 or 3 |
 | other | none | 7 |
@@ -2315,11 +2405,11 @@ Table entry: flags 0x20000 (`ORDER_FLAG_IDLE`). `Order.start` (here: the home po
 
 | When | Imports, in order | Writes | Result |
 | --- | --- | --- | --- |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | none | 7 |
 | state 0 | CLAIM (3) | `flags` 0x10000, then a wake delay of 1 (so 0x10001); `start` becomes (`U.xWhole`, `U.zWhole`) | 1 |
 | state 1 | `targeting.FindBestTargetIfFireAtWill(U)` (recorded as `services.ScheduleTargetingFireAtWill`) = V; when V is not 0: the attack order (V, 0) | when that answers 1: `flags` 0, `state` 0 | 3 when it answers 1; else 1 |
-| state 2, `D.flags1` has 0x800, `U.flags` AND 3 is 2, `U.cargo` not 0 | `services.RandomInt(0x10000)` = *a*; `services.RandomInt(0x20)` = *b*; a path target to (`start.x` << 16, 0, `start.y` << 16) + Step(*a*, (*b* + 8) << 16); SET_ALTITUDE (*t*, `D.altitude`); attach target *t*; `services.RandomInt(0xf)` = *c2* | a wake delay of *c2* + 0x1e; `state` 1 | 2 |
-| state 2, `D.flags1` has 0x800, `U.flags` AND 3 is 2, `U.cargo` 0 | the new order's imports | a new order (`VTOL_LANDIFCAN` (`VTOL_LandIfCan`, 52), no target, position `O.pos`, 0, 0, 0) at the front | 5 |
+| state 2, `D.flags1` has 0x800 (`flying`), `U.flags` AND 3 is 2, `U.cargo` not 0 | `services.RandomInt(0x10000)` = *a*; `services.RandomInt(0x20)` = *b*; a path target to (`start.x` << 16, 0, `start.y` << 16) + Step(*a*, (*b* + 8) << 16); SET_ALTITUDE (*t*, `D.altitude`); attach target *t*; `services.RandomInt(0xf)` = *c2* | a wake delay of *c2* + 0x1e; `state` 1 | 2 |
+| state 2, `D.flags1` has 0x800 (`flying`), `U.flags` AND 3 is 2, `U.cargo` 0 | the new order's imports | a new order (`VTOL_LANDIFCAN` (`VTOL_LandIfCan`, 52), no target, position `O.pos`, 0, 0, 0) at the front | 5 |
 | state 2, otherwise | `services.RandomInt(0x1e)` = *c2* | `flags` gains 0x10000; a wake delay of *c2* + 0x1e; `state` 1 | 2 |
 | any other state | none | none | 7 |
 
@@ -2335,7 +2425,7 @@ the `UnitDef` and `Unit.footprint` of T.
 | When | Imports, in order | Writes | Result |
 | --- | --- | --- | --- |
 | `U.cargo` is 0 (checked first) | none | none | 5 |
-| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 | none | none | 7 |
+| state 0, `U.motion` 0 or `D.flags1` lacks 0x800 (`flying`) | none | none | 7 |
 | state 0 | announce (41); `units.UnitRefSetUnit(link, U.cargo)` (it writes T); a path target to `O.pos`; SET_ALTITUDE (*t*, `D.altitude`); SET_APPROACH_RADIUS (*t*, 0x140); attach target *t* | `flags` becomes 0xe8 | 1 |
 | state 1, *fits* not 0 | *fits*; a path target to `O.pos`; SET_ALTITUDE (*t*, `modelMaxYHigh` of `U.cargo`'s `UnitDef`); attach target *t* | `flags` becomes 0xe8 | 1 |
 | state 1, *fits* 0 | *fits*; speech (7, 37) | none | 9 |
@@ -2416,7 +2506,8 @@ square. A value "kept as 16 bits" is its low 16 bits, sign-extended unless the t
 - `Order.ticks` += `ticks` (PARALYZE) and `Order.radius` += C (a build count) wrap; the build count compare `B.radius` >
   −C is signed with −C wrapping. `units.FindUnitTypeId`'s answer is taken as its low 16 bits, unsigned.
 - The COMMAND match accepts *d* when (*d* + 0x100000), as unsigned, is at most 0x200000.
-- Type set membership: word `bits[t >> 5]`, bit *t* AND 31, *t* the unsigned 16-bit `unitDefIndex`.
+- Type set membership: the word at the set's offset + 4 × (*t* >> 5), unbounded (past the 16 words for *t* ≥ 512),
+  bit *t* AND 31, *t* the unsigned 16-bit `unitDefIndex`.
 - The group range *n* = (`Game.unitsEnd` − F) / 280 + 1, capped at 512; the group sums are of the signed whole parts,
   signed 32-bit; the centre (sum / count) × 65536 wraps; the distance squares are hi(·) of exact 64-bit products, summed
   in 32 bits and compared signed with *count* × 3000.
@@ -2482,8 +2573,10 @@ runtime's `strcmpi`. The `SelfDestruct` voice slot L(*k*) is 22 − *k* for *k* 
   `interfaces/orders.h` says it is added after them.
 - **Q2**: COMMAND with `queue` 1 and no target removes the first order of that kind whatever its target.
 - **Q3**: COMMAND looks for a match only in the first list, even for a kind of the second list.
-- **Q4**: raising a build count adds the order at the front of its list (for a second-list kind, `BuildWeapon`) but
-  the next raise looks only at the last order of that list.
+- **Q4**: raising a build count looks only at the last order of the kind's list, but adds a new order elsewhere: a
+  `BuildWeapon` order at the front of the second list, a `MobileBuild` or `BuildingBuild` order after the marked order
+  of the first list. So a raise while the new order is not last (a `BuildWeapon` order with others behind it, or a
+  build order with a later order after it) adds another order instead of raising the count.
 - **Q5**: changing a build count by 0 removes a last build order of that type whose count is 0 or below.
 - **Q6**: GROUP_COMMAND passes the clicked position to `GetOrderType` even when `hasPos` is 0.
 - **Q7**: `GetOrderType` mode 12 asks `los_radar.GetMapCellAtPosition` with the address 0 when there is no position.
@@ -2508,11 +2601,11 @@ runtime's `strcmpi`. The `SelfDestruct` voice slot L(*k*) is 22 − *k* for *k* 
   0xe2.
 - **Q18**: `VTOL_Pickup` state 4 and `AirToGroundHover`'s re-aim after two misses make a movement target (and publish
   its SET_ events) but never attach it: `attached` keeps the earlier target.
-- **Q19**: `Attack_Chase` reads its weapon once per run: in the state 0 run that chooses the weapon, the rest of the run
-  uses the old value.
-- **Q20**: `Attack_Chase` steps 2 to 5 are never reached: steps 1 to 4 set no next step except when the height
-  difference sends them to 6, so step 1 takes a fresh random approach point every run until the height difference
-  exceeds 0x80000.
+- **Q19**: `Attack_Chase` asks `targeting.ChooseWeapon` only when `Order.ticks` is 0, so an order made with a weapon
+  of 1 or 2 keeps it, and only one made with 0 takes the chosen weapon.
+- **Q20**: `Attack_Chase` state 2 at step 1 leaves `Order.radius` (the step) at 1 unless the height difference exceeds
+  0x80000, which sets it to 6: each such run draws a new random approach point, and the step runs 0, 1, 1, ..., 6, 7,
+  8, 0, never 2 to 5 unless `radius` holds one already.
 - **Q21**: `AttackSpecial` stores, `AttackUType` makes, and `VTOL_SeekGuard`'s guard sweep makes an order of whatever kind
   `GetOrderType` answers, 0 included.
 - **Q22**: `AttackUType` and `Teleport` look at every unit record of the array, without testing that the slot holds a
@@ -2526,8 +2619,8 @@ runtime's `strcmpi`. The `SelfDestruct` voice slot L(*k*) is 22 − *k* for *k* 
 - **Q27**: `HelpBuild`'s ring radius adds the footprint's z twice instead of squaring it.
 - **Q28**: `MobileBuild` keeps its CLAIM and the snapped position when `units.CreateUnit` fails and retries every 300
   ticks; its blocked count is never reset after a success.
-- **Q29**: `ReclaimUnit` state 5 publishes the DAMAGE (applied at once) and then reads its reference again and uses its
-  unit's position and definition without testing it.
+- **Q29**: `ReclaimUnit` state 5 asks `units.UnitRefGet` a second time after the DAMAGE (which weapons applies at once)
+  and draws the reverse spray at the unit it answers, without testing for 0.
 - **Q30**: `RepairPatrol` tests the alliance of the drawn unit again after the list required it, and its first reclaim
   row releases the target twice.
 - **Q32**: `Resurrect` state 5 uses the spot of the cell `los_radar.GetOriginCellAtPosition` answers without testing
@@ -2536,13 +2629,15 @@ runtime's `strcmpi`. The `SelfDestruct` voice slot L(*k*) is 22 − *k* for *k* 
 - **Q34**: `VTOL_HelpBuild` starts the building script with the heading to its target and no unit heading subtracted.
 - **Q35**: `VTOL_LandIfCan` asks the ground height twice for one value (three times when the answers fall on both
   sides of the sea level).
-- **Q36**: `VTOL_Landing` state 1 searches for a pad twice, the outer search re-checking the inner one's slot and
-  asking `QueryLandingPad` again when it found none.
-- **Q37**: `VTOL_MobileBuild` state 3 ignores the build stance wait's answer: a unit not in stance still runs the build
-  pass in the same run, and `flags` ends as the wait's value with the pass's bits.
+- **Q36**: `VTOL_Landing` state 1 makes two landing pad searches, the second given the first's answer as its slot:
+  a free slot is asked `map.IsPadSlotFree` a second time, and when the first finds none, `QueryLandingPad` is asked
+  again.
+- **Q37**: `VTOL_MobileBuild` state 3 runs the air build pass whether or not the unit is in its build stance; out of
+  stance its `flags` also has 0x4 (0xe, then 0xf with the pass's wake).
 - **Q38**: `VTOL_Patrol` state 2 attaches a new move goal and then, when the pad diversion happens, releases it at
   once (SET_TARGET, SET_TARGET 0, DESTROY_TARGET).
-- **Q39**: `VTOL_RepairPatrol` state 1 asks `units.CanRepair(U, V)` a second time whenever the first test fails.
+- **Q39**: `VTOL_RepairPatrol` state 1 asks `units.CanRepair(U, V)` a second time when the first answer is 0, or is
+  not 0 with `V.buildLeft` not 0.0.
 - **Q40**: `VTOL_SeekAttack` state 0 with a target whose attack order fails has result 1 with no climb and no draw.
 - **Q41**: `VTOL_Unload` tests the footprint of `Order.target` but takes the altitude of state 1 from `Unit.cargo`'s
   definition.
@@ -2590,7 +2685,7 @@ From the kit's recordings. Each was recomputed from this spec's definitions, and
 - **`VTOL_Follow`**: the same call: state 0 (no announce, `flags_42` 512): CLAIM, ATTACH_TO_PIECE (the carrier
   `Unit#2`), SET_STATE_BITS; `UnitMotion#2.flags` is 2, so no flight branch; `RandomInt 65536 = 10037`. State 1:
   RELEASE. State 2: no attacker; `units.CanRepair Unit#4 Unit#1 = 0`; the help test reaches `units.CanRepair Unit#4
-  null = 0`; the code is 0, no draw; `Unit.flags` lacks 0x80000000, so the distance is 0x1400000. S(10037, 0x1400000) =
+  null = 0`; the code is 0, no draw; `Unit.flags` lacks 0x80000000 (`armed`), so the distance is 0x1400000. S(10037, 0x1400000) =
   17146880 (entry 78, 6698) and C = 12075520 (entry 206, 4717), so the move goal is at (36700160 − 17146880, 65536,
   15728640 − 12075520) = `movement.NewPathOrderAt Order#5 (19553280,65536,3653120)`; SET_APPROACH_RADIUS (16); SET_TARGET
   (12). `Order#5`: `flags` 0xf9 = 249, `wakeFrame` 882, `state` 2.
@@ -2659,15 +2754,22 @@ From the kit's recordings. Each was recomputed from this spec's definitions, and
   0x10001, `wakeFrame` 12, `start` (3000,1300) (the unit's whole parts). Tick 12: the wake; state 1:
   `services.ScheduleTargetingFireAtWill Unit#5 = null`, result 1; state 2 in the same call takes the last row
   (`RandomInt 30 = 19`): `wakeFrame` 12 + 19 + 30 = 61, `state` back to 1.
+- **`Ground_Unload`, two passes**: `units-transport.txt`, call at tick 4415, `Unit#3` (`netDirtyFlags` 4,
+  `cobStateFlags` 2), `Order#3` (state 1, `flags` 1, `wakeFrame` 4415, `subFlags` 0). The first pass wakes it
+  (`subFlags` 1): pending = (1 OR 4) AND 1 = 1, CLEAR_NET_DIRTY (12) with `mask` 1; the script busy wait (8) sets
+  `flags` 8 OR 4 = 12, result 2. The second pass: pending = (0 OR 4) AND 12 = 4, so CLEAR_NET_DIRTY (12) with `mask` 4,
+  whose subscriber clears the unit's bit at once (`o Unit#3.netDirtyFlags 0`); the run again sets `flags` 12, result
+  2. The third pass finds `flags` 12 and nothing pending, and the call ends: `w Order#3.flags 12`, `w
+  Order#3.wakeFrame 4294967295` (`subFlags` is back to 0, so it has no line).
 - **`RunSecondaryOrders`**: every call of every file: `Unit.list2` is 0, no import, no write.
 
 No recording covers: `Apply` of COMMAND, QUEUE_BUILD, STOP, BE_CARRIED, ATTACKED, PARALYZE or CANCEL, or a refused
 event (outcome 0); GROUP_BUILD; `GetOrderFlags`; `MissionTypeFromName`; `GetOrderType` modes other than 14 as a call
-of its own (modes 1, 3, 7 and 9 run inside `ExpandGroupCommand`, and 2, 7 and 8 inside runs); the results 6, 7 and 9
-of `RunOrders`; a pending 0x10000; any order in `Unit.list2`; the end of an order with code 2 or with the building
+of its own (modes 1, 3, 7 and 9 run inside `ExpandGroupCommand`, and 2, 7 and 8 inside runs); the results 4, 7, 8 and 9
+of `RunOrders` (results 0, 1, 2, 3, 5 and 6 are recorded, 6 at `orders-build-patrol.txt` tick 150, `RepairPatrol`); a pending 0x10000; any order in `Unit.list2`; the end of an order with code 2 or with the building
 script started; the runs of `Ready`, `Activate`, `AirStrike`, `AirToAir`, `AirToGround`, `AirToGroundHover`,
 `Attack_Kamikaze`, `Attack_NoMove`, `AttackSpecial`, `AttackUType`, `BuildWeapon`, `Capture`, `Cloak_Off`, `Cloak_On`,
-`Deactivate`, `Ground_Pickup`, `Ground_Unload`, `Guard_NoMove`, `MakeSelectable`, `Paralyze`, `Park`, `Patrol`, `QMove`,
+`Deactivate`, `Ground_Pickup`, `Guard_NoMove`, `MakeSelectable`, `Paralyze`, `Park`, `Patrol`, `QMove`,
 `QPatrol`, `Reclaim`, `ReclaimUnit`, `RepairUnit`, `RepairUnitNoMove`, `Resurrect`, `SelfDestruct`, `SelfDestructFG`,
 `Standby_Mine`, `Standing_FireOrder`, `Standing_MoveOrder`, `Stop`, `Suppress`, `Teleport`, `VTOL_Evade`,
 `VTOL_GetRepaired`, `VTOL_HelpBuild`, `VTOL_LandIfCan`, `VTOL_Landing`, `VTOL_MobileBuild`, `VTOL_Move`, `VTOL_Reclaim`,
@@ -2675,7 +2777,18 @@ script started; the runs of `Ready`, `Activate`, `AirStrike`, `AirToAir`, `AirTo
 `WaitForAttack`; and of the recorded kinds, the `BuildingBuild` states other than 3, the `GetBuilt` finish rule,
 `SelfRepair` state 0, `BeCarried` state 0, the `MobileBuild` placement refusals and `CreateUnit` failure, the
 `RepairPatrol` reclaim, `VTOL_Patrol` with a pad diversion or a target, `VTOL_SeekGuard`'s circle and the `Follow_Ground`
-rows other than the last.
+rows other than the last. `Ground_Unload` is recorded in state 1 only.
+
+No recording calls 23 of the entry's 52 imports: `movement.NewPathOrderToUnitAt`, `movement.NewPathOrderToUnitAtAngle`,
+`movement.NewAirManeuverOrder`, `units.FindUnitTypeId`, `units.CanLoad`, `units.CanReclaim`,
+`units.GetFactoriesInRadius`, `units.UnitRefGet`, `scripts.QueryScript`, `scripts.GetPieceOffset`,
+`scripts.GetPiecePosition`, `map.CanPlaceFootprintAt`, `map.IsPadSlotFree`, `map.GetGroundHeight`,
+`network.SendFeatureReclaimed`, `network.SendScriptCallByName`, `los_radar.GetOriginCellAtPosition`,
+`los_radar.GetVisibleEnemiesInRadius`, `features.GetCellFeature`, `features.FindFeatureAtPos`,
+`targeting.GetWeaponTargetUnit` (`services.ScheduleTargetingTargetUnit`), `mission.GetGameType` and
+`mission.GetMissionParams`. The recordings give no line form for their arguments or answers, so the recordings route
+can't judge a call of them; only the scenarios would, and those are not played while the entry is blocked
+("Gaps in the kit").
 
 ### Gaps in the kit
 
@@ -2685,16 +2798,22 @@ rows other than the last.
   recognises until the kit gives it, and STATUS_FLAGS's order limit can't test it.
 - **Payloads by size.** The recordings carry each publish as `services.SchedPublish 3 <size>`, without its fields, so the
   gate compares an effect by its size and by what its subscribers write (the `o` lines after it), not by its payload.
-- **The reclaim pick.** `RepairPatrol` and `VTOL_RepairPatrol` choose resources to reclaim through a pick that is not an
-  import of the entry today; no recording carries it, and no row of ABI 9.3's table maps a recorded call to it.
-  ozgb/byte-tactics-moddable#1208 adds `map.PickRandomReclaimableResourcesInRadius` (the kit's `wasm/modules.json`
-  already has its signature under `signatures.map`). The pick's choice and draws are map's; until the import is listed a
-  module can't make the call.
+- **The reclaim pick.** `RepairPatrol` and `VTOL_RepairPatrol` choose resources to reclaim through
+  `map.PickRandomReclaimableResourcesInRadius`, which the manifest has under `signatures.map` but the entry does not
+  import; no recording carries it, and no row of ABI 9.3's table maps a recorded call to it. The pick's choice and draws
+  are map's; ozgb/byte-tactics-moddable#1208 adds the import to the entry, and until then a module can't make the
+  call (section 2, "Two calls that are not in the entry").
 - **`economy.RequestGranted`.** `BuildWeapon` state 1 asks it (recorded as `services.ScheduleEconomyRequestGranted`), but
   the entry has no `economy` import group, so a module can't make the call until the entry lists it.
 - **A blocked entry.** `blocked` is `true` in the kit's manifest, so the entry has no `fuel_budget` and no `size_budget`
-  until ozgb/byte-tactics-moddable#1208 sets them; the gate judges a module of it on the recordings route (ABI 4.2,
-  section 15).
+  until ozgb/byte-tactics-moddable#1208 sets them; the gate judges a module of it on the recordings route (ABI 4.2, section 15), with `scenarios: not_judged`.
+- **Unrecorded imports.** The 23 imports of section 7 that no recording calls have no recorded argument or answer form,
+  so no check judges them while the entry is blocked.
+- **Fields no recording carries.** No recording has a line of a `UnitTypeSet` (`bits`), `Cell` (`feature`, `offsetX`,
+  `offsetY`, `spot`), `Feature` or `FeatureSpot` field. An object an import answers starts zeroed in the replay
+  (`docs/replay-format.md`, "An object returned as its offset"), so in `ui-right-click.txt` the `Cell#4072` that
+  `los_radar.GetMapCellAtPosition` answers has `feature` 0 and every other field 0; the type set tests of ATTACKED and
+  the guard kinds, and the feature tests of section 4, are judged by no recorded value.
 - **The self-destruct slots of 6 and 7.** A `SelfDestruct` order of a unit type with a `selfdestructcountdown` of 6 or
   7 speaks with a voice slot the kit does not give.
 - **Unset position words.** "The site point" and "the feature box" pass `map.GetGroundHeight` a position whose y word
