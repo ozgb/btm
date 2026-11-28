@@ -60,14 +60,20 @@ The kit's manifest (`wasm/modules.json`) has map's entry. The module must match 
   `RefreshUnitIfStale`. The other nine slots are the engine's (above).
 - `data`: `g_game`, `g_simGlobals`, `g_extTdf`, `g_blockBase` (ABI 8.2). The module reads `g_game`,
   `g_simGlobals` and `g_blockBase`.
-- `majors`: `map` 9, `los_radar` 5, `services` 4.
+- `majors`: `map` 9, `los_radar` 5, `features` 5, `services` 4.
 - `publishes`: `{"132": 20, "176": 32}`: los_radar's CELL_HEIGHTS (`LosRadarCellHeights`, 20 bytes), which the route
   table carries from map's outbox to los_radar, and CELLS_CHANGED (`MapCellsChanged`, 32 bytes). `Emit` takes any kind
   a route carries from the calling module's outbox (ABI 9.3).
 - `data_base` 557056 and `table_base` 400: map's window of `window` (32768) bytes from 0x88000, and its 32 table
   entries from 400 (ABI 2.2).
-- Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`; its
-  budget is ten times the most fuel any gate tick burns (ABI 11.3).
+- `blocked`: the kit's entry is `"blocked": true`, so it has no `fuel_budget` and no `size_budget`, and the kit has no
+  map `.wasm` (ABI 4.2).
+- Fuel: the module meters itself by rule version 1 (ABI section 11) and exports `__fuel_set` and `__fuel_get`. The
+  gate judges a module of a blocked entry without budgets (ABI section 15, "A blocked entry is judged without
+  budgets"): its size is not judged, and it runs with the largest fuel budget of ABI 11.3.
+- The gate: the entry is blocked, so the oracle takes its `recordings` route (ABI section 15): it replays the module
+  on every recording of `tests/replay/map/`, and its result has `scope` `recordings`, `scenarios` `not_judged` and
+  `budgets` `not_judged`.
 - Slot kinds, as the entry gives them:
 
 | Slot | Kinds |
@@ -93,36 +99,27 @@ The `short` argument `type` of `CanBuildAt` arrives sign-extended, and the `unsi
 | Import | Kinds | Used for |
 | --- | --- | --- |
 | `los_radar.GetMapCell` | `[int, int] -> block` | the first cell of a footprint, in the claim |
-| `services.SimAlloc` | `[int] -> linear` | the pass map words, the scratch block of `BuildAllPassMaps`, the reclaim lists |
-| `services.SimFree` | `[linear] -> void` | the old pass map words, the scratch block, the reclaim lists |
-| `services.Emit` | `[linear, int] -> void` | publishing CELLS_CHANGED and CELL_HEIGHTS |
-
-The reclaim pick makes three more imports, which the entry doesn't list (below, "Kit gaps"):
-
-| Import | Kinds | Used for |
-| --- | --- | --- |
 | `los_radar.GetMapCellAtPosition` | `[linear] -> block` | the cell under a point, in the reclaim pick |
 | `features.GetCellFeature` | `[block] -> int` | the feature on a cell, in the reclaim pick |
 | `services.RandomInt` | `[int] -> int` | the reclaim pick's draws |
+| `services.SimAlloc` | `[int] -> linear` | the pass map words, the scratch block of `BuildAllPassMaps`, the reclaim lists |
+| `services.SimFree` | `[linear] -> void` | the old pass map words, the scratch block, the reclaim lists |
+| `services.Emit` | `[linear, int] -> void` | publishing CELLS_CHANGED and CELL_HEIGHTS |
 
 - Hooks: every slot of `interfaces/map.h` says "Hooks: none", and the module raises none.
 
 ### Kit gaps
 
-At `interfaces-v65` these are gaps in the kit, not in the module:
+At `interfaces-v68` these are gaps in the kit, not in the module:
 
-- **The budgets.** Map's entry has no `fuel_budget` or `size_budget`, which ABI 4.2 requires of an entry; the build
-  measures them (ABI 11.3) until the entry gives them.
-- **The reclaim pick's imports.** `PickRandomReclaimableResourcesInRadius` is an export of map's entry, but the entry's
-  imports lack the three the pick makes (`los_radar.GetMapCellAtPosition`, `features.GetCellFeature`,
-  `services.RandomInt`), and its `majors` lack `features`. No recording calls the pick. Until the entry lists them, a
-  module that makes these imports is refused by the loader (ABI 9.1).
+- **The budgets.** Map's entry is blocked, so it has no budgets, and the module's fuel and size are judged only once
+  it has them (above).
 - **The publish payloads.** The recordings carry a publish as a `services.SchedPublish` line, with 7 and the size (the
   publisher, map, and the payload size; the payload's fields aren't recorded), which is `services.Emit` (ABI 9.3,
   "Routes in the recordings"). The replay compares only the size of each publish (20 for CELL_HEIGHTS, 32 for
   CELLS_CHANGED) and its order among the imports. The rectangle, classes and cause of a CELLS_CHANGED appear as the
   arguments of pathfinding's `CellsChanged` calls in `tests/replay/pathfinding/` (`orders-factory.txt`,
-  `orders-move-attack.txt`, `skirmish2.txt`); those of a CELL_HEIGHTS are checked only by the scenario traces.
+  `orders-move-attack.txt`, `skirmish2.txt`); those of a CELL_HEIGHTS are checked by no recording, and the gate judges no scenario of a blocked entry.
 
 ### Arguments outside the block
 
@@ -1564,7 +1561,8 @@ heights are 1, so *north* = *south* = 1 and the result is 1.
 
 ### Not in any recording
 
-Only the scenario traces check these.
+No recording checks these, and the gate judges no scenario of a blocked entry (section 2), so no gate checks them
+at this kit.
 
 - **Slots never called:** of the module's, `PickRandomReclaimableResourcesInRadius` (its draws, Q22, Q23, Q21),
   `RefreshMovedUnits` and `RefreshUnitIfStale` (the refreshes aren't recorded yet, `docs/replay-format.md`). Of the
@@ -1597,5 +1595,5 @@ Only the scenario traces check these.
 
 ## 8. Kit version
 
-Kit `interfaces-v65` and `reference-traces-v54` (at commits d577bfcb6ec6 and 25f3a49bcdd2), the versions the gate
+Kit `interfaces-v68` and `reference-traces-v55` (at commits 906e69ae4716 and 74bdf5ef6408), the versions the gate
 judges against. Interface `map` 9.2. The imports are against `los_radar` 5.1, `features` 5.1 and `services` 4.2.
