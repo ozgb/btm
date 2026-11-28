@@ -407,7 +407,7 @@ outcome 0.
 
 | Kind | Its limits |
 | --- | --- |
-| UPDATE_UNIT, REMOVE_UNIT, REVEAL_UNIT | `unit` is a unit: not 0, `Game.units` + 280 *k* for a slot 0 ≤ *k* < `unitSlots` (of `Init`'s map), and that unit's `def` and `player` are not 0 |
+| UPDATE_UNIT, REMOVE_UNIT, REVEAL_UNIT | `unit` is a unit: not 0, `Game.units` + 280 *k* for a slot 0 ≤ *k* < `Game.poolCount` (the `unitSlots` of `Init`'s map: the engine sets the one from the other, so the module reads `Game.poolCount` and stores nothing), and that unit's `def` and `player` are not 0 |
 | SIGHT_RESET, SIGHT_LOAD | `unit` is a unit slot as above (its `def` is not read) |
 | SHARE_MAPPING, SHARE_RADAR | 0 ≤ `player` ≤ 9 |
 | SHARE_MAP | 0 ≤ `from` ≤ 9 and 0 ≤ `to` ≤ 9 |
