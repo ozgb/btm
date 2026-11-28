@@ -55,7 +55,7 @@ Everything after this call is hidden behind it.
 
 **Answered (Q-gate-2):** the gate now places the `SimCaptureAlloc` arena inside the module memory; req30 onwards run past call 44.
 
-## Q-gate-3: the frames and the frame table that the gate gives are all zero
+## Q-gate-3 (ANSWERED: the gate now maps the load data in WASM replays; req60 equal): the frames and the frame table that the gate gives are all zero
 
 **Evidence.** `console-sight`, call 505 (tick 30, `Apply` RECALCULATE, circle type). The first module (req10) asked for
 frame -1: it read `FrameTable.count` (u16 at `Game.losTable`) as 0, so the clamp *M* − 1 gave −1. The recording has

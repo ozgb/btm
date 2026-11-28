@@ -58,3 +58,9 @@ Change from req10: the mask index reads `FrameTable.count` only when the index i
 reads it once (call 0) and the replayer's table has no `count` at call 505 (req10 asked for frame −1). With a real table
 the result is the spec's clamp.
 The module is otherwise unchanged and follows the spec; it is blocked on Q-gate-3.
+
+## Final: req60
+
+req60 (the module as committed, no change) is `equal` on `console-sight`, `console-units` and `sensors-sonar-jam`
+(the gate now maps the load data, so Q-gate-3 is answered). The verdict lists the rule notes `queries:
+services.GetGafFrame` and `unread_arguments: los_radar.GetMapCellAtPosition pos.y`; no spec question is open.
