@@ -301,6 +301,7 @@ impl Pf {
     }
 
     // Calls f on each goal cell in order, up to the capacity.
+    #[allow(unused_assignments)]
     fn goal_cells(&self, mut f: impl FnMut(i32, i32)) {
         let a = self.b + S_GOAL;
         let cap = self.g(S_GOALCAP);
@@ -312,7 +313,6 @@ impl Pf {
                     return;
                 }
                 n += 1;
-                let _ = n;
                 f(($x) as i16 as i32, ($y) as i16 as i32);
             };
         }

@@ -54,3 +54,12 @@ req1 to req9 were caused by a fault on the gate host, not by the module (operato
 ## Spec update (merged from spec-pathfinding)
 The spec now states the probe's endless walk (section 7, "Edges") and puts the case outside the contract, so
 Q-probe-1 is resolved and removed. The module's logic is unchanged; the last verdict (req11) is `equal`.
+
+## Second review answers
+- CI build (risk 1): `.github/workflows/module.yml` is shared repository infrastructure, not part of this crate; it knows
+  only `wind_meteors`. `pathfinding/build.sh` is the build used for the gate (base 327680, table 176, checked with
+  wasm-tools). Extending the workflow's `case` is left to its owner.
+- `unitSlots` near 2^31 (nit 2): outside the contract (the recordings use 2501; the spec gives no range). Not guarded.
+- `let _ = n;` (nit 3): removed; the warning is silenced with `#[allow(unused_assignments)]` on `goal_cells`.
+
+10. req12 (after these changes, same logic): `equal` on all five recordings.
