@@ -315,8 +315,8 @@ publishes nothing and does not trap, and its outcome is 0.
 A block offset is *a unit* when it is not 0 and equals `Game.units` + 280 *k* for a slot 0 ≤ *k* <
 `Game.poolCount` (`Game.poolCount` is unsigned 16-bit; 280 is the size of `Unit`, `layout.json`), whether or
 not the slot's unit is alive or holds a unit type. The module reads `Game.poolCount` and stores nothing:
-every targeting slot reads it, and each recording's first call records it, `r Game.poolCount 2501`, its first
-line (`docs/replay-format.md`, the paragraph on the recordings of targeting). The pool's last slot, `Game.unitsEnd`
+every targeting slot reads it, and each recording's first call records it as `r Game.poolCount 2501`
+(`docs/replay-format.md`, the paragraph on the recordings of targeting). The pool's last slot, `Game.unitsEnd`
 (`docs/replay-format.md`, the paragraph on `Game.unitsEnd`), is then slot 2500 of 2501.
 
 | Kind | `size` at least | `unit` | `weapon` | The payload |
@@ -453,8 +453,7 @@ saves `save-midgame` and `save-targets` make in the same run).
 - **The distance of a lead:** *d*.x, *d*.y and *d*.z are 32-bit differences that wrap. *D* is the
   square root of *d*.x² + *d*.y² + *d*.z², in double precision (64-bit IEEE): each square is rounded to
   double, the sum is rounded as (x² + y²) + z² in that order, and the root is truncated toward zero to a
-  64-bit integer whose low 32 bits, read as a signed value, are *D* (the reference converts a double to an
-  integer this way everywhere). The root is never a NaN, and it is below 2^32 (each square is at most 2^62),
+  64-bit integer whose low 32 bits, read as a signed value, are *D*. The root is never a NaN, and it is below 2^32 (each square is at most 2^62),
   so a root of 2^31 or more wraps to the root less 2^32. Nothing in the engine bounds it, and no recording
   reaches it (they stay below 2^25). The order of the rounding is part of the result: the replay
   compares `pos` exactly.
