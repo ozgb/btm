@@ -110,7 +110,7 @@ The `short` argument `type` of `CanBuildAt` arrives sign-extended, and the `unsi
 
 ### Kit gaps
 
-At `interfaces-v68` these are gaps in the kit, not in the module:
+At `interfaces-v69` these are gaps in the kit, not in the module:
 
 - **The budgets.** Map's entry is blocked, so it has no budgets, and the module's fuel and size are judged only once
   it has them (above).
@@ -607,7 +607,9 @@ Outcome 1, and the removal of the unit. **The removal of a unit** is these write
 | structure bit clear, layer 0 or 3 | nothing | none |
 
    A cell held by another unit keeps its holder. A unit in the off-map bucket changes no cell and publishes no
-   CELL_HEIGHTS.
+   CELL_HEIGHTS. A removal whose footprint has a cell outside the map (*x* or *y* below 0, *x* ≥ `Game.width` or
+   *y* ≥ `Game.height`) while the unit's bucket isn't the off-map bucket (a null bucket, after a clear or before
+   any add) is outside the contract: no recording makes one, and a module may behave in any way for those cells.
 2. **The flags:** the unit's claim pending bit becomes 0. If its overlapped bit was set, it becomes 0 too, and then the
    units overlapping (x, y, w, h) re-claim. A clear overlapped bit means no re-claim and no `los_radar.GetMapCell`
    import.
@@ -1599,5 +1601,5 @@ at this kit.
 
 ## 8. Kit version
 
-Kit `interfaces-v68` and `reference-traces-v55` (at commits 906e69ae4716 and 74bdf5ef6408), the versions the gate
-judges against. Interface `map` 9.2. The imports are against `los_radar` 5.1, `features` 5.1 and `services` 4.2.
+Kit `interfaces-v69` and `reference-traces-v56` (both at commit 7311500c1330), the versions the gate
+judges against. Interface `map` 9.2. The imports are against `los_radar` 5.1, `features` 5.1 and `services` 4.3.
