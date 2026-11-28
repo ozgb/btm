@@ -288,7 +288,7 @@ with *u* as `Unit#N`, in its place among the slot's imports.
 
 The effect reaches its subscribers before `services.Emit` returns (section 2), so the writes the slot's call
 makes to the slot (TargetX = 0 and TargetZ = −32768, in the two places that publish CLEARED) are made before
-the import: a subscriber that reads the slot while it runs sees it already cleared. The other writes of
+the import: a subscriber that reads the slot while it runs sees it already cleared (the route table says so; no recording shows the order, since the replay compares writes at the end of the call). The other writes of
 the slots (the target fields of a SET, RESET or LOAD, and `netDirtyFlags`) are made in calls that import nothing.
 
 ### `Apply(event, size)`
