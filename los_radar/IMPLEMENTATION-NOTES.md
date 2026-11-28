@@ -39,3 +39,11 @@ blocked on a spec question.
   in a pass is skipped; a null projectile `attacker` counts as not the viewer's; a sight mask the import gives as null
   adds and reveals nothing; a division by zero in `ClampWorldPosToTerrain` leaves `p` as found.
 - Comparisons of the 32-bit distance with a squared radius are signed (spec section 5 says signed for "the others").
+
+## Update after the Q-gate-1 fix
+
+Verdicts in order: req10 to req16 (see Q-gate-1; `differs` at the first `Apply`, call 40), req20 (req10's module
+again, with the gate passing the recorded event): `failed` on all three recordings, the gate's message being
+`import SimCaptureAlloc: returned a pointer outside the module memory`; req21 (probe, `SimCaptureAlloc(8, ..)`):
+`differs` at call 44 on the import's arguments, so the failure comes from the gate's answer to the recorded call
+(5724 bytes). Q-gate-2 in SPEC-QUESTIONS.md asks about it. The module itself is unchanged.

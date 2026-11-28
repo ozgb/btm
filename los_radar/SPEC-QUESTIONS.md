@@ -1,6 +1,6 @@
 # Spec questions
 
-## Q-gate-1: the gate hands `Apply` an event of 4 bytes whose payload is zero
+## Q-gate-1 (ANSWERED: a fault in the host's generated glue; the gate now passes the recorded size and payload): the gate hands `Apply` an event of 4 bytes whose payload is zero
 
 **Evidence.** Submissions req10 to req16 (req10 is the real module; req11 to req16 are probes whose `Apply` returns a
 value computed from its arguments, to read what the gate passes: the verdict's `value` is the module's own result).
@@ -31,3 +31,24 @@ ignored `size` would still read a zero `unit`, which the spec's limits make outc
 **Question.** Should the gate's host know the payload sizes of los_radar's inbox kinds (8, 28, 20, 12, 16: spec
 section 3)? Everything after the first `Apply` call (call 40) is hidden behind this, since the gate stops at the first
 difference, so the rest of my module (the passes, queries, unit index) is not judged yet.
+
+## Q-gate-2: `SimCaptureAlloc` returns a pointer the gate calls outside the module memory
+
+**Evidence.** After the Q-gate-1 fix, req20 (the unchanged req10 module) fails on all three recordings with status
+`failed` and no field (the verdict carries no message; the session brief names it: `import SimCaptureAlloc: returned a
+pointer outside the module memory`). The first call is `RecordRadarMapped` inside `Apply` kind 133 (call 44):
+`i services.SimCaptureAlloc 5724 = snapshot#1`, which my module makes with exactly those arguments (`bytes` 5724, `offset` a
+4-byte local on my stack, inside the window).
+req21 (same module, but `SimCaptureAlloc(8, &off)` instead): `differs` at call 44, `import 0 services.SimCaptureAlloc`,
+value `services.SimCaptureAlloc 8`, i.e. the gate compares the import's arguments before it answers, so the
+failure with the right arguments comes from the answer: the pointer the replayer's arena returns for 5724 bytes at offset 0.
+
+**Reading.** The answer is the host's, not something the module controls: the module only passes `bytes` and the `offset`
+address, both as recorded. replay-format.md ("Snapshots") says the replayer allocates the buffer from "an arena of its own"
+and returns that pointer; module-abi.md section 6 says the module reads and writes it in place, so that arena must lie
+in the shared memory. It looks like the same kind of fault as Q-gate-1 (the generated glue for the `snapshot` service).
+
+**Question.** Where does the gate's arena for `snapshot` buffers lie, and is the pointer it returns for the first
+call (5724 bytes at offset 0) inside the shared memory? If the arena is meant to be in the module's own window,
+how large must the window's free part be (my data+stack use under 32768 bytes of it, the snapshot is 5728 bytes)?
+Everything after this call is hidden behind it.
