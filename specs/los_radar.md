@@ -180,7 +180,7 @@ values the module puts in them.
   in use (`docs/replay-format.md` compares only those). The engine allocates the table; the module writes its
   records and `Game.count_14277` (i32, 0 to 20). An `Eye`'s fields: `player` (`Ref` to the `Player` the eye
   belongs to), `screen` (a `Ref` to its own `screenPos`), `x` (i16, the sight distance), `flagA` (u8, the eye
-  height), `flagB` (the eye's *frame*, u8), `flagPtr` (a `Ref` to its own `flagB`), `pos` (`Vec3`), `expires`
+  height), `flagB` (the eye's *frame*: `char` in `layout.json`, read and written as u8), `flagPtr` (a `Ref` to its own `flagB`), `pos` (`Vec3`), `expires`
   (u32, a tick), `screenPos` (two i16: *cache x*, *cache y*). `screen` and `flagPtr` are `self` fields: never
   compared (`docs/replay-format.md`, "A pointer into the object itself"); the module writes them as the
   block offsets of the eye's own `screenPos` and `flagB` when it fills an eye.
@@ -267,8 +267,9 @@ from is not final (ozgb/btm#41).
 - `Game.mapFlags`: bit 0 *mapping* (map flag 1 of `docs/sim-events.md`, Terms), bit 1 *line of sight on*
   (map flag 2), bit 2 *true type* (set: true line of sight; clear: the circle type), bit 3 a request to
   redraw the fog, which the module clears whenever the viewing player's sight changes.
-- `Game.matchFlags` bit 1: match flag 2 (Terms). The recordings name this byte `Game.uiOptionFlags`
-  (`r Game.uiOptionFlags 1038`): the same bytes.
+- `Game.matchFlags` bit 1: match flag 2 (Terms). `matchFlags` is the high byte of the u16
+  `Game.uiOptionFlags`, so this is bit 9 of `uiOptionFlags`; the recordings read the u16 (`r Game.uiOptionFlags
+  1038`, bit 9 clear).
 - `Game.netGameFlags` bit 0: net game flag 1 (Terms).
 - `Unit.flags`: 0x10000000 alive and 0x4000 dying (Terms); 0x100 shown on radar, 0x200 shown on sonar, 0x300
   the pair (Terms, "unit flags 0x300"); 0x400 jammed; 0x1000 near an enemy that decloaks it; 0x8000 a unit the
@@ -294,6 +295,9 @@ the call, so the order they are listed in carries no meaning.
 A byte this section does not say a call writes keeps its value.
 
 ### Definitions
+
+**Slot ranges.** A run of unit slots "from *a* to the slot of `unitsEnd`" (of `Game` or of a player) includes
+that last slot.
 
 **Whole parts.** For a position *P*, *P*.x̂, *P*.ŷ, *P*.ẑ are the high 16 bits of `x`, `y`, `z` as signed
 16-bit numbers (a unit's are `Unit.xWhole`, `yWhole`, `zWhole`).
@@ -364,7 +368,8 @@ Each += wraps modulo 256.
 3. *changed* is true when a bit that was clear was set. When *changed* and *pl*.`index` =
    `Game.playerIndex`: `Game.mapFlags` bit 3 becomes 0 and `Game.flags_142f1` bit 2 becomes 1.
 
-**Move a sight** (a sight goes where its unit is now):
+**Move a sight** (a sight goes where its unit is now). Each cache comparison takes *cache x* and *cache y* as
+signed 16-bit values against the whole *x*, *y* (or *cx*, *cy*), and *frame* as u8 against *v* (or *i*).
 
 - True type: *x* = *S*.P.x̂ >> 5; *v* = *S*.h + *S*.P.ŷ, clamped to 0..255; *y* = (*S*.P.ẑ − (*v* >> 1))
   >> 5. Nothing happens when *cache x* = *x*, *cache y* = *y* and |*frame* − *v*| ≤ 5. Otherwise, in order:
@@ -408,7 +413,7 @@ too.
 | UPDATE_UNIT (128) | the sight of the unit is moved | 1 |
 | REMOVE_UNIT (129) | the sight of the unit is taken off, whatever `Game.mapFlags` is (Q5) | 1 |
 | REVEAL_UNIT (130) | the sight of the unit is placed | 1 |
-| ADD_EYEBALL (131), bit 1 set and `Game.count_14277` < 20 | eye *E* = `Game.eyes`[`count_14277`] is filled (below), its sight is placed, and `count_14277` + 1 | 1 |
+| ADD_EYEBALL (131), `Game.mapFlags` bit 1 set and `Game.count_14277` < 20 | eye *E* = `Game.eyes`[`count_14277`] is filled (below), its sight is placed, and `count_14277` + 1 | 1 |
 | ADD_EYEBALL, otherwise | nothing | 0 |
 | CELL_HEIGHTS (132) | below | 1 |
 | RECALCULATE (133) | below | 1 |
@@ -478,7 +483,7 @@ times 65536. The *screen row* of *Q* is *Q*.ẑ − (*Q*.ŷ >> 1).
 | Outcome | Then | `out` |
 | --- | --- | --- |
 | no *i* has *s*1 ≤ *y* | nothing | *p* of *i* = 0 |
-| an *i* is found | *q* = *p* with *q*.z = *p*.z + 0x100000, *q*.y = *height*(*q*), *s*2 its screen row; when *s*1 < *s*2 or *y* ≤ *s*2: *p*.z += ((*y* − *s*1) × 2^20) / (*s*2 − *s*1) (truncating toward zero), *p*.y = *height*(*p*) | *p* |
+| an *i* is found | *q* = *p* with *q*.z = *p*.z + 0x100000, *q*.y = *height*(*q*), *s*2 its screen row; when *s*1 < *s*2 or *y* ≤ *s*2: *p*.z += ((*y* − *s*1) × 2^20) / (*s*2 − *s*1) (truncating toward zero), *p*.y = *height*(*p*); otherwise *p* is left as found | *p* |
 
 `out` gets all 12 bytes. The imports are the *height* calls, in the order above.
 
@@ -499,7 +504,8 @@ when, for player *p*: 0 ≤ *tx* < `exploredWidth`, 0 ≤ *ty* < `exploredHeight
 
 ### `UpdateUnitLineOfSight(unit)`
 
-The sight of the unit is moved.
+The sight of the unit is moved. The caller passes a unit whose `def` and `player` are not 0; other units are
+outside the contract.
 
 ### `RecordRadarUnits()`
 
@@ -522,7 +528,7 @@ units and projectiles; when it returns null, nothing more. Otherwise the snapsho
 `xWhole`, the screen row `zWhole` − (`yWhole` >> 1), `Game.players`[`playerIndex` of the unit].`info`.`color`, flags
 (1 when `recentlyDamagedTimer` ≠ 0; 2 when `activateFlags` bit 0 is set or `def.flags2Byte` bit 2 is clear; 4
 when `def.flags1` bit 29 is set), the def's `radardistance`, `sonardistance`, `radardistancejam`,
-`sonardistancejam`, and, only when bit 29 is set, for each weapon slot *w* whose `weapon` is not 0: coverage =
+`sonardistancejam`, and, only when bit 29 is set, for each weapon slot *w* whose `weapon` is not null (any weapon, `weapondef#0` included): coverage =
 the weapon's `coverage`, interceptor = its `flags` bit 30, stocked = 1 when the slot's `stockpile` ≠ 0; a
 record per shown projectile, in order: *px*, *py*, kind, colour. The reserved bytes and the weapons the record
 leaves out stay 0. Then `services.RecordSimEvent(34, 0, [offset], 1)`.
@@ -586,7 +592,7 @@ block offset (every entry then zero). Entry *p*: both lists cleared, `hasSpecial
 **`FreeUnitIndex(p)`**: nothing when `g_losUnitIndex` is 0. Else, for `visible` then `known` of entry *p*:
 `services.SimFree(first)` when *first* is not 0, and the three words become 0; then `live` = 0.
 
-**`RefreshUnitIndex(p)`**: nothing when `g_losUnitIndex` is 0, entry *p*'s `live` is 0, or `Game.ticks` <
+**`RefreshUnitIndex(p)`** (the caller passes 0 ≤ *p* ≤ 9; the radius queries' `player` likewise): nothing when `g_losUnitIndex` is 0, entry *p*'s `live` is 0, or `Game.ticks` <
 `lastTick` + 30 (unsigned). Else both lists are cleared and `hasSpecial` = 0; with *o* =
 `Game.players`[*p*], for each ready unit *u* of the units (slots 1 to that of `unitsEnd`), in order:
 
@@ -710,7 +716,10 @@ The native slots run on the module's state, through the region and the block:
   290, 39 at (36700160, 65536, 15728640) give *v* 40 and (17,6).
 - `console-units.txt`, tick 201, `ExpireEyeballs`: three eyes, `expires` 200, 211, 230. 200 < 201, so `Eye#0`'s
   sight is taken off and the others move to the front: `count_14277` 2, and the next call reads `Eye#0.x 263`,
-  `expires 211`. Ticks 212 and 231 take off the next two.
+  `expires 211`. Ticks 212 and 231 take off the next two. At tick 231 no eye
+  is left, and the recording reaches a `Player` only through the eyes in use at the call's end, so it has only
+  `w Game.count_14277 0`: the `explored` writes of taking off that sight are made but not recorded or compared,
+  and tick 232's `r Player#0.explored` shows them.
 - `console-units.txt`, tick 107, `UpdateUnitLineOfSight(Unit#3)`: `posX` 41941916, x̂ = 639, *x* = 19; the
   cache x of slot 3 (region bytes 15 and 16) becomes 19: `w region 15:13`, and the sight is moved.
 - `console-sight.txt`, ticks 10 and 20, SET_MODE and RECALCULATE: `mapFlags` 15, `clear` 2, `set` 0: (15 AND NOT
@@ -743,7 +752,10 @@ The native slots run on the module's state, through the region and the block:
 
 **Not covered by any recording**: the slots `GetOriginCellAtPosition`, `IsUnitVisibleToPlayer` (it is reached
 through `RefreshUnitIndex`), `HasReadyUnitInRange` (reached through pass 4 of the sensors), `IsPointVisible`,
-`GetSeenUnitsInRadius`, `FreeUnitIndex` and `Shutdown`; the `Apply` kinds CELL_HEIGHTS, SHARE_MAPPING,
+`GetSeenUnitsInRadius`, `FreeUnitIndex` and `Shutdown`; the circle type's move (only its place, with mask 4, is
+recorded); `Game.seaLevel` above 0; the cloak pass (pass 4) setting `workTime`, the radar-jam branch of pass 3, and
+the allied-share and watch-mode branches of pass 1; interceptor weapon records and nuclear projectiles in the
+snapshot; `hasSpecial` = 1 and the `known` fallback; the `Apply` kinds CELL_HEIGHTS, SHARE_MAPPING,
 SHARE_RADAR, SHARE_MAP and SIGHT_LOAD, every outcome 0 of `Apply`, ADD_EYEBALL with 20 eyes or line of sight
 off; a null answer of `SimCaptureAlloc`; `map.UnitsInRange` returning 256; `SimFree` of a freed index; the
 edges of section 5 and Q2's *k* = 0.
