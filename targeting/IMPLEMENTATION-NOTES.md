@@ -28,3 +28,8 @@ Verdict of the review: 0 bug, 2 risk, 5 nit. Only the build command and this fil
 5. **Weapon above 2 in the query slots.** Not changed. Spec section 4 says the engine never calls them so; `FindWeaponTarget` masks `w` with 0xff as the spec requires and nothing more.
 6. **Emit before the slot is cleared.** Not changed. The spec orders only the imports and compares writes at call end; the order here is Emit then clear, which matches the spec's listing "publishing CLEARED" then the slot writes.
 7. **Notes inaccuracy and build command.** The guard sentence is corrected above. The "equal" verdict is the gate's report, not something the kit can reproduce. `build.sh` now passes `--locked` as ABI 3.1 does. `ld-wrap.sh` adds `--no-stack-first` when the linker lists it (the ABI's linker does); with lld 20, which does not list it, the stack lands after the data (top 421920), which I checked in the built module.
+
+## Spec change 2
+Section 4 now orders the clearing of a slot (TargetX = 0, TargetZ = -32768) before the import that publishes CLEARED, so a synchronous subscriber sees the slot cleared. `publish_cleared` is now called after `clear_slot` in both places that publish it (the `Apply` event 98 and the lead query's dead-target path). Nothing else changed.
+
+Verdict: req2 `equal` on all 9 recordings (recordings scope; the other parts not judged). This replaces the earlier "Emit before the slot is cleared" answer in review round 1, item 6.

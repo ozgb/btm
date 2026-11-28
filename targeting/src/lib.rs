@@ -211,8 +211,8 @@ pub extern "C" fn Apply(ev: u32, size: u32) -> i32 {
             if !has_target(s) {
                 return 0;
             }
-            publish_cleared(u, w);
             clear_slot(s);
+            publish_cleared(u, w);
             1
         }
         99 => {
@@ -304,8 +304,8 @@ pub extern "C" fn GetWeaponTargetPos(u: u32, pos: u32, w: i32) -> i32 {
     }
     let t = base() + units_off() + (ru16(s) as u16 as i16 as i32 as u32).wrapping_mul(UNIT_SIZE);
     if ru16(t + U_DEFIDX) == 0 {
-        publish_cleared(u, w as u32);
         clear_slot(s);
+        publish_cleared(u, w as u32);
         return 0;
     }
     unsafe { get_sweet_spot(t, vp) };
